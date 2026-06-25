@@ -1,1 +1,44 @@
-1
+<resources>
+    <string name="app_name">CatVodSpider</string>
+
+    <!-- Danmaku related strings -->
+    <string name="danmaku">弹幕</string>
+    <string name="danmaku_load">加载弹幕</string>
+    <string name="danmaku_auto">自动搜索</string>
+    <string name="danmaku_api_url">弹幕API地址</string>
+    <string name="danmaku_show">显示弹幕</string>
+    <string name="danmaku_text_scale">文字缩放</string>
+    <string name="danmaku_transparency">透明度</string>
+    <string name="danmaku_text_bold">加粗</string>
+    <string name="danmaku_style_mode">样式</string>
+    <string name="danmaku_duration">显示时长</string>
+    <string name="danmaku_max_on_screen">屏幕最大数量</string>
+    <string name="danmaku_scroll_area_ratio">滚动区域</string>
+    <string name="danmaku_show_scroll">显示滚动弹幕</string>
+    <string name="danmaku_show_top">显示顶部弹幕</string>
+    <string name="danmaku_show_bottom">显示底部弹幕</string>
+    <string name="danmaku_not_found">未找到弹幕</string>
+    <string name="danmaku_loading">正在加载弹幕…</string>
+    <string name="danmaku_search">搜索弹幕</string>
+    <string name="danmaku_config">弹幕配置</string>
+    <string name="danmaku_reset">重置配置</string>
+    <string name="danmaku_style_none">无</string>
+    <string name="danmaku_style_shadow">阴影</string>
+    <string name="danmaku_style_stroke">描边</string>
+    <string name="danmaku_style_shadow_stroke">投影</string>
+
+    <!-- Ad related strings -->
+    <string name="adblock">去广告</string>
+    <string name="adblock_enable">启用去广告</string>
+    <string name="adblock_disable">禁用去广告</string>
+    <string name="adblock_source">广告拦截规则</string>
+    <string name="adblock_source_system">系统规则</string>
+    <string name="adblock_source_custom">自定义规则</string>
+    <string name="adblock_source_both">系统+自定义</string>
+    <string name="adblock_custom_rules">自定义广告规则</string>
+    <string name="adblock_config">去广告配置</string>
+    <string name="adblock_reset">重置配置</string>
+    <string name="adblock_not_available">去广告功能当前不可用</string>
+    <string name="adblock_version">版本</string>
+    <string name="adblock_info">通过检测m3u8的DISCONTINUITY标签移除广告片段</string>
+</resources>
