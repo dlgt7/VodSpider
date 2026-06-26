@@ -98,7 +98,7 @@ public class HHkk extends Spider {
     }
 
     @Override
-    public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) {
+    public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
         HashMap<String, String> urlParams = a();
         HashMap<String, String> params = new HashMap<>();
         params.put("tag_id", tid);
@@ -159,7 +159,7 @@ public class HHkk extends Spider {
     }
 
     @Override
-    public String detailContent(List<String> ids) {
+    public String detailContent(List<String> ids) throws Exception {
         String vodId = ids.get(0);
         Object[] args = new Object[]{System.currentTimeMillis(), vodId};
         String commonlistBody = String.format(COMMONLIST_BODY, args);
@@ -264,7 +264,7 @@ public class HHkk extends Spider {
     }
 
     @Override
-    public String homeContent(boolean filter) {
+    public String homeContent(boolean filter) throws Exception {
         HashMap<String, String> urlParams = a();
         HashMap<String, String> params = new HashMap<>();
         params.put("from", "feed");
@@ -326,7 +326,7 @@ public class HHkk extends Spider {
     }
 
     @Override
-    public void init(Context context, String config) {
+    public void init(Context context, String config) throws Exception {
         super.init(context, config);
         headers = new HashMap<>();
         headers.put("User-Agent", INIT_UA);
@@ -337,7 +337,7 @@ public class HHkk extends Spider {
     }
 
     @Override
-    public String playerContent(String flag, String id, List<String> vipFlags) {
+    public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
         int atIdx = id.indexOf('@');
         String urlResult = "";
         if (atIdx <= 0 || atIdx >= id.length() - 1) {
@@ -400,7 +400,7 @@ public class HHkk extends Spider {
     }
 
     @Override
-    public String searchContent(String key, boolean quick, String pg) {
+    public String searchContent(String key, boolean quick, String pg) throws Exception {
         HashMap<String, String> urlParams = a();
         urlParams.put("search_word", key);
         HashMap<String, String> params = new HashMap<>();
