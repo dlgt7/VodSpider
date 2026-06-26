@@ -695,51 +695,46 @@ public class AppDrama extends Spider {
         return headers;
     }
 
-    private HashMap<String, String> getProtoHeaders() {
+    private HashMap<String, String> getProtoHeaders() throws Exception {
         HashMap<String, String> headers = new HashMap<>();
-        try {
-            String rsaKey;
-            if (TextUtils.isEmpty(rsaPublicKey)) {
-                rsaKey = publicKey;
-            } else {
-                rsaKey = rsaPublicKey;
-            }
-
-            JSONObject deviceJson = buildDeviceInfo();
-            long timestamp = System.currentTimeMillis();
-            String randomStr16 = randomString(16);
-
-            StringBuilder signBuilder = new StringBuilder();
-            signBuilder.append(timestamp).append(randomStr16);
-            signBuilder.append(deviceJson.optString("vApp", "3019"));
-            String rsaSign = rsaEncrypt(signBuilder.toString(), rsaKey);
-
-            StringBuilder aesBuilder = new StringBuilder();
-            aesBuilder.append(timestamp).append(randomStr16);
-            String aesSign = aesEncryptECB(aesBuilder.toString(), dataKeys[1]);
-
-            JSONObject paramsJson = new JSONObject();
-            paramsJson.put("sig", rsaSign);
-            paramsJson.put("random_str", randomStr16);
-            paramsJson.put("timestamp", timestamp);
-
-            String sig2 = aesSign.substring(0, 8);
-            String sig3 = aesSign.substring(8);
-            paramsJson.put("sig2", sig2);
-            paramsJson.put("sig3", sig3);
-
-            String encrypted = aesEncryptCBC(paramsJson.toString(), cbcKey, cbcKey);
-
-            JSONObject outerJson = new JSONObject();
-            outerJson.put("paramsData", encrypted);
-
-            headers.put("User-Agent", "okhttp/3.12.1");
-            headers.put("Accept", "application/x-protobuf");
-            headers.put("Content-Type", "application/x-protobuf");
-            headers.put("publicParams", outerJson.toString());
-        } catch (Exception e) {
-            e.printStackTrace();
+        String rsaKey;
+        if (TextUtils.isEmpty(rsaPublicKey)) {
+            rsaKey = publicKey;
+        } else {
+            rsaKey = rsaPublicKey;
         }
+
+        JSONObject paramsJson = buildDeviceInfo();
+        long timestamp = System.currentTimeMillis();
+        String randomStr16 = randomString(16);
+
+        StringBuilder signBuilder = new StringBuilder();
+        signBuilder.append(timestamp).append(randomStr16);
+        signBuilder.append(paramsJson.optString("vApp", "3019"));
+        String rsaSign = rsaEncrypt(signBuilder.toString(), rsaKey);
+
+        StringBuilder aesBuilder = new StringBuilder();
+        aesBuilder.append(timestamp).append(randomStr16);
+        String aesSign = aesEncryptECB(aesBuilder.toString(), dataKeys[1]);
+
+        paramsJson.put("sig", rsaSign);
+        paramsJson.put("random_str", randomStr16);
+        paramsJson.put("timestamp", timestamp);
+
+        String sig2 = aesSign.substring(0, 8);
+        String sig3 = aesSign.substring(8);
+        paramsJson.put("sig2", sig2);
+        paramsJson.put("sig3", sig3);
+
+        String encrypted = aesEncryptCBC(paramsJson.toString(), cbcKey, cbcKey);
+
+        JSONObject outerJson = new JSONObject();
+        outerJson.put("paramsData", encrypted);
+
+        headers.put("User-Agent", "okhttp/3.12.1");
+        headers.put("Accept", "application/x-protobuf");
+        headers.put("Content-Type", "application/x-protobuf");
+        headers.put("publicParams", outerJson.toString());
         return headers;
     }
 
@@ -824,76 +819,68 @@ public class AppDrama extends Spider {
     }
 
     @Override
-    public void init(Context context, String extend) {
-        try {
-            super.init(context, extend);
-            extJson = new JSONObject(extend);
-            host = extJson.optString("host");
-            publicKey = extJson.optString("publicKey");
-            pkg = extJson.optString("pkg");
-            appName = extJson.optString("appName");
-            decrypt = extJson.optString("decrypt", "0");
+    public void init(Context context, String extend) throws Exception {
+        super.init(context, extend);
+        extJson = new JSONObject(extend);
+        host = extJson.optString("host");
+        publicKey = extJson.optString("publicKey");
+        pkg = extJson.optString("pkg");
+        appName = extJson.optString("appName");
+        decrypt = extJson.optString("decrypt", "0");
 
-            dataKeys = new String[2];
-            dataKeys[0] = extJson.optString("dataKey");
-            dataKeys[1] = extJson.optString("dataIv");
+        dataKeys = new String[2];
+        dataKeys[0] = extJson.optString("dataKey");
+        dataKeys[1] = extJson.optString("dataIv");
 
-            String site = extJson.optString("site");
-            if (!TextUtils.isEmpty(site)) {
-                try {
-                    String siteResponse = OkHttp.string(site);
-                    JSONObject siteJson = new JSONObject(siteResponse);
-                    String domain = siteJson.optString("domain");
-                    if (!TextUtils.isEmpty(domain)) {
-                        host = domain;
-                    }
-                } catch (Exception e) {
-                    e.printStackTrace();
+        String site = extJson.optString("site");
+        if (!site.isEmpty()) {
+            try {
+                String siteResponse = OkHttp.string(site, null, null);
+                JSONObject siteJson = new JSONObject(siteResponse);
+                String domain = siteJson.optString("domain");
+                if (!domain.isEmpty()) {
+                    host = domain;
                 }
+            } catch (Exception e) {
+                // 与 smali 一致：catch 块为空，不修改 host
             }
-
-            initRsaPublicKey();
-        } catch (Exception e) {
-            e.printStackTrace();
         }
+
+        initRsaPublicKey();
     }
 
-    private void initRsaPublicKey() {
-        try {
-            long timestamp = System.currentTimeMillis();
-            String randomStr16 = randomString(16);
+    private void initRsaPublicKey() throws Exception {
+        long timestamp = System.currentTimeMillis();
+        String randomStr16 = randomString(16);
 
-            RSARequest rsaRequest = new RSARequest();
-            rsaRequest.timestamp = timestamp;
-            rsaRequest.randomStr = randomStr16;
+        RSARequest rsaRequest = new RSARequest();
+        rsaRequest.timestamp = timestamp;
+        rsaRequest.randomStr = randomStr16;
 
-            StringBuilder signBuilder = new StringBuilder();
-            signBuilder.append(timestamp).append(randomStr16);
-            String sign = rsaEncrypt(signBuilder.toString(), publicKey);
-            rsaRequest.sign = sign;
-            rsaRequest.fake1 = randomString(16);
-            rsaRequest.fake2 = randomString(16);
+        StringBuilder signBuilder = new StringBuilder();
+        signBuilder.append(timestamp).append(randomStr16);
+        String sign = rsaEncrypt(signBuilder.toString(), publicKey);
+        rsaRequest.sign = sign;
+        rsaRequest.fake1 = randomString(16);
+        rsaRequest.fake2 = randomString(16);
 
-            String url = host + "/api/v5/find/app/zone";
-            byte[] response = postProto(url, rsaRequest.toByteArray(), getProtoHeaders());
+        String url = host + "/api/v5/find/app/zone";
+        byte[] response = postProto(url, rsaRequest.toByteArray(), getProtoHeaders());
 
-            byte[] apiData = parseApiResultData(response);
-            if (apiData.length > 0) {
-                RSAPublic rsaPublic = RSAPublic.parseFrom(apiData);
-                StringBuilder sb = new StringBuilder();
-                sb.append(rsaPublic.str2);
-                sb.append(rsaPublic.str3);
-                sb.append(rsaPublic.str4);
-                sb.append(rsaPublic.str5);
-                rsaPublicKey = sb.toString();
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
+        byte[] apiData = parseApiResultData(response);
+        if (apiData.length > 0) {
+            RSAPublic rsaPublic = RSAPublic.parseFrom(apiData);
+            StringBuilder sb = new StringBuilder();
+            sb.append(rsaPublic.str2);
+            sb.append(rsaPublic.str3);
+            sb.append(rsaPublic.str4);
+            sb.append(rsaPublic.str5);
+            rsaPublicKey = sb.toString();
         }
     }
 
     @Override
-    public String homeContent(boolean filter) {
+    public String homeContent(boolean filter) throws Exception {
         List<Class> classes = new ArrayList<>();
         LinkedHashMap<String, List<Filter>> filters = new LinkedHashMap<>();
 
@@ -951,7 +938,7 @@ public class AppDrama extends Spider {
     }
 
     @Override
-    public String homeVideoContent() {
+    public String homeVideoContent() throws Exception {
         List<Vod> list = new ArrayList<>();
         try {
             String url = host + "/api/ex/v3/security/tag/list";
@@ -1010,7 +997,7 @@ public class AppDrama extends Spider {
     }
 
     @Override
-    public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) {
+    public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
         try {
             HashMap<String, String> params = new HashMap<>();
             params.put("pagesize", "21");
@@ -1125,7 +1112,7 @@ public class AppDrama extends Spider {
     }
 
     @Override
-    public String playerContent(String flag, String id, List<String> vipFlags) {
+    public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
         try {
             if (id.matches("(?i).*\\.(mp4|m3u8|flv|mkv|avi|ts|mov|mpd|m4a|wmv)(\\?.*)?$")) {
                 return Result.get().url(id).string();
@@ -1170,12 +1157,12 @@ public class AppDrama extends Spider {
     }
 
     @Override
-    public String searchContent(String key, boolean quick) {
+    public String searchContent(String key, boolean quick) throws Exception {
         return searchContent(key, quick, "1");
     }
 
     @Override
-    public String searchContent(String key, boolean quick, String pg) {
+    public String searchContent(String key, boolean quick, String pg) throws Exception {
         try {
             HashMap<String, String> params = new HashMap<>();
             params.put("searchKeys", key);
