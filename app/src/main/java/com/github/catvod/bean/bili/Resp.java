@@ -4,6 +4,7 @@ import android.text.TextUtils;
 
 import com.github.catvod.bean.Vod;
 import com.google.gson.Gson;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.annotations.SerializedName;
 import com.google.gson.reflect.TypeToken;
@@ -11,6 +12,7 @@ import com.google.gson.reflect.TypeToken;
 import org.jsoup.Jsoup;
 
 import java.lang.reflect.Type;
+import java.util.ArrayList;
 import java.util.List;
 
 public class Resp {
@@ -23,7 +25,22 @@ public class Resp {
     private Data data;
 
     public static Resp objectFrom(String str) {
-        return new Gson().fromJson(str, Resp.class);
+        if (TextUtils.isEmpty(str)) return new Resp();
+        str = str.trim();
+        if (!str.startsWith("{")) return new Resp();
+        try {
+            return new Gson().fromJson(str, Resp.class);
+        } catch (Exception e) {
+            return new Resp();
+        }
+    }
+
+    public int getCode() {
+        return code == null ? -1 : code;
+    }
+
+    public String getMessage() {
+        return message == null ? "" : message;
     }
 
     public Data getData() {
@@ -35,7 +52,11 @@ public class Resp {
         @SerializedName("bvid")
         private String bvid;
         @SerializedName("aid")
-        private String aid;
+        private JsonElement aid;
+        @SerializedName("id")
+        private JsonElement id;
+        @SerializedName("type")
+        private String type;
         @SerializedName("title")
         private String title;
         @SerializedName("pic")
@@ -46,8 +67,33 @@ public class Resp {
         private String length;
 
         public static List<Result> arrayFrom(JsonElement str) {
-            Type listType = new TypeToken<List<Result>>() {}.getType();
-            return new Gson().fromJson(str, listType);
+            if (str == null || str.isJsonNull() || !str.isJsonArray()) return new ArrayList<>();
+            try {
+                Type listType = new TypeToken<List<Result>>() {}.getType();
+                return new Gson().fromJson(str, listType);
+            } catch (Exception e) {
+                return new ArrayList<>();
+            }
+        }
+
+        public static List<Result> videoArrayFrom(JsonElement str) {
+            List<Result> list = new ArrayList<>();
+            if (str == null || !str.isJsonArray()) return list;
+            JsonArray array = str.getAsJsonArray();
+            for (int i = 0; i < array.size(); i++) {
+                JsonElement element = array.get(i);
+                if (!element.isJsonObject()) continue;
+                try {
+                    Result item = new Gson().fromJson(element, Result.class);
+                    if (item != null && item.isVideo()) list.add(item);
+                } catch (Exception ignored) {
+                }
+            }
+            return list;
+        }
+
+        public boolean isVideo() {
+            return TextUtils.isEmpty(type) || "video".equals(type);
         }
 
         public String getBvId() {
@@ -55,7 +101,9 @@ public class Resp {
         }
 
         public String getAid() {
-            return TextUtils.isEmpty(aid) ? "" : aid;
+            if (aid != null && !aid.isJsonNull()) return aid.getAsString();
+            if (id != null && !id.isJsonNull()) return id.getAsString();
+            return "";
         }
 
         public String getTitle() {
