@@ -169,7 +169,7 @@ public class Hxq extends Spider {
         return sb.toString();
     }
 
-    public static Object[] proxy(Map<String, String> params) {
+    public Object[] proxy(Map<String, String> params) {
         String url = params.get("url");
         if (TextUtils.isEmpty(url)) {
             return i(0x190, "Missing url");
@@ -877,10 +877,6 @@ public class Hxq extends Spider {
         long expireTime = System.currentTimeMillis() + expireSec * 1000L - 0xea60;
         expireCache.put(pid, expireTime);
         return token;
-    }
-
-    public Object[] proxyLocal(Map<String, String> params) {
-        return proxy(params);
     }
 
     @Override
