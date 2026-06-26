@@ -278,7 +278,7 @@ public class App99 extends Spider {
         }
     }
 
-    public ArrayList<Vod> f(JSONArray array) {
+    public ArrayList<Vod> f(JSONArray array) throws Exception {
         ArrayList<Vod> list = new ArrayList<>();
         for (int i = 0; i < array.length(); i++) {
             JSONObject item = array.getJSONObject(i);
