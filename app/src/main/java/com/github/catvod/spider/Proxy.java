@@ -5,7 +5,6 @@ import android.text.TextUtils;
 
 import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.net.OkHttp;
-import com.github.catvod.parser.M3u8Fix;
 
 import java.io.ByteArrayInputStream;
 import java.io.File;
@@ -69,8 +68,6 @@ public class Proxy {
                     return video(params);
                 case "audio":
                     return audio(params);
-                case "m3u8":
-                    return m3u8(params);
                 default:
                     return null;
             }
@@ -202,22 +199,6 @@ public class Proxy {
             return new Object[]{200, mimeType, is};
         } catch (FileNotFoundException e) {
             return error(404, "Audio not found");
-        }
-    }
-
-    /**
-     * M3U8去广告处理
-     * 通过M3u8Fix处理m3u8链接，去除广告片段
-     */
-    private static Object[] m3u8(Map<String, String> params) {
-        String url = params.get("url");
-        if (TextUtils.isEmpty(url)) return error(400, "URL is empty");
-        try {
-            String result = M3u8Fix.fixM3u8(url, params);
-            return M3u8Fix.loadM3u8(result);
-        } catch (Exception e) {
-            SpiderDebug.log("M3u8Fix处理失败: " + e.getMessage());
-            return error(500, "M3u8Fix error: " + e.getMessage());
         }
     }
 
