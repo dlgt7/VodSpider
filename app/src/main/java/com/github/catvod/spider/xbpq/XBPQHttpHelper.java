@@ -34,9 +34,12 @@ public class XBPQHttpHelper {
     
     /** 分隔符：多个关键词分隔 */
     private static final String HASH = "#";
-    
+
     /** 分隔符：键值分隔 */
     private static final String DOLLAR = "$";
+
+    /** 正则转义后的 $，用于 String.split() */
+    private static final String DOLLAR_REGEX = "\\$";
     
     /** POST 模式分隔符 */
     private static final String POST_SEP = ";post;";
@@ -378,7 +381,7 @@ public class XBPQHttpHelper {
         
         String[] parts = customHeader.split(HASH);
         for (String part : parts) {
-            String[] kv = part.split(DOLLAR);
+            String[] kv = part.split(DOLLAR_REGEX);
             if (kv.length == 2) {
                 headers.put(kv[0].trim(), kv[1].trim());
             }
