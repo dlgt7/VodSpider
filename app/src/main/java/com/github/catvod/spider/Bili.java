@@ -24,6 +24,7 @@ import com.google.gson.JsonObject;
 
 import java.io.ByteArrayInputStream;
 import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -124,6 +125,11 @@ public class Bili extends Spider {
         result[1] = "text/plain; charset=utf-8";
         result[2] = new ByteArrayInputStream(msg.getBytes());
         return result;
+    }
+
+    @Override
+    public String danmakuContent(String id) throws Exception {
+        return Danmaku.fetchDeflate(id, getHeaders());
     }
 
     private List<Filter> getFilter() {
@@ -335,7 +341,6 @@ public class Bili extends Spider {
             acceptDesc = parts[3].split(":");
         }
         List<String> url = new ArrayList<>();
-        String dan = "https://api.bilibili.com/x/v1/dm/list.so?oid=".concat(cid);
         int min = Math.min(acceptDesc.length, acceptQuality.length);
         for (int i = 0; i < min; i++) {
             url.add(acceptDesc[i]);
@@ -344,10 +349,7 @@ public class Bili extends Spider {
         if (url.isEmpty()) {
             return Result.error("B站无可用清晰度");
         }
-        Danmaku danmaku = new Danmaku();
-        danmaku.setName("B站");
-        danmaku.setUrl(dan);
-        return Result.get().url(url).danmaku(Arrays.asList(danmaku)).dash().header(getHeaders()).string();
+        return Result.get().url(url).danmaku(Arrays.asList(Danmaku.bili(cid))).dash().header(getHeaders()).string();
     }
 
     @Override

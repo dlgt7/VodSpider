@@ -4,6 +4,7 @@ import android.content.Context;
 import android.util.Base64;
 
 import com.github.catvod.bean.Class;
+import com.github.catvod.bean.Danmaku;
 import com.github.catvod.bean.Filter;
 import com.github.catvod.bean.Result;
 import com.github.catvod.bean.Vod;
@@ -289,6 +290,29 @@ public class Gz360 extends Spider {
         return vod;
     }
 
+    /**
+     * 从DanDanPlay搜索结果中匹配最佳动漫的剧集列表
+     * 优先精确标题匹配，否则取第一条结果
+     */
+    private JsonArray matchDandanplayEpisodes(JsonArray animes, String title) {
+        if (animes == null || animes.size() == 0) return null;
+        for (JsonElement elem : animes) {
+            JsonObject anime = elem.getAsJsonObject();
+            if (title.equalsIgnoreCase(Json.getString(anime, "title"))) {
+                return Json.getJsonArray(anime, "episodes");
+            }
+        }
+        return Json.getJsonArray(animes.get(0).getAsJsonObject(), "episodes");
+    }
+
+    /**
+     * 按集数索引获取DanDanPlay的episodeId
+     */
+    private int getDandanEpisodeId(JsonArray episodes, int index) {
+        if (episodes == null || index < 0 || index >= episodes.size()) return 0;
+        return Json.getInt(episodes.get(index).getAsJsonObject(), "episodeId");
+    }
+
     @Override
     public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) {
         JsonObject params = new JsonObject();
@@ -350,14 +374,19 @@ public class Gz360 extends Spider {
 
         JsonObject playResult = apiRequest(playParams, "/App/Resource/Vurl/show");
 
+        // DanDanPlay弹幕匹配：按标题搜索，取最佳匹配的剧集列表
+        String vodName = Json.getString(vodData, "vod_name");
+        JsonArray dandanEpisodes = matchDandanplayEpisodes(Danmaku.dandanplaySearch(vodName), vodName);
+
         LinkedHashMap<String, List<String>> playMap = new LinkedHashMap<>();
         if (playResult != null && playResult.has("list")) {
             JsonArray playArray = Json.getJsonArray(playResult, "list");
-            for (JsonElement element : playArray) {
-                JsonObject playItem = element.getAsJsonObject();
+            for (int epIdx = 0; epIdx < playArray.size(); epIdx++) {
+                JsonObject playItem = playArray.get(epIdx).getAsJsonObject();
                 String title = Json.getString(playItem, "title");
                 if (Json.isNull(playItem, "play")) continue;
                 JsonObject play = Json.getJsonObject(playItem, "play");
+                int dandanEpId = getDandanEpisodeId(dandanEpisodes, epIdx);
                 for (String playKey : play.keySet()) {
                     JsonObject playData = Json.getJsonObject(play, playKey);
                     String showType = Json.getString(playData, "show_type");
@@ -367,7 +396,8 @@ public class Gz360 extends Spider {
                     if (!playMap.containsKey(playKey)) {
                         playMap.put(playKey, new ArrayList<>());
                     }
-                    playMap.get(playKey).add(title + "$" + param);
+                    String paramWithDanmaku = dandanEpId > 0 ? param + "@ep=" + dandanEpId : param;
+                    playMap.get(playKey).add(title + "$" + paramWithDanmaku);
                 }
             }
         }
@@ -397,6 +427,14 @@ public class Gz360 extends Spider {
 
     @Override
     public String playerContent(String flag, String id, List<String> vipFlags) {
+        // 提取DanDanPlay弹幕episodeId（格式：原始param@ep=12345）
+        String dandanEpId = "";
+        int atIdx = id.indexOf("@ep=");
+        if (atIdx > 0) {
+            dandanEpId = id.substring(atIdx + 4);
+            id = id.substring(0, atIdx);
+        }
+
         JsonObject params = new JsonObject();
         String[] parts = id.split("&");
         for (String part : parts) {
@@ -418,7 +456,20 @@ public class Gz360 extends Spider {
         Map<String, String> headers = new HashMap<>();
         headers.put("User-Agent", "Lavf/57.83.100");
 
-        return Result.get().url(url).parse(0).header(headers).string();
+        Result resultObj = Result.get().url(url).parse(0).header(headers);
+        if (Util.isNotEmpty(dandanEpId)) {
+            resultObj.danmaku(Arrays.asList(Danmaku.dandanplay(dandanEpId)));
+        }
+        return resultObj.string();
+    }
+
+    @Override
+    public String danmakuContent(String id) throws Exception {
+        if (id != null && id.startsWith("dandanplay://comment/")) {
+            String episodeId = id.substring("dandanplay://comment/".length());
+            return Danmaku.fetchDandanplay(episodeId);
+        }
+        return "";
     }
 
     @Override
