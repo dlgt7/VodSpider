@@ -51,12 +51,19 @@ public class XBPQJsoupParser {
      */
     public static boolean isJsoupSelector(String rule) {
         if (TextUtils.isEmpty(rule)) return false;
-        
+        String trimmed = rule.trim();
+
+        // 字符串截取规则特征：以 < 开头（如 "<li>"、"<a href=..."），不是 CSS 选择器
+        // 注意: 必须先排除，否则 <li> 中的 > 会被误判为 CSS 子选择器
+        if (trimmed.startsWith("<")) return false;
+
         // Jsoup 选择器特征：包含 && 且第一部分是 CSS 选择器
-        if (rule.contains(SEP_AND)) {
-            String selector = rule.split(SEP_AND)[0];
+        if (trimmed.contains(SEP_AND)) {
+            String selector = trimmed.split(SEP_AND)[0].trim();
+            // selector 以 < 开头时，属于字符串截取（如 "class=\"player\"&&</ul>"）
+            if (selector.startsWith("<")) return false;
             // CSS 选择器特征：包含 .class 或 #id 或 tag 或 [attr]
-            if (selector.matches(".*[.#\\[\\]].*") || 
+            if (selector.matches(".*[.#\\[\\]].*") ||
                 selector.matches("^[a-zA-Z][a-zA-Z0-9]*$") ||
                 selector.contains(" ") ||
                 selector.contains(">") ||
@@ -64,7 +71,15 @@ public class XBPQJsoupParser {
                 return true;
             }
         }
-        
+
+        // 支持 bare CSS 选择器（无 &&）：如 ".module-poster-item" 或 "#content"
+        // 兼容永乐XBPQ配置风格：数组规则只写 ".module-poster-item"
+        if (!trimmed.contains(SEP_AND)) {
+            if (trimmed.startsWith(".") || trimmed.startsWith("#")) {
+                return true;
+            }
+        }
+
         return false;
     }
     
