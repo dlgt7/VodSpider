@@ -44,29 +44,29 @@ public class Kugou extends Spider {
 
     private static final Pattern PLAY_ID_PATTERN = Pattern.compile("play_id\\\\u0022:\\\\u0022([^\\\\]+)");
 
-    public static String b(String pic) {
+    public static String fixPic(String pic) {
         if (TextUtils.isEmpty(pic)) return DEFAULT_PIC;
         return pic.replace("{size}", "400");
     }
 
-    public static String c(JSONObject item) {
+    public static String buildPlayId(JSONObject item) {
         String hash = item.optString("sqhash");
         if (TextUtils.isEmpty(hash)) hash = item.optString("hash");
         if (TextUtils.isEmpty(hash)) return "";
         return new StringBuilder("kugou-mp3_").append(hash).append("_").append(item.optString("album_id")).append("_").append(item.optString("album_audio_id")).toString();
     }
 
-    public static String d(JSONObject item) {
+    public static String getCoverUrl(JSONObject item) {
         String cover = item.optString("album_sizable_cover");
         if (TextUtils.isEmpty(cover)) cover = item.optString("imgurl");
         if (TextUtils.isEmpty(cover)) {
             JSONObject transParam = item.optJSONObject("trans_param");
             if (transParam != null) cover = transParam.optString("union_cover");
         }
-        return b(cover);
+        return fixPic(cover);
     }
 
-    public static String e(JSONObject item) {
+    public static String getFileName(JSONObject item) {
         String name = item.optString("filename");
         if (TextUtils.isEmpty(name)) name = item.optString("songname");
         if (TextUtils.isEmpty(name)) {
@@ -75,7 +75,7 @@ public class Kugou extends Spider {
         return name.trim();
     }
 
-    public final JSONObject a(String url) {
+    public final JSONObject fetch(String url) {
         try {
             HashMap<String, String> headers = new HashMap<>();
             headers.put("User-Agent", KUGOU_UA);
@@ -85,15 +85,15 @@ public class Kugou extends Spider {
         }
     }
 
-    public final String f(String url, String referer) {
+    public final String fetchString(String url, String referer) {
         try {
-            return OkHttp.string(url, null, g(referer));
+            return OkHttp.string(url, null, buildHeader(referer));
         } catch (Exception e) {
             return "";
         }
     }
 
-    public final Map<String, String> g(String referer) {
+    public final Map<String, String> buildHeader(String referer) {
         HashMap<String, String> headers = new HashMap<>();
         headers.put("User-Agent", CHROME_UA);
         if (!TextUtils.isEmpty(referer)) {
@@ -115,7 +115,7 @@ public class Kugou extends Spider {
     public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
         if (!"1".equals(pg)) return Result.string(new ArrayList<>());
         ArrayList<Vod> list = new ArrayList<>();
-        JSONObject resp = a(RANK_LIST_URL);
+        JSONObject resp = fetch(RANK_LIST_URL);
         JSONArray info = null;
         JSONObject data = resp.optJSONObject("data");
         if (data != null) info = data.optJSONArray("info");
@@ -135,7 +135,7 @@ public class Kugou extends Spider {
             if (!match) continue;
             String rankid = item.optString("rankid");
             String rankname = item.optString("rankname");
-            String imgurl = b(item.optString("imgurl"));
+            String imgurl = fixPic(item.optString("imgurl"));
             list.add(new Vod(new StringBuilder("kugou_").append(rankid).toString(), rankname, imgurl, "榜单"));
         }
         return Result.string(list);
@@ -152,11 +152,11 @@ public class Kugou extends Spider {
                 String hashPart = id.substring(10);
                 String[] parts = hashPart.split("_");
                 if (parts.length > 0 && !TextUtils.isEmpty(parts[0])) {
-                    JSONObject resp = a(String.format(SONG_INFO_URL, parts[0]));
+                    JSONObject resp = fetch(String.format(SONG_INFO_URL, parts[0]));
                     String fileName = resp.optString("fileName");
                     if (!TextUtils.isEmpty(fileName)) name = fileName;
                     String albumImg = resp.optString("album_img");
-                    if (!TextUtils.isEmpty(albumImg)) pic = b(albumImg);
+                    if (!TextUtils.isEmpty(albumImg)) pic = fixPic(albumImg);
                 }
             }
             Vod vod = new Vod(id, name, pic, "单曲");
@@ -167,7 +167,7 @@ public class Kugou extends Spider {
         } else if (id.startsWith("kugou_")) {
             String rankid = id.substring(6);
             String url = String.format(RANK_SONG_URL, rankid);
-            JSONObject resp = a(url);
+            JSONObject resp = fetch(url);
             JSONArray info = null;
             JSONObject data = resp.optJSONObject("data");
             if (data != null) info = data.optJSONArray("info");
@@ -178,8 +178,8 @@ public class Kugou extends Spider {
                 for (int i = 0; i < info.length(); i++) {
                     JSONObject item = info.optJSONObject(i);
                     if (item == null) continue;
-                    String filename = e(item);
-                    String playId = c(item);
+                    String filename = getFileName(item);
+                    String playId = buildPlayId(item);
                     if (!TextUtils.isEmpty(playId)) {
                         mp3List.add(new StringBuilder().append(filename).append("$").append(playId).toString());
                     }
@@ -189,7 +189,7 @@ public class Kugou extends Spider {
                         mvList.add(new StringBuilder().append(filename).append("$").append(mvId).toString());
                     }
                     if (pic.equals(cover)) {
-                        cover = d(item);
+                        cover = getCoverUrl(item);
                     }
                 }
                 pic = cover;
@@ -217,7 +217,7 @@ public class Kugou extends Spider {
         if (id.startsWith("mp3_")) {
             String[] hashParts = id.split("_");
             String hash = hashParts[1];
-            JSONObject resp = a(String.format(SONG_INFO_URL, hash));
+            JSONObject resp = fetch(String.format(SONG_INFO_URL, hash));
             url = resp.optString("url");
             if (TextUtils.isEmpty(url)) {
                 Object backup = resp.opt("backup_url");
@@ -240,7 +240,7 @@ public class Kugou extends Spider {
                         String foundUrl = "";
                         try {
                             String searchUrl = SQ0527_SEARCH + URLEncoder.encode(songName, UTF_8);
-                            String html = f(searchUrl, SQ0527_REFERER);
+                            String html = fetchString(searchUrl, SQ0527_REFERER);
                             Document doc = Jsoup.parse(html);
                             String href = "";
                             for (Element link : doc.select("ul.mul li a")) {
@@ -254,7 +254,7 @@ public class Kugou extends Spider {
                                 if (!href.startsWith("http")) {
                                     href = new StringBuilder().append(SQ0527_BASE).append(href).toString();
                                 }
-                                String detailHtml = f(href, searchUrl);
+                                String detailHtml = fetchString(href, searchUrl);
                                 Document detailDoc = Jsoup.parse(detailHtml);
                                 Element downloadBtn = detailDoc.selectFirst("#btn-download-mp3");
                                 if (downloadBtn != null) {
@@ -271,7 +271,7 @@ public class Kugou extends Spider {
                         if (TextUtils.isEmpty(foundUrl)) {
                             try {
                                 String searchUrl = new StringBuilder(GEQUBAO_SEARCH).append(URLEncoder.encode(songName, UTF_8)).toString();
-                                String html = f(searchUrl, GEQUBAO_REFERER);
+                                String html = fetchString(searchUrl, GEQUBAO_REFERER);
                                 Document doc = Jsoup.parse(html);
                                 String href = "";
                                 for (Element link : doc.select("a[href^=/music/]")) {
@@ -284,12 +284,12 @@ public class Kugou extends Spider {
                                 }
                                 if (!TextUtils.isEmpty(href)) {
                                     String detailUrl = new StringBuilder().append(GEQUBAO_BASE).append(href).toString();
-                                    String detailHtml = f(detailUrl, searchUrl);
+                                    String detailHtml = fetchString(detailUrl, searchUrl);
                                     Matcher matcher = PLAY_ID_PATTERN.matcher(detailHtml);
                                     if (matcher.find()) {
                                         String playId = matcher.group(1);
                                         String postBody = new StringBuilder().append("id=").append(URLEncoder.encode(playId, UTF_8)).toString();
-                                        Map<String, String> postHeaders = g(detailUrl);
+                                        Map<String, String> postHeaders = buildHeader(detailUrl);
                                         postHeaders.put("Content-Type", "application/x-www-form-urlencoded");
                                         String postResp = OkHttp.post(GEQUBAO_PLAY_URL, postBody, postHeaders);
                                         JSONObject postJson = new JSONObject(postResp);
@@ -311,7 +311,7 @@ public class Kugou extends Spider {
         } else if (id.startsWith("mv_")) {
             String[] hashParts = id.split("_");
             String hash = hashParts[1];
-            JSONObject resp = a(String.format(MV_URL, hash));
+            JSONObject resp = fetch(String.format(MV_URL, hash));
             JSONObject mvdata = resp.optJSONObject("mvdata");
             if (mvdata != null) {
                 String qualityKey = null;
@@ -329,7 +329,7 @@ public class Kugou extends Spider {
         } else {
             Map<String, String> header;
             if (url.contains("gequbao") || url.contains("kuwo.cn") || url.contains("sq0527")) {
-                header = g(GEQUBAO_REFERER);
+                header = buildHeader(GEQUBAO_REFERER);
             } else {
                 header = new HashMap<>();
                 header.put("User-Agent", KUGOU_UA);
@@ -350,7 +350,7 @@ public class Kugou extends Spider {
         ArrayList<Vod> list = new ArrayList<>();
         try {
             String url = String.format(SEARCH_URL, URLEncoder.encode(key, UTF_8), pg);
-            JSONObject resp = a(url);
+            JSONObject resp = fetch(url);
             JSONArray info = null;
             JSONObject data = resp.optJSONObject("data");
             if (data != null) info = data.optJSONArray("info");
@@ -358,10 +358,10 @@ public class Kugou extends Spider {
             for (int i = 0; i < info.length(); i++) {
                 JSONObject item = info.optJSONObject(i);
                 if (item == null) continue;
-                String playId = c(item);
+                String playId = buildPlayId(item);
                 if (TextUtils.isEmpty(playId)) continue;
-                String filename = e(item);
-                String cover = d(item);
+                String filename = getFileName(item);
+                String cover = getCoverUrl(item);
                 String singer = item.optString("singername");
                 list.add(new Vod(playId, filename, cover, singer));
             }

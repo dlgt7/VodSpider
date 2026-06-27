@@ -49,7 +49,7 @@ public class FirstAid extends Spider {
             "意外事故"
     };
 
-    public static String c(int index) {
+    public static String getImage(int index) {
         String[] arr = IMAGES;
         if (index < 0 || index >= arr.length) {
             index = 0;
@@ -57,7 +57,7 @@ public class FirstAid extends Spider {
         return arr[index];
     }
 
-    public static Vod e(String id, String name, String pic) {
+    public static Vod buildVod(String id, String name, String pic) {
         Vod vod = new Vod(id, name, pic, "");
         vod.setStyle(Vod.Style.rect(4.0f));
         return vod;
@@ -75,13 +75,13 @@ public class FirstAid extends Spider {
         }
         try {
             String url = new StringBuilder().append(BASE_URL).append(String.format("/%s/", "jijiu")).toString();
-            String html = OkHttp.string(url, d());
-            ArrayList<Vod> list = g(html);
+            String html = OkHttp.string(url, buildHeader());
+            ArrayList<Vod> list = parseVod(html);
             return Result.string(classes, list);
         } catch (Exception e) {
             ArrayList<Vod> list = new ArrayList<>();
             for (int i = 0; i < CATEGORIES.length; i++) {
-                list.add(e("jijiu|" + i, CATEGORIES[i], c(i)));
+                list.add(buildVod("jijiu|" + i, CATEGORIES[i], getImage(i)));
             }
             return Result.string(classes, list);
         }
@@ -103,8 +103,8 @@ public class FirstAid extends Spider {
                 }
             }
             String url = new StringBuilder(BASE_URL).append(String.format("/%s/", "jijiu")).toString();
-            String html = OkHttp.string(url, d());
-            ArrayList<Vod> list = h(index, html);
+            String html = OkHttp.string(url, buildHeader());
+            ArrayList<Vod> list = parseVod(index, html);
             return Result.get().page(1, 1, list.size(), list.size()).vod(list).string();
         } catch (Exception e) {
             return Result.error(e.getMessage());
@@ -115,7 +115,7 @@ public class FirstAid extends Spider {
     public String detailContent(List<String> ids) {
         try {
             String url = ids.get(0);
-            String html = OkHttp.string(url, d());
+            String html = OkHttp.string(url, buildHeader());
             Document doc = Jsoup.parse(html);
 
             Element titleEl = doc.selectFirst(".video-title.h1-title, .h1-title, h1");
@@ -130,7 +130,7 @@ public class FirstAid extends Spider {
             String pic = "";
             if (contentEl != null) {
                 for (Element img : contentEl.select("img")) {
-                    String src = f(img.attr("src"));
+                    String src = normalizeUrl(img.attr("src"));
                     if (TextUtils.isEmpty(src)) continue;
                     if (src.contains(".gif")) continue;
                     pic = src;
@@ -140,11 +140,11 @@ public class FirstAid extends Spider {
             if (pic.isEmpty()) {
                 Element ogImg = doc.selectFirst("meta[property=og:image]");
                 if (ogImg != null) {
-                    pic = f(ogImg.attr("content"));
+                    pic = normalizeUrl(ogImg.attr("content"));
                 }
             }
             if (pic.isEmpty()) {
-                pic = c(0);
+                pic = getImage(0);
             }
 
             String videoUrl = "";
@@ -186,10 +186,10 @@ public class FirstAid extends Spider {
 
     @Override
     public String playerContent(String flag, String id, List<String> vipFlags) {
-        return Result.get().url(id).header(d()).string();
+        return Result.get().url(id).header(buildHeader()).string();
     }
 
-    public final String a(String url) {
+    public final String fixUrl(String url) {
         if (TextUtils.isEmpty(url)) return "";
         if (url.startsWith("http")) return url;
         if (url.startsWith("//")) return "https:".concat(url);
@@ -197,27 +197,27 @@ public class FirstAid extends Spider {
         return (BASE_URL + "/").concat(url);
     }
 
-    public final String b(Document doc, int index) {
+    public final String getPic(Document doc, int index) {
         String pic = "";
         Elements imgs = doc.select("img.block100");
         if (!imgs.isEmpty() && index < imgs.size()) {
             Element img = imgs.get(index);
-            pic = f(img.attr("src"));
+            pic = normalizeUrl(img.attr("src"));
         }
         if (TextUtils.isEmpty(pic)) {
-            pic = c(index);
+            pic = getImage(index);
         }
         return pic;
     }
 
-    public final Map<String, String> d() {
+    public final Map<String, String> buildHeader() {
         HashMap<String, String> headers = new HashMap<>();
         headers.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36");
         headers.put("Referer", "https://m.youlai.cn/");
         return headers;
     }
 
-    public final String f(String url) {
+    public final String normalizeUrl(String url) {
         if (TextUtils.isEmpty(url)) return "";
         if (url.startsWith("https://https://")) {
             return url.replace("https://https://", "https://");
@@ -237,18 +237,18 @@ public class FirstAid extends Spider {
         return url;
     }
 
-    public final ArrayList<Vod> g(String html) {
+    public final ArrayList<Vod> parseVod(String html) {
         ArrayList<Vod> list = new ArrayList<>();
         Document doc = Jsoup.parse(html);
         Elements items = doc.select(".jj-title-li");
         for (int i = 0; i < CATEGORIES.length; i++) {
-            String pic = b(doc, i);
+            String pic = getPic(doc, i);
             String name = CATEGORIES[i];
             String id = "jijiu|" + i;
             if (i < items.size()) {
                 Element link = items.get(i).selectFirst("a[href*=/jijiu/article/]");
                 if (link != null) {
-                    id = a(link.attr("href"));
+                    id = fixUrl(link.attr("href"));
                     Element clamp = link.selectFirst(".line-clamp1");
                     String subtitle = (clamp != null) ? clamp.text() : link.text();
                     subtitle = subtitle.trim();
@@ -257,23 +257,23 @@ public class FirstAid extends Spider {
                     }
                 }
             }
-            Vod vod = e(id, name, pic);
+            Vod vod = buildVod(id, name, pic);
             vod.setVodRemarks("急救");
             list.add(vod);
         }
         return list;
     }
 
-    public final ArrayList<Vod> h(int index, String html) {
+    public final ArrayList<Vod> parseVod(int index, String html) {
         ArrayList<Vod> list = new ArrayList<>();
         Document doc = Jsoup.parse(html);
         Elements items = doc.select(".jj-title-li");
         if (items.isEmpty() || index >= items.size()) {
             return list;
         }
-        String pic = b(doc, index);
+        String pic = getPic(doc, index);
         if (TextUtils.isEmpty(pic)) {
-            pic = c(index);
+            pic = getImage(index);
         }
         Element item = items.get(index);
         for (Element br3 : item.select(".list-br3")) {
@@ -281,13 +281,13 @@ public class FirstAid extends Spider {
             if (link == null) continue;
             String href = link.attr("href");
             if (!href.contains("/jijiu/article/")) continue;
-            href = a(href);
+            href = fixUrl(href);
             if (href.isEmpty()) continue;
             Element clamp = link.selectFirst(".line-clamp1");
             String title = (clamp != null) ? clamp.text() : link.text();
             title = title.trim();
             if (title.isEmpty()) continue;
-            list.add(e(href, title, pic));
+            list.add(buildVod(href, title, pic));
         }
         return list;
     }

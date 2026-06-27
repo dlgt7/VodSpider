@@ -24,7 +24,7 @@ public class QingtingFM extends Spider {
     private static final String LIVE_URL = "https://lhttp-hw.qtfm.cn/live/";
     private static final String LIVE_SUFFIX = "/64k.mp3";
 
-    public final Map<String, String> a() {
+    public final Map<String, String> buildHeader() {
         HashMap<String, String> headers = new HashMap<>();
         headers.put("User-Agent", UA);
         headers.put("Referer", REFERER);
@@ -42,7 +42,7 @@ public class QingtingFM extends Spider {
         }
         String body = "{\"query\":\"{\\n    radioPage(cid:" + key + ", page:" + pg + "){\\n      contents\\n    }\\n  }\"}";
         try {
-            String resp = OkHttp.post(POST_URL, body, a());
+            String resp = OkHttp.post(POST_URL, body, buildHeader());
             JSONObject json = new JSONObject(resp);
             JSONArray items = json.getJSONObject("data").getJSONObject("radioPage").getJSONObject("contents").getJSONArray("items");
             ArrayList<Vod> list = new ArrayList<>();
@@ -68,7 +68,7 @@ public class QingtingFM extends Spider {
     public String detailContent(List<String> ids) throws Exception {
         String id = ids.get(0);
         String url = DETAIL_URL + id;
-        JSONObject json = new JSONObject(OkHttp.string(url, null, a()));
+        JSONObject json = new JSONObject(OkHttp.string(url, null, buildHeader()));
         JSONObject album = json.getJSONObject("album");
         Vod vod = new Vod(id, album.getString("title"), album.getString("cover"));
         vod.setVodContent(album.getString("description"));
@@ -103,13 +103,13 @@ public class QingtingFM extends Spider {
     @Override
     public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
         String url = LIVE_URL + id + LIVE_SUFFIX;
-        return Result.get().url(url).header(a()).string();
+        return Result.get().url(url).header(buildHeader()).string();
     }
 
     @Override
     public String searchContent(String key, boolean quick, String pg) throws Exception {
         String body = "{\"query\":\"{\\n        searchResultsPage(keyword:\\\"" + key + "\\\", page:" + pg + ", include:\\\"channel_live\\\" ) {\\n          tdk,\\n          searchData,\\n          numFound\\n        }\\n      }\"}";
-        String resp = OkHttp.post(POST_URL, body, a());
+        String resp = OkHttp.post(POST_URL, body, buildHeader());
         JSONObject json = new JSONObject(resp);
         JSONArray items = json.getJSONObject("data").getJSONObject("searchResultsPage").getJSONArray("searchData");
         ArrayList<Vod> list = new ArrayList<>();

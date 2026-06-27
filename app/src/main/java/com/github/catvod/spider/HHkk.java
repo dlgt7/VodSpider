@@ -56,13 +56,13 @@ public class HHkk extends Spider {
         this.headers = new HashMap<>();
     }
 
-    public static HashMap<String, String> a() {
+    public static HashMap<String, String> buildCommonParams() {
         HashMap<String, String> map = new HashMap<>();
         map.put("osbranch", "a0");
         return map;
     }
 
-    public static String b(HashMap<String, String> params) {
+    public static String encode(HashMap<String, String> params) {
         StringBuilder sb = new StringBuilder();
         for (Map.Entry<String, String> entry : params.entrySet()) {
             if (sb.length() > 0) {
@@ -75,7 +75,7 @@ public class HHkk extends Spider {
         return sb.toString();
     }
 
-    public static ArrayList<Vod> c(JSONArray array) {
+    public static ArrayList<Vod> parseVod(JSONArray array) {
         ArrayList<Vod> list = new ArrayList<>();
         if (array == null) {
             return list;
@@ -99,12 +99,12 @@ public class HHkk extends Spider {
 
     @Override
     public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
-        HashMap<String, String> urlParams = a();
+        HashMap<String, String> urlParams = buildCommonParams();
         HashMap<String, String> params = new HashMap<>();
         params.put("tag_id", tid);
         params.put("pn", pg);
         params.put("rn", "10");
-        String url = new StringBuilder(TAGS_FEED_URL).append(b(urlParams)).toString();
+        String url = new StringBuilder(TAGS_FEED_URL).append(encode(urlParams)).toString();
         JSONObject response = new JSONObject(OkHttp.post(url, params, headers));
         JSONObject data = response.optJSONObject("data");
         JSONArray array = null;
@@ -114,14 +114,14 @@ public class HHkk extends Spider {
                 array = data.optJSONArray("video_list");
             }
         }
-        ArrayList<Vod> list = c(array);
+        ArrayList<Vod> list = parseVod(array);
         int page = Integer.parseInt(pg);
         return Result.get().vod(list).page(page, page + 1, PAGE_SIZE, TOTAL_COUNT).string();
     }
 
-    public final String d(String path, String body) {
+    public final String fetch(String path, String body) {
         try {
-            String url = new StringBuilder(API_URL).append(b(a())).toString();
+            String url = new StringBuilder(API_URL).append(encode(buildCommonParams())).toString();
             String requestBody = new StringBuilder().append(path).append(Uri.encode(body)).toString();
             HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
             conn.setRequestMethod("POST");
@@ -163,7 +163,7 @@ public class HHkk extends Spider {
         String vodId = ids.get(0);
         Object[] args = new Object[]{System.currentTimeMillis(), vodId};
         String commonlistBody = String.format(COMMONLIST_BODY, args);
-        JSONObject commonlistResp = new JSONObject(d("video/commonlist=", commonlistBody));
+        JSONObject commonlistResp = new JSONObject(fetch("video/commonlist=", commonlistBody));
         JSONObject commonlist = commonlistResp.optJSONObject("video/commonlist");
         if (commonlist == null) {
             commonlist = commonlistResp.optJSONObject("video\\/commonlist");
@@ -191,7 +191,7 @@ public class HHkk extends Spider {
         if (!TextUtils.isEmpty(vid)) {
             params.put("vid", vid);
         }
-        String detailUrl = new StringBuilder(DETAIL_URL).append(b(a())).toString();
+        String detailUrl = new StringBuilder(DETAIL_URL).append(encode(buildCommonParams())).toString();
         JSONObject detailResp = new JSONObject(OkHttp.post(detailUrl, params, headers));
         JSONObject detailData = detailResp.optJSONObject("data");
         String title = null;
@@ -265,11 +265,11 @@ public class HHkk extends Spider {
 
     @Override
     public String homeContent(boolean filter) throws Exception {
-        HashMap<String, String> urlParams = a();
+        HashMap<String, String> urlParams = buildCommonParams();
         HashMap<String, String> params = new HashMap<>();
         params.put("from", "feed");
         params.put("osbranch", "a0");
-        String url = new StringBuilder(SHELF_FEED_URL).append(b(urlParams)).toString();
+        String url = new StringBuilder(SHELF_FEED_URL).append(encode(urlParams)).toString();
         JSONObject response = new JSONObject(OkHttp.post(url, params, headers));
         JSONObject data = response.optJSONObject("data");
         ArrayList<Class> classes = new ArrayList<>();
@@ -310,13 +310,13 @@ public class HHkk extends Spider {
                     JSONArray videoList = item.optJSONArray("video_list");
                     ArrayList<Vod> vods;
                     if (videoList != null) {
-                        vods = c(videoList);
+                        vods = parseVod(videoList);
                     } else {
                         String playletId = item.optString("playlet_id", item.optString("id"));
                         if (TextUtils.isEmpty(playletId)) continue;
                         JSONArray single = new JSONArray();
                         single.put(item);
-                        vods = c(single);
+                        vods = parseVod(single);
                     }
                     list.addAll(vods);
                 }
@@ -346,7 +346,7 @@ public class HHkk extends Spider {
         String vodId = id.substring(0, atIdx);
         String vid = id.substring(atIdx + 1);
         String body = new StringBuilder(RELATE_PREFIX).append(vid).append(RELATE_MIDDLE).append(vodId).append(RELATE_SUFFIX).toString();
-        JSONObject response = new JSONObject(d("video/relate=", body));
+        JSONObject response = new JSONObject(fetch("video/relate=", body));
         JSONObject relate = response.optJSONObject("video/relate");
         if (relate == null) {
             relate = response.optJSONObject("video\\/relate");
@@ -401,19 +401,19 @@ public class HHkk extends Spider {
 
     @Override
     public String searchContent(String key, boolean quick, String pg) throws Exception {
-        HashMap<String, String> urlParams = a();
+        HashMap<String, String> urlParams = buildCommonParams();
         urlParams.put("search_word", key);
         HashMap<String, String> params = new HashMap<>();
         params.put("osbranch", "a0");
         params.put("search_word", key);
-        String url = new StringBuilder(SEARCH_URL).append(b(urlParams)).toString();
+        String url = new StringBuilder(SEARCH_URL).append(encode(urlParams)).toString();
         JSONObject response = new JSONObject(OkHttp.post(url, params, headers));
         JSONObject data = response.optJSONObject("data");
         ArrayList<Vod> list = new ArrayList<>();
         if (data != null) {
             JSONArray array = data.optJSONArray("list");
             if (array != null) {
-                list.addAll(c(array));
+                list.addAll(parseVod(array));
             }
         }
         return Result.string(list);
