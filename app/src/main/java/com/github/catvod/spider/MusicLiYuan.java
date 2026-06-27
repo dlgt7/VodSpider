@@ -40,7 +40,7 @@ public class MusicLiYuan extends Spider {
             {"chuju", "楚剧"}, {"liuqx", "柳琴戏"}, {"ERT", "二人台"}
     };
 
-    public String a(String path, HashMap<String, String> params) {
+    public String fetch(String path, HashMap<String, String> params) {
         try {
             HashMap<String, String> headers = new HashMap<>();
             headers.put("Content-Type", "application/json;charset=utf-8");
@@ -85,7 +85,7 @@ public class MusicLiYuan extends Spider {
         params.put("type", type);
         params.put("item", "2".equals(tid) ? "o6" : "o5");
         try {
-            JSONObject response = new JSONObject(a("/search/album/list", params));
+            JSONObject response = new JSONObject(fetch("/search/album/list", params));
             JSONArray list = response.getJSONObject("pb").getJSONArray("dataList");
             ArrayList<Vod> vodList = new ArrayList<>();
             for (int i = 0; i < list.length(); i++) {
@@ -112,7 +112,7 @@ public class MusicLiYuan extends Spider {
         params.put("pageSize", "2147483647");
         params.put("selectFlag", "0");
         params.put("userId", "yszyz");
-        JSONObject response = new JSONObject(a("/album/res/list", params));
+        JSONObject response = new JSONObject(fetch("/album/res/list", params));
         JSONObject album = response.getJSONObject("album");
         String name = album.optString("name");
         String pic = PIC_HOST + album.optString("img");
@@ -145,7 +145,7 @@ public class MusicLiYuan extends Spider {
         params.put("project", "lyhxcx");
         params.put("userId", "yszyz");
         try {
-            JSONObject response = new JSONObject(a("/search/album/list", params));
+            JSONObject response = new JSONObject(fetch("/search/album/list", params));
             JSONArray list = response.getJSONObject("pb").getJSONArray("dataList");
             ArrayList<Vod> vodList = new ArrayList<>();
             for (int i = 0; i < list.length(); i++) {
@@ -172,7 +172,7 @@ public class MusicLiYuan extends Spider {
         params.put("resCode", id);
         params.put("userId", "92315ec6e58a45ba7f47fd143b3d7956");
         try {
-            JSONObject response = new JSONObject(a("/play/get/playurl", params));
+            JSONObject response = new JSONObject(fetch("/play/get/playurl", params));
             String url = response.getJSONObject("playres").optString("playurl");
             return Result.get().url(url).parse(0).string();
         } catch (Exception e) {

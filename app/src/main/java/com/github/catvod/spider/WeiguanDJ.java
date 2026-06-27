@@ -29,20 +29,20 @@ import java.util.Random;
  */
 public class WeiguanDJ extends Spider {
 
-    private String b; // 设备名称
-    private String c; // 设备品牌
-    private String d; // 客户端信息
+    private String deviceName; // 设备名称
+    private String deviceBrand; // 设备品牌
+    private String clientInfo; // 客户端信息
 
     public WeiguanDJ() {
-        this.b = "";
-        this.c = "";
-        this.d = "";
+        this.deviceName = "";
+        this.deviceBrand = "";
+        this.clientInfo = "";
     }
 
     /**
      * 获取请求头
      */
-    private Map<String, String> a() {
+    private Map<String, String> buildHeader() {
         Map<String, String> headers = new HashMap<>();
         headers.put("User-Agent", "okhttp/5.1.0");
         return headers;
@@ -51,7 +51,7 @@ public class WeiguanDJ extends Spider {
     /**
      * 解析视频列表
      */
-    private ArrayList<Vod> b(JSONArray array) {
+    private ArrayList<Vod> parseVod(JSONArray array) {
         ArrayList<Vod> list = new ArrayList<>();
         if (array == null) {
             return list;
@@ -74,13 +74,13 @@ public class WeiguanDJ extends Spider {
     /**
      * 构建请求参数字符串
      */
-    private String c() {
+    private String buildCommonParams() {
         StringBuilder sb = new StringBuilder("?version_code=1500&version_name=1.5.0&device_name=");
-        sb.append(b);
+        sb.append(deviceName);
         sb.append("&device_type=phone&is_first_day=true&is_first_24h=true&app_launch_way=icon&default_homepage=homepage_interaction&device_owning_firm=");
-        sb.append(c);
+        sb.append(deviceBrand);
         sb.append("&font_scale=default&os_type=1&clientInfo=");
-        sb.append(d);
+        sb.append(clientInfo);
         return sb.toString();
     }
 
@@ -89,10 +89,10 @@ public class WeiguanDJ extends Spider {
         super.init(context, extend);
         
         // 获取设备型号
-        b = Build.MODEL;
-        
+        deviceName = Build.MODEL;
+
         // 获取设备品牌
-        c = Build.BRAND;
+        deviceBrand = Build.BRAND;
         
         // 生成随机字符串并计算 MD5
         Random random = new Random();
@@ -114,9 +114,9 @@ public class WeiguanDJ extends Spider {
                 }
                 md5Builder.append(hex);
             }
-            d = md5Builder.toString();
+            clientInfo = md5Builder.toString();
         } catch (Exception e) {
-            d = sb.toString();
+            clientInfo = sb.toString();
         }
     }
 
@@ -126,9 +126,9 @@ public class WeiguanDJ extends Spider {
         
         try {
             StringBuilder sb = new StringBuilder("https://api.drama.9ddm.com/drama/home/shortVideoTags");
-            sb.append(c());
+            sb.append(buildCommonParams());
             
-            String response = OkHttp.string(sb.toString(), a());
+            String response = OkHttp.string(sb.toString(), buildHeader());
             JSONObject json = new JSONObject(response);
             JSONArray tags = json.getJSONArray("tags");
             
@@ -161,13 +161,13 @@ public class WeiguanDJ extends Spider {
             params.put("subject", subject);
             
             StringBuilder sb = new StringBuilder("https://api.drama.9ddm.com/drama/home/search");
-            sb.append(c());
+            sb.append(buildCommonParams());
             
-            String response = OkHttp.post(sb.toString(), params.toString(), a());
+            String response = OkHttp.post(sb.toString(), params.toString(), buildHeader());
             JSONObject json = new JSONObject(response);
             JSONArray data = json.getJSONArray("data");
             
-            ArrayList<Vod> list = b(data);
+            ArrayList<Vod> list = parseVod(data);
             
             int page = Integer.parseInt(pg);
             int limit = 30;
@@ -191,12 +191,12 @@ public class WeiguanDJ extends Spider {
         
         try {
             StringBuilder sb = new StringBuilder("https://api.drama.9ddm.com/drama/home/shortVideoDetail");
-            sb.append(c());
+            sb.append(buildCommonParams());
             sb.append("&oneId=");
             sb.append(oneId);
             sb.append("&page=1&pageSize=10&userId=0&queryAll=true");
             
-            String response = OkHttp.string(sb.toString(), a());
+            String response = OkHttp.string(sb.toString(), buildHeader());
             JSONObject json = new JSONObject(response);
             
             String title = json.optString("title");
@@ -251,7 +251,7 @@ public class WeiguanDJ extends Spider {
                 urls.add(obj.optString("url"));
             }
             
-            return Result.get().url(urls).header(a()).string();
+            return Result.get().url(urls).header(buildHeader()).string();
         } catch (Exception e) {
             e.printStackTrace();
             return Result.error("解析播放链接失败");
@@ -275,13 +275,13 @@ public class WeiguanDJ extends Spider {
             params.put("subject", "");
             
             StringBuilder sb = new StringBuilder("https://api.drama.9ddm.com/drama/home/search");
-            sb.append(c());
+            sb.append(buildCommonParams());
             
-            String response = OkHttp.post(sb.toString(), params.toString(), a());
+            String response = OkHttp.post(sb.toString(), params.toString(), buildHeader());
             JSONObject json = new JSONObject(response);
             JSONArray data = json.getJSONArray("data");
             
-            ArrayList<Vod> list = b(data);
+            ArrayList<Vod> list = parseVod(data);
             
             return Result.string(list);
         } catch (Exception e) {

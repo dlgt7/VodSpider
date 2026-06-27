@@ -23,18 +23,18 @@ import java.util.Map;
  */
 public class BeiLeHu extends Spider {
 
-    private static final LinkedHashMap<String, String> a = new LinkedHashMap<>();
+    private static final LinkedHashMap<String, String> CATEGORIES = new LinkedHashMap<>();
 
     static {
-        a.put("56", "儿歌");
-        a.put("63", "故事");
-        a.put("62", "少儿");
-        a.put("61", "古诗");
-        a.put("64", "认知");
-        a.put("65", "习惯");
+        CATEGORIES.put("56", "儿歌");
+        CATEGORIES.put("63", "故事");
+        CATEGORIES.put("62", "少儿");
+        CATEGORIES.put("61", "古诗");
+        CATEGORIES.put("64", "认知");
+        CATEGORIES.put("65", "习惯");
     }
 
-    private static JSONArray a(int subcateId, int page, HashMap<String, String> headers) {
+    private static JSONArray fetch(int subcateId, int page, HashMap<String, String> headers) {
         try {
             JSONObject json = new JSONObject();
             json.put("age", 1);
@@ -60,7 +60,7 @@ public class BeiLeHu extends Spider {
         }
     }
 
-    private static ArrayList<Vod> b(JSONArray items, int limit) {
+    private static ArrayList<Vod> parseVod(JSONArray items, int limit) {
         ArrayList<Vod> list = new ArrayList<>();
         if (items == null) {
             return list;
@@ -118,7 +118,7 @@ public class BeiLeHu extends Spider {
     @Override
     public String homeContent(boolean filter) {
         ArrayList<Class> classes = new ArrayList<>();
-        for (Map.Entry<String, String> entry : a.entrySet()) {
+        for (Map.Entry<String, String> entry : CATEGORIES.entrySet()) {
             classes.add(new Class(entry.getKey(), entry.getValue()));
         }
 
@@ -126,8 +126,8 @@ public class BeiLeHu extends Spider {
         headers.put("Content-Type", "application/json");
         headers.put("appver", "6.1.9");
 
-        JSONArray items = a(1, 1, headers);
-        ArrayList<Vod> list = b(items, 20);
+        JSONArray items = fetch(1, 1, headers);
+        ArrayList<Vod> list = parseVod(items, 20);
 
         return Result.string(classes, list);
     }
@@ -147,8 +147,8 @@ public class BeiLeHu extends Spider {
         headers.put("Content-Type", "application/json");
         headers.put("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1");
 
-        JSONArray items = a(subcateId, page, headers);
-        ArrayList<Vod> list = b(items, 0);
+        JSONArray items = fetch(subcateId, page, headers);
+        ArrayList<Vod> list = parseVod(items, 0);
 
         return Result.string(list);
     }

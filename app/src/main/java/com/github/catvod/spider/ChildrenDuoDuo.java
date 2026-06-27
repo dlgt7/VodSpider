@@ -23,7 +23,7 @@ import java.util.Map;
 public class ChildrenDuoDuo extends Spider {
 
     // 分类数组：[分类ID, 分类名称]
-    private static final String[][] a = {
+    private static final String[][] CATEGORIES = {
             {"29", "视频儿歌"},
             {"40", "音频儿歌"},
             {"26", "动画片"},
@@ -37,7 +37,7 @@ public class ChildrenDuoDuo extends Spider {
      * 从 JSONObject 获取名称
      * 优先级：artist > albumname > name
      */
-    private static String a(JSONObject obj) {
+    private static String pickName(JSONObject obj) {
         String result = obj.optString("artist");
         if (TextUtils.isEmpty(result)) {
             result = obj.optString("albumname");
@@ -52,7 +52,7 @@ public class ChildrenDuoDuo extends Spider {
      * 构建图片 URL (m480x270)
      * URL格式：http://tx.ergecdn.com/bb/img/album/m480x270/{id%1000}/{id}.jpg
      */
-    private static String b(String id) {
+    private static String buildPicUrl(String id) {
         try {
             int idInt = Integer.parseInt(id);
             StringBuilder sb = new StringBuilder("http://tx.ergecdn.com/bb/img/album/m480x270/");
@@ -70,7 +70,7 @@ public class ChildrenDuoDuo extends Spider {
      * 检查 JSONArray 是否有更多数据
      * 通过检查第一个元素的 hasmore 字段判断
      */
-    private static boolean d(JSONArray array) {
+    private static boolean hasMore(JSONArray array) {
         if (array == null || array.length() == 0) {
             return false;
         }
@@ -84,7 +84,7 @@ public class ChildrenDuoDuo extends Spider {
     /**
      * 从 JSONObject 获取 list 数组
      */
-    private static JSONArray e(JSONObject obj) {
+    private static JSONArray getList(JSONObject obj) {
         return obj.optJSONArray("list");
     }
 
@@ -93,11 +93,11 @@ public class ChildrenDuoDuo extends Spider {
      * 如果 pic 字段不为空，优先使用 pic
      * 否则构建 URL：http://tx.ergecdn.com/bb/img/album/m320x180/{id%1000}/{id}.jpg
      */
-    private static String f(String id, String pic) {
+    private static String resolvePic(String id, String pic) {
         if (!TextUtils.isEmpty(pic)) {
             return pic;
         }
-        String url = b(id);
+        String url = buildPicUrl(id);
         if (!TextUtils.isEmpty(url)) {
             return url;
         }
@@ -118,7 +118,7 @@ public class ChildrenDuoDuo extends Spider {
      * 从 JSONObject 获取名称
      * 优先级：name > artist
      */
-    private static String g(JSONObject obj) {
+    private static String getName(JSONObject obj) {
         String result = obj.optString("name");
         if (TextUtils.isEmpty(result)) {
             result = obj.optString("artist");
@@ -130,7 +130,7 @@ public class ChildrenDuoDuo extends Spider {
      * 发送 HTTP 请求获取数据
      * URL：http://bb.ergeduoduo.com/baby/bb.php?type={type}&collectid={collectid}&page={page}&pagesize={pagesize}&ver=1
      */
-    private JSONObject c(String type, String collectid, String page, String pagesize) {
+    private JSONObject fetch(String type, String collectid, String page, String pagesize) {
         try {
             StringBuilder sb = new StringBuilder("http://bb.ergeduoduo.com/baby/bb.php?type=");
             sb.append(type);
@@ -157,15 +157,15 @@ public class ChildrenDuoDuo extends Spider {
     public String homeContent(boolean filter) {
         ArrayList<Class> classes = new ArrayList<>();
         for (int i = 0; i < 7; i++) {
-            String typeId = a[i][0];
-            String typeName = a[i][1];
+            String typeId = CATEGORIES[i][0];
+            String typeName = CATEGORIES[i][1];
 
             // 检查分类是否有内容
             boolean hasContent = false;
             if ("40".equals(typeId)) {
                 // 音频儿歌使用 getlist
-                JSONObject result = c("getlist", typeId, "1", "1");
-                JSONArray list = e(result);
+                JSONObject result = fetch("getlist", typeId, "1", "1");
+                JSONArray list = getList(result);
                 if (list != null && list.length() > 1) {
                     JSONObject item = list.optJSONObject(1);
                     if (item != null && !TextUtils.isEmpty(item.optString("downurl"))) {
@@ -174,8 +174,8 @@ public class ChildrenDuoDuo extends Spider {
                 }
             } else {
                 // 其他分类使用 getvideos
-                JSONObject result = c("getvideos", typeId, "1", "1");
-                JSONArray list = e(result);
+                JSONObject result = fetch("getvideos", typeId, "1", "1");
+                JSONArray list = getList(result);
                 if (list != null && list.length() > 1) {
                     JSONObject item = list.optJSONObject(1);
                     if (item != null && !TextUtils.isEmpty(item.optString("downurl"))) {
@@ -196,8 +196,8 @@ public class ChildrenDuoDuo extends Spider {
     public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) {
         // 音频儿歌（分类ID=40）使用 getlist，其他使用 getvideos
         if ("40".equals(tid)) {
-            JSONObject result = c("getlist", tid, pg, "10");
-            JSONArray list = e(result);
+            JSONObject result = fetch("getlist", tid, pg, "10");
+            JSONArray list = getList(result);
             ArrayList<Vod> vodList = new ArrayList<>();
 
             if (list != null) {
@@ -209,7 +209,7 @@ public class ChildrenDuoDuo extends Spider {
 
                     String id = item.optString("id");
                     String vodId = "a:" + id;
-                    String name = g(item);
+                    String name = getName(item);
                     String pic = item.optString("pic");
                     if (TextUtils.isEmpty(pic)) {
                         pic = "http://tx.ergecdn.com/bb/video/pic/m320x180/48/343734137.jpg";
@@ -225,14 +225,14 @@ public class ChildrenDuoDuo extends Spider {
             int count = vodList.size();
             int total = 9999;
             int limit = 999999;
-            boolean hasMore = d(list);
+            boolean hasMore = hasMore(list);
             int nextPage = hasMore ? page + 1 : page;
 
             return Result.get().page(page, nextPage, count, total).vod(vodList).string();
         } else {
             // 其他分类使用 getvideos
-            JSONObject result = c("getvideos", tid, pg, "10");
-            JSONArray list = e(result);
+            JSONObject result = fetch("getvideos", tid, pg, "10");
+            JSONArray list = getList(result);
 
             // 使用 LinkedHashMap 去重（按 pid）
             LinkedHashMap<String, JSONObject> map = new LinkedHashMap<>();
@@ -259,9 +259,9 @@ public class ChildrenDuoDuo extends Spider {
                 JSONObject item = entry.getValue();
 
                 String vodId = pid + "|||" + tid;
-                String name = a(item);
+                String name = pickName(item);
                 String pic = item.optString("pic");
-                pic = f(pid, pic);
+                pic = resolvePic(pid, pic);
 
                 Vod vod = new Vod(vodId, name, pic, "");
                 vodList.add(vod);
@@ -271,7 +271,7 @@ public class ChildrenDuoDuo extends Spider {
             int count = vodList.size();
             int total = 9999;
             int limit = 999999;
-            boolean hasMore = d(list);
+            boolean hasMore = hasMore(list);
             int nextPage = hasMore ? page + 1 : page;
 
             return Result.get().page(page, nextPage, count, total).vod(vodList).string();
@@ -307,8 +307,8 @@ public class ChildrenDuoDuo extends Spider {
             // 音频儿歌详情
             JSONObject item = null;
             for (int page = 1; page <= 30; page++) {
-                JSONObject result = c("getlist", "40", String.valueOf(page), "10");
-                JSONArray list = e(result);
+                JSONObject result = fetch("getlist", "40", String.valueOf(page), "10");
+                JSONArray list = getList(result);
                 if (list == null || list.length() <= 1) break;
 
                 for (int i = 1; i < list.length(); i++) {
@@ -320,7 +320,7 @@ public class ChildrenDuoDuo extends Spider {
                 }
 
                 if (item != null) break;
-                if (!d(list)) break;
+                if (!hasMore(list)) break;
             }
 
             if (item == null) {
@@ -328,7 +328,7 @@ public class ChildrenDuoDuo extends Spider {
             }
 
             String downurl = item.optString("downurl");
-            String name = g(item);
+            String name = getName(item);
             String pic = item.optString("pic");
             if (TextUtils.isEmpty(pic)) {
                 pic = "http://tx.ergecdn.com/bb/video/pic/m320x180/48/343734137.jpg";
@@ -336,15 +336,15 @@ public class ChildrenDuoDuo extends Spider {
 
             Vod vod = new Vod(id, name, pic);
             vod.setVodPlayFrom("儿歌多多");
-            vod.setVodPlayUrl(g(item) + "$" + downurl);
+            vod.setVodPlayUrl(getName(item) + "$" + downurl);
 
             return Result.string(vod);
         } else {
             // 视频详情
             ArrayList<JSONObject> items = new ArrayList<>();
             for (int page = 1; page <= 30; page++) {
-                JSONObject result = c("getvideos", pid, String.valueOf(page), "10");
-                JSONArray list = e(result);
+                JSONObject result = fetch("getvideos", pid, String.valueOf(page), "10");
+                JSONArray list = getList(result);
                 if (list == null || list.length() <= 1) break;
 
                 for (int i = 1; i < list.length(); i++) {
@@ -354,14 +354,14 @@ public class ChildrenDuoDuo extends Spider {
                     }
                 }
 
-                if (!d(list) && items.size() < 10) break;
+                if (!hasMore(list) && items.size() < 10) break;
             }
 
             // 如果没有找到内容，尝试使用 typeId 搜索
             if (items.isEmpty() && !TextUtils.isEmpty(typeId)) {
                 for (int page = 1; page <= 20; page++) {
-                    JSONObject result = c("getvideos", typeId, String.valueOf(page), "10");
-                    JSONArray list = e(result);
+                    JSONObject result = fetch("getvideos", typeId, String.valueOf(page), "10");
+                    JSONArray list = getList(result);
                     if (list == null || list.length() <= 1) break;
 
                     int found = 0;
@@ -375,17 +375,17 @@ public class ChildrenDuoDuo extends Spider {
                         }
                     }
 
-                    if (!d(list) && found == 0 && page > 1) break;
-                    if (!d(list)) break;
+                    if (!hasMore(list) && found == 0 && page > 1) break;
+                    if (!hasMore(list)) break;
                 }
             }
 
-            String pic = b(pid);
+            String pic = buildPicUrl(pid);
             String name = pid;
             if (!items.isEmpty()) {
                 JSONObject first = items.get(0);
-                name = a(first);
-                pic = f(pid, first.optString("pic"));
+                name = pickName(first);
+                pic = resolvePic(pid, first.optString("pic"));
             }
 
             Vod vod = new Vod(id, name, pic);
@@ -395,7 +395,7 @@ public class ChildrenDuoDuo extends Spider {
             for (JSONObject item : items) {
                 String downurl = item.optString("downurl");
                 if (TextUtils.isEmpty(downurl)) continue;
-                playUrls.add(g(item) + "$" + downurl);
+                playUrls.add(getName(item) + "$" + downurl);
             }
 
             vod.setVodPlayUrl(TextUtils.join("#", playUrls));
@@ -417,8 +417,8 @@ public class ChildrenDuoDuo extends Spider {
         ArrayList<Vod> vodList = new ArrayList<>();
 
         for (int page = 1; page <= 3; page++) {
-            JSONObject result = c("getvideos", "29", String.valueOf(page), "10");
-            JSONArray list = e(result);
+            JSONObject result = fetch("getvideos", "29", String.valueOf(page), "10");
+            JSONArray list = getList(result);
             if (list == null) break;
 
             LinkedHashMap<String, JSONObject> map = new LinkedHashMap<>();
@@ -434,14 +434,14 @@ public class ChildrenDuoDuo extends Spider {
                 if (map.containsKey(pidStr)) continue;
 
                 // 搜索匹配
-                String name1 = a(item);
-                String name2 = g(item);
+                String name1 = pickName(item);
+                String name2 = getName(item);
                 if (name1.contains(key) || name2.contains(key)) {
                     map.put(pidStr, item);
 
                     String vodId = pidStr + "|||29";
                     String pic = item.optString("pic");
-                    pic = f(pidStr, pic);
+                    pic = resolvePic(pidStr, pic);
 
                     Vod vod = new Vod(vodId, name1, pic, "");
                     vodList.add(vod);
@@ -451,7 +451,7 @@ public class ChildrenDuoDuo extends Spider {
             }
 
             if (vodList.size() >= 30) break;
-            if (!d(list)) break;
+            if (!hasMore(list)) break;
         }
 
         return Result.string(vodList);

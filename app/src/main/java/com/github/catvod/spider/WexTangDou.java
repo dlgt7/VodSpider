@@ -37,7 +37,7 @@ public class WexTangDou extends Spider {
             {"1471610748", "流行舞"}, {"1471610757", "鬼步舞"}, {"1471610758", "水兵舞"}, {"1471610746", "民族风"}
     };
 
-    public static void a(JSONObject data, String key, ArrayList<String> cdnList, ArrayList<String> urlList) {
+    public static void addCdnUrls(JSONObject data, String key, ArrayList<String> cdnList, ArrayList<String> urlList) {
         if (data == null) return;
         JSONArray arr = data.optJSONArray(key);
         if (arr == null) return;
@@ -54,7 +54,7 @@ public class WexTangDou extends Spider {
         }
     }
 
-    public static String f(JSONObject data, String key) {
+    public static String fetchPlayUrl(JSONObject data, String key) {
         if (data == null) return "";
         String[] keys = new String[]{key, "hd", "sd"};
         for (String k : keys) {
@@ -69,14 +69,14 @@ public class WexTangDou extends Spider {
         return "";
     }
 
-    public final Map<String, String> b() {
+    public final Map<String, String> buildHeader() {
         HashMap<String, String> headers = new HashMap<>();
         headers.put("User-Agent", UA);
         headers.put("Referer", REFERER);
         return headers;
     }
 
-    public final ArrayList<Vod> c(JSONArray arr) {
+    public final ArrayList<Vod> parseRecommendVod(JSONArray arr) {
         ArrayList<Vod> list = new ArrayList<>();
         if (arr == null) return list;
         for (int i = 0; i < arr.length(); i++) {
@@ -85,12 +85,12 @@ public class WexTangDou extends Spider {
             String vid = String.valueOf(item.optLong("vid", 0L));
             String vodId = vid;
             if ("0".equals(vid)) vodId = item.optString("id");
-            list.add(new Vod(vodId, item.optString("title"), e(item)));
+            list.add(new Vod(vodId, item.optString("title"), getPicUrl(item)));
         }
         return list;
     }
 
-    public final ArrayList<Vod> d(JSONArray arr) {
+    public final ArrayList<Vod> parseVod(JSONArray arr) {
         ArrayList<Vod> list = new ArrayList<>();
         if (arr == null) return list;
         for (int i = 0; i < arr.length(); i++) {
@@ -100,12 +100,12 @@ public class WexTangDou extends Spider {
             String id = item.optString("id", vid);
             if (TextUtils.isEmpty(id)) continue;
             String name = item.optString("name");
-            list.add(new Vod(id, item.optString("title", name), e(item)));
+            list.add(new Vod(id, item.optString("title", name), getPicUrl(item)));
         }
         return list;
     }
 
-    public final String e(JSONObject item) {
+    public final String getPicUrl(JSONObject item) {
         String[] keys = new String[]{"big_pic", "pic", "cover", "thumbnail", "image"};
         for (String key : keys) {
             String img = item.optString(key);
@@ -120,7 +120,7 @@ public class WexTangDou extends Spider {
         return "";
     }
 
-    public final JSONObject g(String ac, HashMap<String, String> params) {
+    public final JSONObject fetch(String ac, HashMap<String, String> params) {
         try {
             HashMap<String, String> all = new HashMap<>();
             all.put("mod", "tv");
@@ -139,7 +139,7 @@ public class WexTangDou extends Spider {
                 sb.append('=');
                 sb.append(entry.getValue());
             }
-            return new JSONObject(OkHttp.string(sb.toString(), null, b()));
+            return new JSONObject(OkHttp.string(sb.toString(), null, buildHeader()));
         } catch (Exception e) {
             return new JSONObject();
         }
@@ -185,17 +185,17 @@ public class WexTangDou extends Spider {
         HashMap<String, String> params = new HashMap<>();
         params.put("pid", key);
         params.put("page", "1");
-        JSONObject indexJson = g("index", params);
+        JSONObject indexJson = fetch("index", params);
         JSONArray datas = indexJson.optJSONArray("datas");
-        ArrayList<Vod> firstBatch = d(datas);
+        ArrayList<Vod> firstBatch = parseVod(datas);
         items.addAll(firstBatch);
         for (Vod item : firstBatch) {
             for (int pageNum = 1; pageNum <= 3; pageNum++) {
                 try {
                     String url = SHARE_RECOMMEND_URL + pageNum + "&vid=" + item.getVodId();
-                    JSONObject recJson = new JSONObject(OkHttp.string(url, null, b()));
+                    JSONObject recJson = new JSONObject(OkHttp.string(url, null, buildHeader()));
                     JSONArray recArr = recJson.optJSONArray("data");
-                    ArrayList<Vod> recList = c(recArr);
+                    ArrayList<Vod> recList = parseRecommendVod(recArr);
                     for (Vod rec : recList) {
                         boolean found = false;
                         for (Vod existing : items) {
@@ -218,21 +218,21 @@ public class WexTangDou extends Spider {
     @Override
     public String detailContent(List<String> ids) throws Exception {
         String vid = ids.get(0);
-        JSONObject json = new JSONObject(OkHttp.string(SHARE_MAIN_URL + vid, null, b()));
+        JSONObject json = new JSONObject(OkHttp.string(SHARE_MAIN_URL + vid, null, buildHeader()));
         JSONObject data = json.optJSONObject("data");
         String name = data != null ? data.optString("title", "") : vid;
         String content = data != null ? data.optString("title", "") : "";
-        String pic = data != null ? e(data) : "";
+        String pic = data != null ? getPicUrl(data) : "";
         Vod vod = new Vod(vid, name, pic);
         vod.setVodContent(content);
         ArrayList<String> playFromList = new ArrayList<>();
         ArrayList<String> playUrlList = new ArrayList<>();
         HashMap<String, String> params = new HashMap<>();
         params.put("vid", vid);
-        JSONObject mp4Json = g("mp4", params);
+        JSONObject mp4Json = fetch("mp4", params);
         JSONObject datas = mp4Json.optJSONObject("datas");
-        a(datas, "hd", playFromList, playUrlList);
-        a(datas, "sd", playFromList, playUrlList);
+        addCdnUrls(datas, "hd", playFromList, playUrlList);
+        addCdnUrls(datas, "sd", playFromList, playUrlList);
         if (playFromList.isEmpty() && data != null) {
             String playUrl = data.optString("play_url");
             playUrl = data.optString("video_url", playUrl);
@@ -255,10 +255,10 @@ public class WexTangDou extends Spider {
         }
         HashMap<String, String> params = new HashMap<>();
         params.put("vid", id);
-        JSONObject mp4Json = g("mp4", params);
+        JSONObject mp4Json = fetch("mp4", params);
         JSONObject datas = mp4Json.optJSONObject("datas");
-        String url = f(datas, flag);
-        if (TextUtils.isEmpty(url)) url = f(datas, "hd");
+        String url = fetchPlayUrl(datas, flag);
+        if (TextUtils.isEmpty(url)) url = fetchPlayUrl(datas, "hd");
         return Result.get().url(url).parse(0).header(headers).string();
     }
 
@@ -268,18 +268,18 @@ public class WexTangDou extends Spider {
         HashMap<String, String> params = new HashMap<>();
         params.put("pid", "1471610743");
         params.put("page", "1");
-        JSONObject indexJson = g("index", params);
+        JSONObject indexJson = fetch("index", params);
         JSONArray datas = indexJson.optJSONArray("datas");
-        ArrayList<Vod> firstBatch = d(datas);
+        ArrayList<Vod> firstBatch = parseVod(datas);
         results.addAll(firstBatch);
         ArrayList<Vod> snapshot = new ArrayList<>(results);
         for (Vod item : snapshot) {
             for (int pageNum = 1; pageNum <= 3; pageNum++) {
                 try {
                     String url = SHARE_RECOMMEND_URL + pageNum + "&vid=" + item.getVodId();
-                    JSONObject recJson = new JSONObject(OkHttp.string(url, null, b()));
+                    JSONObject recJson = new JSONObject(OkHttp.string(url, null, buildHeader()));
                     JSONArray recArr = recJson.optJSONArray("data");
-                    ArrayList<Vod> recList = c(recArr);
+                    ArrayList<Vod> recList = parseRecommendVod(recArr);
                     for (Vod rec : recList) {
                         boolean found = false;
                         for (Vod existing : results) {

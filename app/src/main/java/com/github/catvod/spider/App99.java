@@ -45,25 +45,25 @@ public class App99 extends Spider {
     private static final String DEVICE_HOST = "a11-gz01-test";
     private static final int SDK_INT = 0x20;
 
-    private final JSONObject a;
-    public String b;
-    public String c;
-    public String d;
-    public String e;
-    public String f;
-    public String g;
+    private final JSONObject extend;
+    public String siteUrl;
+    public String token;
+    public String apiKey;
+    public String appKey;
+    public String ua;
+    public String version;
 
     public App99() {
-        this.b = "";
-        this.c = "";
-        this.d = "";
-        this.e = "";
-        this.f = "";
-        this.g = DEFAULT_VERSION;
-        this.a = new JSONObject();
+        this.siteUrl = "";
+        this.token = "";
+        this.apiKey = "";
+        this.appKey = "";
+        this.ua = "";
+        this.version = DEFAULT_VERSION;
+        this.extend = new JSONObject();
     }
 
-    public static ArrayList<Filter.Value> b(JSONArray array) {
+    public static ArrayList<Filter.Value> addFilter(JSONArray array) {
         ArrayList<Filter.Value> values = new ArrayList<>();
         if (array == null) return values;
         for (int i = 0; i < array.length(); i++) {
@@ -137,17 +137,17 @@ public class App99 extends Spider {
         }
     }
 
-    public HashMap<String, String> a(String nonce, String timestamp, String encryptedBody, String p4) {
+    public HashMap<String, String> buildHeader(String nonce, String timestamp, String encryptedBody, String p4) {
         HashMap<String, String> headers = new HashMap<>();
-        headers.put("User-Agent", this.f);
+        headers.put("User-Agent", this.ua);
         headers.put("Accept", "application/json");
         headers.put("Content-Type", "application/json");
         headers.put("client_type", "android");
-        headers.put("uuid", this.d);
+        headers.put("uuid", this.apiKey);
         headers.put("timestamp", timestamp);
         String sign;
         try {
-            String signSrc = encryptedBody + ":" + timestamp + ":" + nonce + ":" + p4 + ":" + this.e;
+            String signSrc = encryptedBody + ":" + timestamp + ":" + nonce + ":" + p4 + ":" + this.appKey;
             MessageDigest md = MessageDigest.getInstance("SHA-256");
             byte[] digest = md.digest(signSrc.getBytes(StandardCharsets.UTF_8));
             StringBuilder sb = new StringBuilder();
@@ -162,13 +162,13 @@ public class App99 extends Spider {
         }
         headers.put("sign", sign);
         headers.put("nonce", nonce);
-        headers.put("appkey", this.e);
-        headers.put("version", this.g);
+        headers.put("appkey", this.appKey);
+        headers.put("version", this.version);
         headers.put("api_version", "v1");
         return headers;
     }
 
-    public void c(String version, String name, String buildSignature) throws Exception {
+    public void fetchCategories(String version, String name, String buildSignature) throws Exception {
         String nonce = nonce();
         String timestamp = String.valueOf(System.currentTimeMillis());
         JSONObject body = new JSONObject();
@@ -181,29 +181,29 @@ public class App99 extends Spider {
         body.put("timestamp", timestamp);
         body.put("nonce", nonce);
         String bodyStr = body.toString();
-        String encrypted = aesEncrypt(bodyStr, this.d);
-        String url = this.b + "/app/systemInit";
-        HashMap<String, String> headers = a(nonce, timestamp, encrypted, "");
+        String encrypted = aesEncrypt(bodyStr, this.apiKey);
+        String url = this.siteUrl + "/app/systemInit";
+        HashMap<String, String> headers = buildHeader(nonce, timestamp, encrypted, "");
         String response = OkHttp.post(url, encrypted, headers);
         if (TextUtils.isEmpty(response)) return;
-        String decrypted = aesDecrypt(response, this.d);
+        String decrypted = aesDecrypt(response, this.apiKey);
         if (TextUtils.isEmpty(decrypted)) return;
         JSONObject json = new JSONObject(decrypted);
         if (json.has("player")) {
-            this.a.put("player", json.getJSONObject("player"));
+            this.extend.put("player", json.getJSONObject("player"));
         }
         if (json.has("parser_api")) {
-            this.a.put("parses", json.getJSONArray("parser_api"));
+            this.extend.put("parses", json.getJSONArray("parser_api"));
         }
         if (json.has("categorys")) {
             JSONObject categorys = json.getJSONObject("categorys");
             if (categorys.has("data")) {
-                this.a.put("categories", categorys.getJSONArray("data"));
+                this.extend.put("categories", categorys.getJSONArray("data"));
             }
         }
     }
 
-    public void d(String path, String version, String name, String packageName, String buildNumber, String buildSignature) throws Exception {
+    public void fetchToken(String path, String version, String name, String packageName, String buildNumber, String buildSignature) throws Exception {
         long now = System.currentTimeMillis();
         String did = UUID.randomUUID().toString();
         String nonce = nonce();
@@ -242,23 +242,23 @@ public class App99 extends Spider {
         body.put("timestamp", timestamp);
         body.put("nonce", nonce);
         String bodyStr = body.toString();
-        String encrypted = aesEncrypt(bodyStr, this.d);
-        String url = this.b + path;
-        HashMap<String, String> headers = a(nonce, timestamp, encrypted, "");
+        String encrypted = aesEncrypt(bodyStr, this.apiKey);
+        String url = this.siteUrl + path;
+        HashMap<String, String> headers = buildHeader(nonce, timestamp, encrypted, "");
         String response = OkHttp.post(url, encrypted, headers);
         if (TextUtils.isEmpty(response)) return;
-        String decrypted = aesDecrypt(response, this.d);
+        String decrypted = aesDecrypt(response, this.apiKey);
         if (TextUtils.isEmpty(decrypted)) return;
         JSONObject json = new JSONObject(decrypted);
         if (json.has("userInfo")) {
             JSONObject userInfo = json.getJSONObject("userInfo");
             if (userInfo.has("user_token")) {
-                this.c = userInfo.optString("user_token");
+                this.token = userInfo.optString("user_token");
             }
         }
     }
 
-    public void e(String loginPath, String version, String name, String packageName, String buildNumber, String buildSignature) {
+    public void login(String loginPath, String version, String name, String packageName, String buildNumber, String buildSignature) {
         ArrayList<String> paths = new ArrayList<>();
         if (!TextUtils.isEmpty(loginPath)) {
             paths.add(loginPath);
@@ -271,14 +271,14 @@ public class App99 extends Spider {
         }
         for (String path : paths) {
             try {
-                d(path, version, name, packageName, buildNumber, buildSignature);
-                if (!TextUtils.isEmpty(this.c)) return;
+                fetchToken(path, version, name, packageName, buildNumber, buildSignature);
+                if (!TextUtils.isEmpty(this.token)) return;
             } catch (Exception ignored) {
             }
         }
     }
 
-    public ArrayList<Vod> f(JSONArray array) throws Exception {
+    public ArrayList<Vod> parseVod(JSONArray array) throws Exception {
         ArrayList<Vod> list = new ArrayList<>();
         for (int i = 0; i < array.length(); i++) {
             JSONObject item = array.getJSONObject(i);
@@ -294,7 +294,7 @@ public class App99 extends Spider {
         return list;
     }
 
-    public JSONObject g(JSONObject body, String path, String token) throws Exception {
+    public JSONObject fetch(JSONObject body, String path, String token) throws Exception {
         String nonce = nonce();
         String timestamp = String.valueOf(System.currentTimeMillis());
         body.put("timestamp", timestamp);
@@ -303,19 +303,19 @@ public class App99 extends Spider {
             body.put("token", token);
         }
         String bodyStr = body.toString();
-        String encrypted = aesEncrypt(bodyStr, this.d);
-        String url = this.b + path;
-        HashMap<String, String> headers = a(nonce, timestamp, encrypted, token);
+        String encrypted = aesEncrypt(bodyStr, this.apiKey);
+        String url = this.siteUrl + path;
+        HashMap<String, String> headers = buildHeader(nonce, timestamp, encrypted, token);
         String response = OkHttp.post(url, encrypted, headers);
         if (TextUtils.isEmpty(response)) return new JSONObject();
-        String decrypted = aesDecrypt(response, this.d);
+        String decrypted = aesDecrypt(response, this.apiKey);
         if (TextUtils.isEmpty(decrypted)) return new JSONObject();
         return new JSONObject(decrypted);
     }
 
-    public String h(JSONObject playerConfig, String url) {
-        if (!this.a.has("parses")) return "";
-        JSONArray parses = this.a.optJSONArray("parses");
+    public String fetchPlayUrl(JSONObject playerConfig, String url) {
+        if (!this.extend.has("parses")) return "";
+        JSONArray parses = this.extend.optJSONArray("parses");
         if (parses == null) return "";
         String parseUrlStr = playerConfig.optString("parseUrl", "");
         String[] parseUrls = parseUrlStr.split(",");
@@ -324,7 +324,7 @@ public class App99 extends Spider {
             allowedIds = Arrays.asList(parseUrls);
         }
         HashMap<String, String> headers = new HashMap<>();
-        headers.put("User-Agent", this.f);
+        headers.put("User-Agent", this.ua);
         headers.put("Accept", "application/json");
         for (int i = 0; i < parses.length(); i++) {
             JSONObject parse = parses.optJSONObject(i);
@@ -353,25 +353,25 @@ public class App99 extends Spider {
         if (TextUtils.isEmpty(config)) return;
         try {
             JSONObject json = new JSONObject(config);
-            this.b = json.optString("host");
-            this.e = json.optString("appkey");
+            this.siteUrl = json.optString("host");
+            this.appKey = json.optString("appkey");
             String name = json.optString("name");
             String buildSignature = json.optString("buildSignature");
             String buildNumber = json.optString("buildNumber");
             String versionName = json.optString("versionName");
             String packageName = json.optString("package");
-            if (TextUtils.isEmpty(this.b) || TextUtils.isEmpty(this.e) || TextUtils.isEmpty(name)
+            if (TextUtils.isEmpty(this.siteUrl) || TextUtils.isEmpty(this.appKey) || TextUtils.isEmpty(name)
                     || TextUtils.isEmpty(buildSignature) || TextUtils.isEmpty(buildNumber)
                     || TextUtils.isEmpty(versionName) || TextUtils.isEmpty(packageName)) {
                 return;
             }
-            this.d = json.optString("uuid", UUID.randomUUID().toString());
-            this.f = json.optString("ua", DEFAULT_UA);
-            this.g = json.optString("version", this.g);
+            this.apiKey = json.optString("uuid", UUID.randomUUID().toString());
+            this.ua = json.optString("ua", DEFAULT_UA);
+            this.version = json.optString("version", this.version);
             String loginPath = json.optString("LoginPath", "/app/userInfo");
-            c(versionName, name, buildSignature);
-            if (TextUtils.isEmpty(this.c)) {
-                e(loginPath, versionName, name, packageName, buildNumber, buildSignature);
+            fetchCategories(versionName, name, buildSignature);
+            if (TextUtils.isEmpty(this.token)) {
+                login(loginPath, versionName, name, packageName, buildNumber, buildSignature);
             }
         } catch (Exception e) {
             e.printStackTrace();
@@ -383,8 +383,8 @@ public class App99 extends Spider {
         ArrayList<Class> classes = new ArrayList<>();
         LinkedHashMap<String, List<Filter>> filters = new LinkedHashMap<>();
         try {
-            if (this.a.has("categories")) {
-                JSONArray categories = this.a.getJSONArray("categories");
+            if (this.extend.has("categories")) {
+                JSONArray categories = this.extend.getJSONArray("categories");
                 for (int i = 0; i < categories.length(); i++) {
                     JSONObject category = categories.getJSONObject(i);
                     String id = category.optString("id");
@@ -392,10 +392,10 @@ public class App99 extends Spider {
                     JSONObject typeExtend = category.optJSONObject("type_extend");
                     if (typeExtend != null) {
                         ArrayList<Filter> filterList = new ArrayList<>();
-                        filterList.add(new Filter("class", "类型", b(typeExtend.optJSONArray("class"))));
-                        filterList.add(new Filter("area", "地区", b(typeExtend.optJSONArray("areas"))));
-                        filterList.add(new Filter("lang", "语言", b(typeExtend.optJSONArray("lang"))));
-                        filterList.add(new Filter("year", "年份", b(typeExtend.optJSONArray("years"))));
+                        filterList.add(new Filter("class", "类型", addFilter(typeExtend.optJSONArray("class"))));
+                        filterList.add(new Filter("area", "地区", addFilter(typeExtend.optJSONArray("areas"))));
+                        filterList.add(new Filter("lang", "语言", addFilter(typeExtend.optJSONArray("lang"))));
+                        filterList.add(new Filter("year", "年份", addFilter(typeExtend.optJSONArray("years"))));
                         filters.put(id, filterList);
                     }
                 }
@@ -405,8 +405,8 @@ public class App99 extends Spider {
             body.put("page", "1");
             body.put("limit", 0x15);
             String pid = "1";
-            if (this.a.has("categories")) {
-                JSONArray categories = this.a.getJSONArray("categories");
+            if (this.extend.has("categories")) {
+                JSONArray categories = this.extend.getJSONArray("categories");
                 if (categories.length() > 0) {
                     String firstId = categories.getJSONObject(0).optString("id");
                     if (!TextUtils.isEmpty(firstId)) {
@@ -418,10 +418,10 @@ public class App99 extends Spider {
             body.put("orderBy", "time");
             body.put("isCategory", 1);
             body.put("token", "");
-            JSONObject response = g(body, "/vod/search", "");
+            JSONObject response = fetch(body, "/vod/search", "");
             ArrayList<Vod> vodList = new ArrayList<>();
             if (response.has("data")) {
-                vodList = f(response.getJSONArray("data"));
+                vodList = parseVod(response.getJSONArray("data"));
             }
             return Result.string(classes, vodList, filters);
         } catch (Exception e) {
@@ -439,12 +439,12 @@ public class App99 extends Spider {
             body.put("pid", tid);
             body.put("orderBy", "time");
             body.put("isCategory", 1);
-            body.put("token", this.c);
-            JSONObject response = g(body, "/vod/search", this.c);
+            body.put("token", this.token);
+            JSONObject response = fetch(body, "/vod/search", this.token);
             if (response.has("data")) {
                 int pageCount = response.optInt("page_count", 1);
                 int page = Integer.parseInt(pg);
-                return Result.get().page(page, pageCount, 0, 0).vod(f(response.getJSONArray("data"))).string();
+                return Result.get().page(page, pageCount, 0, 0).vod(parseVod(response.getJSONArray("data"))).string();
             }
         } catch (Exception e) {
         }
@@ -456,8 +456,8 @@ public class App99 extends Spider {
         Vod vod = new Vod();
         try {
             HashMap<String, String> playerMap = new HashMap<>();
-            if (this.a.has("player")) {
-                JSONObject player = this.a.getJSONObject("player");
+            if (this.extend.has("player")) {
+                JSONObject player = this.extend.getJSONObject("player");
                 Iterator<String> keys = player.keys();
                 while (keys.hasNext()) {
                     String key = keys.next();
@@ -472,8 +472,8 @@ public class App99 extends Spider {
             body.put("eps", "1");
             body.put("v", "2.0.0");
             body.put("pl", 1);
-            body.put("token", this.c);
-            JSONObject response = g(body, "/vod/detail", this.c);
+            body.put("token", this.token);
+            JSONObject response = fetch(body, "/vod/detail", this.token);
             if (!response.has("data")) {
                 return Result.string(vod);
             }
@@ -549,13 +549,13 @@ public class App99 extends Spider {
             if (url.startsWith("http://") || url.startsWith("https://")) {
                 return Result.get().url(url).string();
             }
-            if (!this.a.has("player")) {
+            if (!this.extend.has("player")) {
                 return Result.error("播放器配置缺失");
             }
-            JSONObject playerConfig = this.a.getJSONObject("player").getJSONObject(playerKey);
+            JSONObject playerConfig = this.extend.getJSONObject("player").getJSONObject(playerKey);
             int type = playerConfig.optInt("type");
             if (type != 0) {
-                String parsed = h(playerConfig, url);
+                String parsed = fetchPlayUrl(playerConfig, url);
                 if (TextUtils.isEmpty(parsed)) {
                     return Result.error(errorMsg);
                 }
@@ -577,10 +577,10 @@ public class App99 extends Spider {
             body.put("limit", 0x15);
             body.put("orderBy", "vod_hits_month");
             body.put("sort", "desc");
-            body.put("token", this.c);
-            JSONObject response = g(body, "/vod/search", this.c);
+            body.put("token", this.token);
+            JSONObject response = fetch(body, "/vod/search", this.token);
             if (response.has("data")) {
-                return Result.string(f(response.getJSONArray("data")));
+                return Result.string(parseVod(response.getJSONArray("data")));
             }
         } catch (Exception e) {
         }

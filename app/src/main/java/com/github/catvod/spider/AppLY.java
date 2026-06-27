@@ -24,7 +24,7 @@ public class AppLY extends Spider {
     private static final String PROJECT = "lyhxcx";
     private static final String USER_ID = "yszyz";
 
-    public final String a(String path, HashMap<String, Object> params) {
+    public final String fetch(String path, HashMap<String, Object> params) {
         try {
             HashMap<String, String> headers = new HashMap<>();
             headers.put("Content-Type", "application/json;charset=utf-8");
@@ -47,7 +47,7 @@ public class AppLY extends Spider {
             params.put("memberId", USER_ID);
             params.put("project", PROJECT);
             params.put("userId", USER_ID);
-            JSONObject json = new JSONObject(a("/page/setinf/get", params));
+            JSONObject json = new JSONObject(fetch("/page/setinf/get", params));
             JSONArray sects = json.optJSONArray("sects");
             if (sects != null) {
                 for (int i = 0; i < sects.length(); i++) {
@@ -71,7 +71,7 @@ public class AppLY extends Spider {
         sect.add(tid);
         params.put("sect", sect);
         try {
-            JSONObject json = new JSONObject(a("/search/album/list", params));
+            JSONObject json = new JSONObject(fetch("/search/album/list", params));
             JSONObject pb = json.getJSONObject("pb");
             JSONArray dataList = pb.getJSONArray("dataList");
             ArrayList<Vod> list = new ArrayList<>();
@@ -100,7 +100,7 @@ public class AppLY extends Spider {
         params.put("pageSize", "2147483647");
         params.put("selectFlag", "0");
         params.put("userId", USER_ID);
-        JSONObject json = new JSONObject(a("/album/res/list", params));
+        JSONObject json = new JSONObject(fetch("/album/res/list", params));
         JSONObject album = json.getJSONObject("album");
         String name = album.optString("name");
         String pic = PHOTO_HOST + album.optString("img");
@@ -131,7 +131,7 @@ public class AppLY extends Spider {
         params.put("resCode", id);
         params.put("userId", "92315ec6e58a45ba7f47fd143b3d7956");
         try {
-            JSONObject json = new JSONObject(a("/play/get/playurl", params));
+            JSONObject json = new JSONObject(fetch("/play/get/playurl", params));
             JSONObject playres = json.getJSONObject("playres");
             String playurl = playres.optString("playurl");
             return Result.get().url(playurl).parse(0).string();

@@ -27,9 +27,9 @@ public class TingShijie extends Spider {
     private static final String KEY = "J9gSpfUlzYxE8Hn5IXiGaD2jVMrwAm0K";
     private static final String PLAY_FROM = "世界听书";
 
-    private static String b = "https://app.365ting.com/listen/Apitzg2025/";
+    private static String siteUrl = "https://app.365ting.com/listen/Apitzg2025/";
 
-    public static String c(String str) {
+    public static String md5(String str) {
         try {
             MessageDigest md = MessageDigest.getInstance("MD5");
             byte[] digest = md.digest(str.getBytes("UTF-8"));
@@ -44,11 +44,11 @@ public class TingShijie extends Spider {
         }
     }
 
-    public final String a(String pg) {
+    public final String emptyResult(String pg) {
         return Result.get().page(Integer.parseInt(pg), 1, 20, 0).vod(new ArrayList<>()).string();
     }
 
-    public final Map<String, String> b() {
+    public final Map<String, String> buildHeader() {
         HashMap<String, String> headers = new HashMap<>();
         headers.put("User-Agent", UA);
         return headers;
@@ -59,9 +59,9 @@ public class TingShijie extends Spider {
         try {
             if (TextUtils.isEmpty(pg)) pg = "1";
             StringBuilder sb = new StringBuilder();
-            sb.append(b).append("appHomeByCategory?categoryId=").append(tid).append("&page=").append(pg).append("&size=120");
-            JSONObject json = new JSONObject(OkHttp.string(sb.toString(), null, b()));
-            if (json.getInt("status") != 0) return a(pg);
+            sb.append(siteUrl).append("appHomeByCategory?categoryId=").append(tid).append("&page=").append(pg).append("&size=120");
+            JSONObject json = new JSONObject(OkHttp.string(sb.toString(), null, buildHeader()));
+            if (json.getInt("status") != 0) return emptyResult(pg);
             JSONArray data = json.getJSONArray("data");
             ArrayList<Vod> list = new ArrayList<>();
             for (int i = 0; i < data.length(); i++) {
@@ -70,7 +70,7 @@ public class TingShijie extends Spider {
             }
             return Result.get().page(Integer.parseInt(pg), 100, 20, 2000).vod(list).string();
         } catch (Exception e) {
-            return a(pg);
+            return emptyResult(pg);
         }
     }
 
@@ -78,8 +78,8 @@ public class TingShijie extends Spider {
     public String detailContent(List<String> ids) throws Exception {
         String bookId = ids.get(0);
         StringBuilder bookSb = new StringBuilder();
-        bookSb.append(b).append("book?bookId=").append(bookId);
-        JSONObject bookResp = new JSONObject(OkHttp.string(bookSb.toString(), null, b()));
+        bookSb.append(siteUrl).append("book?bookId=").append(bookId);
+        JSONObject bookResp = new JSONObject(OkHttp.string(bookSb.toString(), null, buildHeader()));
         if (bookResp.getInt("status") != 0) {
             return Result.string(new Vod());
         }
@@ -89,8 +89,8 @@ public class TingShijie extends Spider {
         int totalPages = (count + 999) / 1000;
         for (int page = 1; page <= totalPages; page++) {
             StringBuilder chapterSb = new StringBuilder();
-            chapterSb.append(b).append("chapter?size=1000&page=").append(page).append("&sort=asc&bookId=").append(bookId);
-            JSONObject chapterResp = new JSONObject(OkHttp.string(chapterSb.toString(), null, b()));
+            chapterSb.append(siteUrl).append("chapter?size=1000&page=").append(page).append("&sort=asc&bookId=").append(bookId);
+            JSONObject chapterResp = new JSONObject(OkHttp.string(chapterSb.toString(), null, buildHeader()));
             if (chapterResp.getInt("status") != 0) continue;
             JSONArray chapterList = chapterResp.getJSONObject("data").getJSONArray("list");
             for (int i = 0; i < chapterList.length(); i++) {
@@ -121,12 +121,12 @@ public class TingShijie extends Spider {
     public void init(Context context, String extend) throws Exception {
         String slash = "/";
         try {
-            String resp = OkHttp.string(CONFIG_URL, b());
+            String resp = OkHttp.string(CONFIG_URL, buildHeader());
             if (!TextUtils.isEmpty(resp)) {
-                b = resp.trim();
+                siteUrl = resp.trim();
             }
-            if (!b.endsWith(slash)) {
-                b = b + slash;
+            if (!siteUrl.endsWith(slash)) {
+                siteUrl = siteUrl + slash;
             }
         } catch (Exception e) {
         }
@@ -142,10 +142,10 @@ public class TingShijie extends Spider {
                 return Result.get().url(emptyUrl).parse(0).string();
             }
             String timestamp = String.valueOf(System.currentTimeMillis());
-            String addItParapet = c(c(timestamp + key) + key);
+            String addItParapet = md5(md5(timestamp + key) + key);
             StringBuilder sb = new StringBuilder();
-            sb.append(b).append("AppGetChapterUrl2023?timeStamp=").append(timestamp).append("&uid=&chapterId=").append(parts[1]).append("&addItParapet=").append(addItParapet).append("&bookId=").append(parts[0]);
-            JSONObject resp = new JSONObject(OkHttp.string(sb.toString(), null, b()));
+            sb.append(siteUrl).append("AppGetChapterUrl2023?timeStamp=").append(timestamp).append("&uid=&chapterId=").append(parts[1]).append("&addItParapet=").append(addItParapet).append("&bookId=").append(parts[0]);
+            JSONObject resp = new JSONObject(OkHttp.string(sb.toString(), null, buildHeader()));
             if (resp.getInt("status") == 0) {
                 String src = resp.optString("src");
                 if (!TextUtils.isEmpty(src)) {
@@ -161,8 +161,8 @@ public class TingShijie extends Spider {
     public String searchContent(String key, boolean quick) throws Exception {
         try {
             StringBuilder sb = new StringBuilder();
-            sb.append(b).append("appSearch?client=babala-android&search=").append(key).append("&app_token=abcSEARCH-2025");
-            JSONObject json = new JSONObject(OkHttp.string(sb.toString(), null, b()));
+            sb.append(siteUrl).append("appSearch?client=babala-android&search=").append(key).append("&app_token=abcSEARCH-2025");
+            JSONObject json = new JSONObject(OkHttp.string(sb.toString(), null, buildHeader()));
             if (json.getInt("status") != 0) {
                 return Result.string(new ArrayList<>());
             }
