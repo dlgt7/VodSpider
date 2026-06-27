@@ -66,6 +66,10 @@ public class XBPQ extends Spider {
     private static final String SLASH = "/";
     private static final String HASH = "#";
     private static final String DOLLAR = "$";
+    /** 正则转义后的 $，用于 String.split() 等需要正则的场景 */
+    private static final String DOLLAR_REGEX = "\\$";
+    /** 分类项分隔符正则：兼容 # 和 , 两种写法 */
+    private static final String CATE_SEPARATOR_REGEX = "[#,]";
     private static final String UNDERSCORE = "_";
     private static final String QUESTION_MARK = "?";
     private static final String LEFT_BRACKET = "[";
@@ -647,10 +651,14 @@ public class XBPQ extends Spider {
                     classes.add(new Class(ids[i], names[i]));
                 }
             } else if (!cateName.isEmpty()) {
-                // 使用配置的分类（格式：名称$ID#名称$ID）
-                String[] names = cateName.split(HASH);
+                // 使用配置的分类（兼容两种格式：
+                //   标准: 名称$ID#名称$ID  （# 分隔）
+                //   变体: 名称$ID,名称$ID  （, 分隔）
+                // 注意: $ 是正则元字符，必须用 \\$ 进行字面分割）
+                String[] names = cateName.split(CATE_SEPARATOR_REGEX);
                 for (String name : names) {
-                    String[] parts = name.split(DOLLAR);
+                    if (name.isEmpty()) continue;
+                    String[] parts = name.split(DOLLAR_REGEX);
                     if (parts.length >= 2) {
                         classes.add(new Class(parts[1], parts[0]));
                     } else if (parts.length == 1) {
@@ -777,13 +785,13 @@ public class XBPQ extends Spider {
             }
 
             if (filterList.isEmpty()) {
-                // 普通格式: 名称$值#名称$值 或 名称&名称（配合值配置）
+                // 普通格式: 名称$值#名称$值 或 名称$值,名称$值 或 名称&名称（配合值配置）
                 // 也作为 [替换:...] 解析失败时的兜底
-                String[] nameArr = names.split(HASH);
+                String[] nameArr = names.split(CATE_SEPARATOR_REGEX);
                 String[] valueArr = !values.isEmpty() ? values.split(AMPERSAND) : new String[0];
 
                 for (int i = 0; i < nameArr.length; i++) {
-                    String[] parts = nameArr[i].split(DOLLAR);
+                    String[] parts = nameArr[i].split(DOLLAR_REGEX);
                     String name = parts[0];
                     String value = parts.length >= 2 ? parts[1] :
                         (valueArr.length > i ? valueArr[i] : name);
