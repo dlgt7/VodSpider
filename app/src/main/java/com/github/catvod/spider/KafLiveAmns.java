@@ -10,6 +10,7 @@ import com.github.catvod.crawler.Spider;
 import com.github.catvod.net.OkHttp;
 
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
@@ -21,7 +22,7 @@ public class KafLiveAmns extends Spider {
 
     private String host = "https://www.kafeizhibo.cc";
 
-    private static String extractRoomId(JSONObject obj) {
+    private static String extractRoomId(JSONObject obj) throws JSONException {
         JSONObject archor = obj.optJSONObject("archor");
         if (archor != null) {
             String roomId = archor.optString("room_id");
