@@ -124,7 +124,17 @@ public class Cntv extends Spider {
                 String actors = item.optString("actors");
                 String brief = item.optString("brief");
 
-                String vodId = type + "###" + title + "###" + url + "###" + image + "###" + id + "###" + year + "###" + actors + "###" + brief;
+                StringBuilder sb = new StringBuilder();
+                sb.append(type).append("###")
+                  .append(title).append("###")
+                  .append(url).append("###")
+                  .append(image).append("###")
+                  .append(id).append("###")
+                  .append(year).append("###")
+                  .append(actors).append("###")
+                  .append(brief);
+                String vodId = sb.toString();
+
                 list.add(new Vod(vodId, title, image, year));
             }
         } catch (Exception e) {
@@ -281,7 +291,7 @@ public class Cntv extends Spider {
                             String playDate = doc.optString("column_playdate");
                             String brief = doc.optString("column_brief");
 
-                            if (!TextUtils.isEmpty(website)) continue;
+                            if (TextUtils.isEmpty(website)) continue;
 
                             String vodId = "栏目大全" + "###" + name + "###" + website + "###" + logo + "###" + videoId + "###" + playDate + "######" + brief;
                             videos.add(new Vod(vodId, name, logo, ""));
@@ -325,7 +335,7 @@ public class Cntv extends Spider {
             playUrls = getVideoList(videoId);
         } else {
             try {
-                if (!TextUtils.isEmpty(videoId) && videoId.matches("[0-9a-fA-F]{32}")) {
+                if (!TextUtils.isEmpty(videoId)) {
                     String url = "https://api.cntv.cn/NewVideo/getVideoListByAlbumIdNew?id=" + videoId + "&serviceId=tvcctv&p=1&n=100&mode=0&pub=1";
                     String response = OkHttp.string(url, getHeaders());
                     JSONObject object = new JSONObject(response);
@@ -377,6 +387,8 @@ public class Cntv extends Spider {
             } catch (Exception e) {
                 playUrl = id;
             }
+        } else {
+            playUrl = getVideoUrl(id);
         }
 
         if (TextUtils.isEmpty(playUrl)) {
