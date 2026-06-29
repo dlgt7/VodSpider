@@ -8,8 +8,6 @@ import com.github.catvod.bean.Result;
 import com.github.catvod.bean.Vod;
 import com.github.catvod.crawler.Spider;
 import com.github.catvod.net.OkHttp;
-import com.github.catvod.spider.merge.a.s;
-import com.github.catvod.spider.merge.B.c;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -48,13 +46,8 @@ public class QiutongTY extends Spider {
     @Override
     public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) {
         String cateId = "-1".equals(tid) ? "" : tid;
-        String url = s.l(
-            "https://aapi2.xbncs.com/api/room/page?roomType=&navId=",
-            cateId,
-            "&roomId=&word=&page=",
-            pg,
-            "&pageSize=30&channelId=3&platform=1"
-        );
+        String url = "https://aapi2.xbncs.com/api/room/page?roomType=&navId=" +
+            cateId + "&roomId=&word=&page=" + pg + "&pageSize=30&channelId=3&platform=1";
 
         Map<String, String> headers = new HashMap<>();
         headers.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36");
@@ -133,7 +126,7 @@ public class QiutongTY extends Spider {
 
             if (!TextUtils.isEmpty(pushUrl)) {
                 String encodedPushUrl = Base64.encodeToString(
-                    pushUrl.getBytes(c.c()),
+                    pushUrl.getBytes(StandardCharsets.UTF_8),
                     Base64.NO_WRAP
                 );
                 playUrls.add("flv$" + encodedPushUrl);
@@ -141,7 +134,7 @@ public class QiutongTY extends Spider {
 
             if (!TextUtils.isEmpty(pullUrl)) {
                 String encodedPullUrl = Base64.encodeToString(
-                    pullUrl.getBytes(c.c()),
+                    pullUrl.getBytes(StandardCharsets.UTF_8),
                     Base64.NO_WRAP
                 );
                 playUrls.add("m3u8$" + encodedPullUrl);
@@ -165,7 +158,7 @@ public class QiutongTY extends Spider {
         try {
             String decodedUrl = new String(
                 Base64.decode(id, Base64.NO_WRAP),
-                c.c()
+                StandardCharsets.UTF_8
             );
             return Result.get()
                 .url(decodedUrl)
