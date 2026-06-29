@@ -23,27 +23,27 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * @author CatVod
- * @date 2024-10-06
+ * 中央电视台 spider
+ * 完全对照 央视.py 转换
  */
 public class Cntv extends Spider {
 
     private static final Pattern GUID_PATTERN = Pattern.compile("var\\s+guid\\s*=\\s*\"(.+?)\";");
     private static final Pattern DOMAIN_PATTERN = Pattern.compile("(https?://[a-zA-Z0-9.]+)/");
 
-    // Fallback episode extraction patterns (when API returns empty list)
+    // 回退集数提取正则（API 返回空列表时使用）
     private static final Pattern EPISODE_DRAMA = Pattern.compile(
-            "'title':\\s*'(?<title>.+?)',\\n{0,1}\\s*'brief':\\s*'(.+?)',\\n{0,1}\\s*'img':\\s*'(.+?)',\\n{0,1}\\s*'url':\\s*'(?<url>.+?)'"
-    );
+            "'title':\\s*'(?<title>.+?)',\\n{0,1}\\s*'brief':\\s*'(.+?)',\\n{0,1}\\s*'img':\\s*'(.+?)',\\n{0,1}\\s*'url':\\s*'(?<url>.+?)'",
+            Pattern.MULTILINE | Pattern.DOTALL);
     private static final Pattern EPISODE_SPECIAL = Pattern.compile(
-            "class=\"tp1\"><a\\s*href=\"(?<url>https://.+?)\"\\s*target=\"_blank\"\\s*title=\"(?<title>.+?)\"></a></div>"
-    );
+            "class=\"tp1\"><a\\s*href=\"(?<url>https://.+?)\"\\s*target=\"_blank\"\\s*title=\"(?<title>.+?)\"></a></div>",
+            Pattern.MULTILINE | Pattern.DOTALL);
     private static final Pattern EPISODE_CARTOON = Pattern.compile(
-            "'title':\\s*'(?<title>.+?)',\\n{0,1}\\s*'img':\\s*'(.+?)',\\n{0,1}\\s*'brief':\\s*'(.+?)',\\n{0,1}\\s*'url':\\s*'(?<url>.+?)'"
-    );
+            "'title':\\s*'(?<title>.+?)',\\n{0,1}\\s*'img':\\s*'(.+?)',\\n{0,1}\\s*'brief':\\s*'(.+?)',\\n{0,1}\\s*'url':\\s*'(?<url>.+?)'",
+            Pattern.MULTILINE | Pattern.DOTALL);
     private static final Pattern EPISODE_COLUMN = Pattern.compile(
-            "href=\"(?<url>.+?)\" target=\"_blank\" alt=\"(?<title>.+?)\" title=\".+?\">"
-    );
+            "href=\"(?<url>.+?)\" target=\"_blank\" alt=\"(?<title>.+?)\" title=\".+?\">",
+            Pattern.MULTILINE | Pattern.DOTALL);
 
     private static String getExtend(HashMap<String, String> extend, String key) {
         if (extend != null && extend.containsKey(key)) {
@@ -70,78 +70,193 @@ public class Cntv extends Spider {
         return list;
     }
 
-    private static String buildUrl(String type, String page, HashMap<String, String> extend) {
-        String area = encode(getExtend(extend, "datadq-area"));
-        String sc = encode(getExtend(extend, "datafl-sc"));
-        String year = getExtend(extend, "datanf-year");
-        String letter = getExtend(extend, "dataszm-letter");
-        String channel = encode(getExtend(extend, "datapd-channel"));
-        String encodedType = encode(type);
-
+    /**
+     * 构建分类 URL，参数顺序严格对照 Python
+     */
+    private static String buildUrl(String tid, String pg, HashMap<String, String> extend) {
         String suffix = "&n=24&serviceId=tvcctv&topv=1&t=json";
-        if ("动画片".equals(type)) {
-            StringBuilder sb = new StringBuilder("https://api.cntv.cn/list/getVideoAlbumList?channelid=CHAL1460955899450127&area=");
-            sb.append(area).append("&sc=").append(sc).append("&fc=").append(encodedType)
-              .append("&letter=").append(letter).append("&p=");
-            return sb.append(page).append(suffix).toString();
-        } else if ("纪录片".equals(type)) {
-            StringBuilder sb = new StringBuilder("https://api.cntv.cn/list/getVideoAlbumList?channelid=CHAL1460955924871139&fc=");
-            sb.append(encodedType).append("&channel=").append(channel).append("&sc=").append(sc)
-              .append("&year=").append(year).append("&letter=").append(letter).append("&p=")
-              .append(page).append(suffix);
-            return sb.toString();
-        } else if ("电视剧".equals(type)) {
-            StringBuilder sb = new StringBuilder("https://api.cntv.cn/list/getVideoAlbumList?channelid=CHAL1460955853485115&area=");
-            sb.append(area).append("&sc=").append(sc).append("&fc=").append(encodedType)
-              .append("&year=").append(year).append("&letter=").append(letter).append("&p=")
-              .append(page).append(suffix);
-            return sb.toString();
-        } else if ("特别节目".equals(type)) {
-            StringBuilder sb = new StringBuilder("https://api.cntv.cn/list/getVideoAlbumList?channelid=CHAL1460955953877151&channel=");
-            sb.append(channel).append("&sc=").append(sc).append("&fc=").append(encodedType)
-              .append("&bigday=&letter=").append(letter).append("&p=");
-            return sb.append(page).append(suffix).toString();
+        if ("动画片".equals(tid)) {
+            String id = encode(tid);
+            String area = encode(getExtend(extend, "datadq-area"));
+            String letter = getExtend(extend, "dataszm-letter");
+            String datafl = encode(getExtend(extend, "datafl-sc"));
+            // Python: area={0}&sc={4}&fc={1}&letter={2}&p={3}
+            return "https://api.cntv.cn/list/getVideoAlbumList?channelid=CHAL1460955899450127&area=" + area
+                    + "&sc=" + datafl + "&fc=" + id + "&letter=" + letter + "&p=" + pg + suffix;
+        } else if ("纪录片".equals(tid)) {
+            String id = encode(tid);
+            String channel = encode(getExtend(extend, "datapd-channel"));
+            String datafl = encode(getExtend(extend, "datafl-sc"));
+            String year = getExtend(extend, "datanf-year");
+            String letter = getExtend(extend, "dataszm-letter");
+            // Python: fc={0}&channel={1}&sc={2}&year={3}&letter={4}&p={5}
+            return "https://api.cntv.cn/list/getVideoAlbumList?channelid=CHAL1460955924871139&fc=" + id
+                    + "&channel=" + channel + "&sc=" + datafl + "&year=" + year + "&letter=" + letter + "&p=" + pg + suffix;
+        } else if ("电视剧".equals(tid)) {
+            String id = encode(tid);
+            String datafl = encode(getExtend(extend, "datafl-sc"));
+            String year = getExtend(extend, "datanf-year");
+            String letter = getExtend(extend, "dataszm-letter");
+            // Python 不读 datadq-area，area 始终为空
+            String area = "";
+            // Python: area={0}&sc={1}&fc={2}&year={3}&letter={4}&p={5}
+            return "https://api.cntv.cn/list/getVideoAlbumList?channelid=CHAL1460955853485115&area=" + area
+                    + "&sc=" + datafl + "&fc=" + id + "&year=" + year + "&letter=" + letter + "&p=" + pg + suffix;
+        } else if ("特别节目".equals(tid)) {
+            String id = encode(tid);
+            String channel = encode(getExtend(extend, "datapd-channel"));
+            String datafl = encode(getExtend(extend, "datafl-sc"));
+            String letter = getExtend(extend, "dataszm-letter");
+            // Python: channel={0}&sc={1}&fc={2}&bigday=&letter={3}&p={4}
+            return "https://api.cntv.cn/list/getVideoAlbumList?channelid=CHAL1460955953877151&channel=" + channel
+                    + "&sc=" + datafl + "&fc=" + id + "&bigday=&letter=" + letter + "&p=" + pg + suffix;
         } else {
             // 节目大全
             String cid = getExtend(extend, "cid");
             String fc = getExtend(extend, "fc");
             String fl = getExtend(extend, "fl");
-            StringBuilder sb = new StringBuilder("https://api.cntv.cn/lanmu/columnSearch?&fl=");
-            sb.append(fl).append("&fc=").append(fc).append("&cid=").append(cid)
-              .append("&p=").append(page).append("&n=20&serviceId=tvcctv&t=json&cb=ko");
-            return sb.toString();
+            // Python: fl={0}&fc={1}&cid={2}&p={3}
+            return "https://api.cntv.cn/lanmu/columnSearch?&fl=" + fl + "&fc=" + fc + "&cid=" + cid
+                    + "&p=" + pg + "&n=20&serviceId=tvcctv&t=json&cb=ko";
         }
     }
 
-    private static List<Vod> parseList(String response, String type) throws Exception {
-        List<Vod> list = new ArrayList<>();
-        JSONObject object = new JSONObject(response);
-        JSONObject data = object.optJSONObject("data");
-        if (data == null) return list;
-
-        JSONArray array = data.optJSONArray("list");
-        if (array == null) return list;
-
-        for (int i = 0; i < array.length(); i++) {
-            JSONObject item = array.getJSONObject(i);
-            String url = item.optString("url");
-            if (TextUtils.isEmpty(url)) continue;
-
-            String title = item.optString("title");
-            String image = item.optString("image");
-            String id = item.optString("id");
-            String year = item.optString("year");
-            String actors = item.optString("actors");
-            String brief = item.optString("brief");
-
-            String vodId = type + "###" + title + "###" + url + "###" + image + "###" + id + "###" + year + "###" + actors + "###" + brief;
-            list.add(new Vod(vodId, title, image, ""));
+    /**
+     * 解析普通分类列表（data.list）
+     * 对应 Python get_list
+     */
+    private static List<Vod> parseAlbumList(String html, String tid) {
+        List<Vod> videos = new ArrayList<>();
+        try {
+            JSONObject jRoot = new JSONObject(html);
+            JSONObject data = jRoot.optJSONObject("data");
+            if (data == null) return videos;
+            JSONArray jsonList = data.optJSONArray("list");
+            if (jsonList == null) return videos;
+            for (int i = 0; i < jsonList.length(); i++) {
+                JSONObject vod = jsonList.getJSONObject(i);
+                String url = vod.optString("url");
+                String title = vod.optString("title");
+                String img = vod.optString("image");
+                String id = vod.optString("id");
+                String brief = vod.optString("brief");
+                String year = vod.optString("year");
+                String actors = vod.optString("actors");
+                if (TextUtils.isEmpty(url)) continue;
+                String guid = tid + "###" + title + "###" + url + "###" + img + "###" + id + "###" + year + "###" + actors + "###" + brief;
+                videos.add(new Vod(guid, title, img, ""));
+            }
+        } catch (Exception e) {
+            // ignore
         }
-        return list;
+        return videos;
+    }
+
+    /**
+     * 解析栏目大全列表（response.docs）
+     * 对应 Python get_list1
+     */
+    private static List<Vod> parseColumnList(String html, String tid) {
+        List<Vod> videos = new ArrayList<>();
+        try {
+            JSONObject jRoot = new JSONObject(html);
+            JSONObject response = jRoot.optJSONObject("response");
+            if (response == null) return videos;
+            JSONArray jsonList = response.optJSONArray("docs");
+            if (jsonList == null) return videos;
+            for (int i = 0; i < jsonList.length(); i++) {
+                JSONObject vod = jsonList.getJSONObject(i);
+                String id = vod.optJSONObject("lastVIDE").optString("videoSharedCode");
+                String title = vod.optString("column_name");
+                String url = vod.optString("column_website");
+                String img = vod.optString("column_logo");
+                String year = vod.optString("column_playdate");
+                String brief = vod.optString("column_brief");
+                String actors = "";
+                if (TextUtils.isEmpty(url)) continue;
+                String guid = tid + "###" + title + "###" + url + "###" + img + "###" + id + "###" + year + "###" + actors + "###" + brief;
+                videos.add(new Vod(guid, title, img, ""));
+            }
+        } catch (Exception e) {
+            // ignore
+        }
+        return videos;
+    }
+
+    /**
+     * 解析搜索结果（list）
+     * 对应 Python get_list_search
+     */
+    private static List<Vod> parseSearchList(String html, String tid) {
+        List<Vod> videos = new ArrayList<>();
+        try {
+            JSONObject jRoot = new JSONObject(html);
+            JSONArray jsonList = jRoot.optJSONArray("list");
+            if (jsonList == null) return videos;
+            for (int i = 0; i < jsonList.length(); i++) {
+                JSONObject vod = jsonList.getJSONObject(i);
+                String url = vod.optString("urllink");
+                String title = removeHtml(vod.optString("title"));
+                String img = vod.optString("imglink");
+                String id = vod.optString("id");
+                String brief = vod.optString("channel");
+                String year = vod.optString("uploadtime");
+                if (TextUtils.isEmpty(url)) continue;
+                String guid = tid + "###" + title + "###" + url + "###" + img + "###" + id + "###" + year + "###" + "###" + brief;
+                videos.add(new Vod(guid, title, img, year));
+            }
+        } catch (Exception e) {
+            // ignore
+        }
+        return videos;
     }
 
     private static String removeHtml(String text) {
         return text.replaceAll("<[^>]+>", "").replace("&nbsp;", " ");
+    }
+
+    /**
+     * 提取集数列表（从 JSON）
+     * 对应 Python get_EpisodesList
+     */
+    private static List<String> extractEpisodes(JSONArray jsonList) {
+        List<String> videos = new ArrayList<>();
+        try {
+            for (int i = 0; i < jsonList.length(); i++) {
+                JSONObject vod = jsonList.getJSONObject(i);
+                String url = vod.optString("guid");
+                String title = vod.optString("title");
+                if (TextUtils.isEmpty(url)) continue;
+                videos.add(title + "$" + url);
+            }
+        } catch (Exception e) {
+            // ignore
+        }
+        return videos;
+    }
+
+    /**
+     * 提取集数列表（从 HTML 正则回退）
+     * 对应 Python get_EpisodesList_re
+     */
+    private static List<String> extractEpisodesRegex(String html, Pattern pattern) {
+        List<String> videos = new ArrayList<>();
+        Matcher m = pattern.matcher(html);
+        while (m.find()) {
+            String url = m.group("url");
+            String title = m.group("title");
+            if (TextUtils.isEmpty(url)) continue;
+            videos.add(title + "$" + url);
+        }
+        return videos;
+    }
+
+    private static Pattern getFallbackPattern(String tid) {
+        if ("电视剧".equals(tid) || "纪录片".equals(tid)) return EPISODE_DRAMA;
+        if ("特别节目".equals(tid)) return EPISODE_SPECIAL;
+        if ("动画片".equals(tid)) return EPISODE_CARTOON;
+        if ("节目大全".equals(tid)) return EPISODE_COLUMN;
+        return null;
     }
 
     private static LinkedHashMap<String, List<Filter>> createFilters() {
@@ -186,141 +301,20 @@ public class Cntv extends Spider {
 
     private Map<String, String> getHeaders() {
         Map<String, String> headers = new HashMap<>();
-        headers.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/94.0.4606.54 Safari/537.36");
+        headers.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.54 Safari/537.36");
+        headers.put("Host", "tv.cctv.com");
         headers.put("Referer", "https://tv.cctv.com/");
         return headers;
     }
 
-    /**
-     * 栏目大全：通过 guid 查找 ctid，再获取视频列表
-     */
-    private ArrayList<String> getColumnVideoList(String guid) {
-        ArrayList<String> list = new ArrayList<>();
-        if (TextUtils.isEmpty(guid)) return list;
-
-        try {
-            String infoUrl = "https://api.cntv.cn/video/videoinfoByGuid?guid=" + guid + "&serviceId=tvcctv";
-            String response = OkHttp.string(infoUrl, getHeaders());
-            JSONObject object = new JSONObject(response);
-            String ctid = object.optString("ctid");
-            if (TextUtils.isEmpty(ctid)) {
-                JSONObject data = object.optJSONObject("data");
-                if (data != null) ctid = data.optString("ctid");
-            }
-            if (TextUtils.isEmpty(ctid)) return list;
-
-            String listUrl = "https://api.cntv.cn/NewVideo/getVideoListByColumn?id=" + ctid + "&d=&p=1&n=100&sort=desc&mode=0&serviceId=tvcctv&t=json";
-            String listResponse = OkHttp.string(listUrl, getHeaders());
-            JSONObject listObject = new JSONObject(listResponse);
-            JSONObject listData = listObject.optJSONObject("data");
-            if (listData == null) return list;
-
-            JSONArray videoList = listData.optJSONArray("list");
-            if (videoList == null) return list;
-
-            for (int i = 0; i < videoList.length(); i++) {
-                JSONObject video = videoList.getJSONObject(i);
-                String videoGuid = video.optString("guid");
-                String title = video.optString("title");
-                if (!TextUtils.isEmpty(videoGuid)) {
-                    list.add(title + "$" + videoGuid);
-                }
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        return list;
-    }
-
-    /**
-     * 电视剧/动画片/纪录片/特别节目：通过 albumId 获取视频列表
-     */
-    private ArrayList<String> getAlbumVideoList(String id) {
-        ArrayList<String> list = new ArrayList<>();
-        if (TextUtils.isEmpty(id)) return list;
-
-        try {
-            String url = "https://api.cntv.cn/NewVideo/getVideoListByAlbumIdNew?id=" + id + "&serviceId=tvcctv&p=1&n=100&mode=0&pub=1";
-            String response = OkHttp.string(url, getHeaders());
-            JSONObject object = new JSONObject(response);
-            JSONObject data = object.optJSONObject("data");
-            if (data == null) return list;
-
-            JSONArray array = data.optJSONArray("list");
-            if (array == null) return list;
-
-            for (int i = 0; i < array.length(); i++) {
-                JSONObject item = array.getJSONObject(i);
-                String guid = item.optString("guid");
-                String title = item.optString("title");
-                if (!TextUtils.isEmpty(guid)) {
-                    list.add(title + "$" + guid);
-                }
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        return list;
-    }
-
-    /**
-     * 正则提取剧集列表（fallback：当 API 返回空列表时，从 HTML 页面提取）
-     */
-    private ArrayList<String> getEpisodesByRegex(String html, Pattern pattern) {
-        ArrayList<String> list = new ArrayList<>();
-        Matcher matcher = pattern.matcher(html);
-        while (matcher.find()) {
-            String title = matcher.group("title");
-            String url = matcher.group("url");
-            if (!TextUtils.isEmpty(url)) {
-                list.add(title + "$" + url);
-            }
-        }
-        return list;
-    }
-
-    /**
-     * 获取视频播放地址（m3u8）
-     * 返回空字符串表示获取失败，上层应触发嗅探
-     */
-    private String getVideoUrl(String guid) {
-        String url = "https://vdn.apps.cntv.cn/api/getHttpVideoInfo.do?pid=" + guid;
-        try {
-            String response = OkHttp.string(url, getHeaders());
-            JSONObject object = new JSONObject(response);
-            String hlsUrl = object.optString("hls_url").trim();
-            if (TextUtils.isEmpty(hlsUrl)) return "";
-
-            String hlsContent = OkHttp.string(hlsUrl, getHeaders()).trim();
-            String[] lines = hlsContent.split("\n");
-            if (lines.length < 1) return hlsUrl;
-
-            Matcher matcher = DOMAIN_PATTERN.matcher(hlsUrl);
-            if (!matcher.find()) return hlsUrl;
-
-            String domain = matcher.group(1);
-            String lastLine = lines[lines.length - 1];
-            String[] parts = lastLine.split("/");
-
-            parts[3] = "1200";
-            parts[parts.length - 1] = "1200.m3u8";
-            String hdUrl = domain + TextUtils.join("/", parts);
-
-            // Test HD URL accessibility (Python uses HEAD request)
-            try {
-                OkHttp.string(hdUrl, getHeaders());
-                return hdUrl;
-            } catch (Exception e) {
-                return "";  // Return empty to trigger sniff (matching Python)
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        return "";
+    private Map<String, String> getPlayerHeaders() {
+        Map<String, String> headers = new HashMap<>();
+        headers.put("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 9_1 like Mac OS X) AppleWebKit/601.1.46 (KHTML, like Gecko) Version/9.0 Mobile/13B143 Safari/601.1");
+        return headers;
     }
 
     @Override
-    public String homeContent(boolean filter) {
+    public String homeContent(boolean filter) throws Exception {
         List<Class> classes = new ArrayList<>();
         classes.add(new Class("节目大全", "央视大全"));
         classes.add(new Class("电视剧", "电视剧"));
@@ -332,198 +326,205 @@ public class Cntv extends Spider {
 
     @Override
     public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
-        String page = TextUtils.isEmpty(pg) ? "1" : pg;
-        String url = buildUrl(tid, page, extend);
+        int pageCount = "节目大全".equals(tid) ? 20 : 24;
+        String url = buildUrl(tid, pg, extend);
 
         List<Vod> videos = new ArrayList<>();
-        String response = OkHttp.string(url, getHeaders());
-        boolean isColumn = "节目大全".equals(tid);
-
-        if (!isColumn && response.trim().startsWith("ko(")) {
-            isColumn = true;
-        }
-
-        if (isColumn) {
-            // Strip ko(...) callback wrapper
-            int endIndex = response.lastIndexOf(");");
-            if (endIndex > 0) {
-                response = response.substring(response.indexOf("(") + 1, endIndex);
-            }
-
-            JSONObject object = new JSONObject(response);
-            JSONObject resp = object.optJSONObject("response");
-            if (resp != null) {
-                JSONArray docs = resp.optJSONArray("docs");
-                if (docs != null) {
-                    for (int i = 0; i < docs.length(); i++) {
-                        JSONObject doc = docs.getJSONObject(i);
-                        JSONObject lastVideo = doc.optJSONObject("lastVIDE");
-                        String videoId = lastVideo != null ? lastVideo.optString("videoSharedCode") : "";
-
-                        String name = doc.optString("column_name");
-                        String website = doc.optString("column_website");
-                        String logo = doc.optString("column_logo");
-                        String playDate = doc.optString("column_playdate");
-                        String brief = doc.optString("column_brief");
-
-                        if (TextUtils.isEmpty(website)) continue;
-
-                        String vodId = tid + "###" + name + "###" + website + "###" + logo + "###" + videoId + "###" + playDate + "######" + brief;
-                        videos.add(new Vod(vodId, name, logo, ""));
-                    }
+        try {
+            String htmlText = OkHttp.string(url, getHeaders());
+            if ("节目大全".equals(tid)) {
+                // JSONP 回调 ko(...) 去除
+                int index = htmlText.lastIndexOf(");");
+                if (index > -1) {
+                    htmlText = htmlText.substring(3, index);
+                    videos = parseColumnList(htmlText, tid);
                 }
+            } else {
+                videos = parseAlbumList(htmlText, tid);
             }
-        } else {
-            videos = parseList(response, tid);
+        } catch (Exception e) {
+            // ignore
         }
 
-        int pageNum = 1;
-        try { pageNum = Integer.parseInt(page); } catch (Exception e) { }
-        int pageCount = "节目大全".equals(tid) ? 20 : 24;
-        int pageCountResult = videos.size() >= pageCount ? 9999 : pageNum;
-
-        return Result.get().vod(videos).page(pageNum, pageCountResult, 90, 999999).string();
+        int page = Integer.parseInt(TextUtils.isEmpty(pg) ? "1" : pg);
+        int count = videos.size() >= pageCount ? 9999 : page;
+        return Result.get().vod(videos).page(page, count, 90, 999999).string();
     }
 
     @Override
-    public String detailContent(List<String> ids) {
-        String id = ids.get(0);
-        String[] parts = id.split("###", 8);
-
-        String type = parts[0];
-        String name = parts.length > 1 ? parts[1] : "央视";
-        String lastVideo = parts.length > 2 ? parts[2] : "";
-        String pic = parts.length > 3 ? parts[3] : "";
-        String videoId = parts.length > 4 ? parts[4] : "";
-        String year = parts.length > 5 ? parts[5] : "";
-        String actor = parts.length > 6 ? parts[6] : "";
-        String content = parts.length > 7 ? parts[7] : "";
-
-        Vod vod = new Vod();
-        vod.setVodId(id);
-        vod.setVodName(name);
-        vod.setVodPic(pic);
-        vod.setTypeName(type);
-        vod.setVodYear(year);
-        vod.setVodActor(actor);
-        vod.setVodContent(content);
-
-        ArrayList<String> playUrls = new ArrayList<>();
+    public String detailContent(List<String> ids) throws Exception {
+        String[] aid = ids.get(0).split("###");
+        String tid = aid[0];
+        String logo = aid[3];
+        String lastVideo = aid[2];
+        String title = aid[1];
+        String id = aid[4];
+        String vodYear = aid[5];
+        String actors = aid[6];
+        String brief = aid[7];
         String fromId = "CCTV";
 
-        if ("搜索".equals(type)) {
-            // 搜索结果：直接使用存储的 URL
-            fromId = "中央台";
-            playUrls.add(name + "$" + lastVideo);
+        // 构建 URL（在 try 外部，节目大全需要先获取 ctid）
+        String url;
+        if ("节目大全".equals(tid)) {
+            String lastUrl = "https://api.cntv.cn/video/videoinfoByGuid?guid=" + id + "&serviceId=tvcctv";
+            String htmlTxt = OkHttp.string(lastUrl, getHeaders());
+            String topicId = new JSONObject(htmlTxt).optString("ctid");
+            url = "https://api.cntv.cn/NewVideo/getVideoListByColumn?id=" + topicId + "&d=&p=1&n=100&sort=desc&mode=0&serviceId=tvcctv&t=json";
         } else {
-            // 尝试通过 API 获取剧集列表
-            if ("节目大全".equals(type)) {
-                playUrls = getColumnVideoList(videoId);
-            } else {
-                playUrls = getAlbumVideoList(videoId);
-            }
+            url = "https://api.cntv.cn/NewVideo/getVideoListByAlbumIdNew?id=" + id + "&serviceId=tvcctv&p=1&n=100&mode=0&pub=1";
+        }
 
-            // Fallback: API 返回空列表时，从 lastVideo 页面正则提取
-            if (playUrls.isEmpty() && !TextUtils.isEmpty(lastVideo)) {
-                fromId = "央视";
-                try {
-                    String html = OkHttp.string(lastVideo, getHeaders());
-                    Pattern pattern = null;
-                    if ("电视剧".equals(type) || "纪录片".equals(type)) {
-                        pattern = EPISODE_DRAMA;
-                    } else if ("特别节目".equals(type)) {
-                        pattern = EPISODE_SPECIAL;
-                    } else if ("动画片".equals(type)) {
-                        pattern = EPISODE_CARTOON;
-                    } else if ("节目大全".equals(type)) {
-                        pattern = EPISODE_COLUMN;
+        List<String> videoList = new ArrayList<>();
+        try {
+            if ("搜索".equals(tid)) {
+                fromId = "中央台";
+                videoList.add(title + "$" + lastVideo);
+            } else {
+                String htmlTxt = OkHttp.string(url, getHeaders());
+                JSONObject jRoot = new JSONObject(htmlTxt);
+                JSONObject data = jRoot.optJSONObject("data");
+                if (data != null) {
+                    JSONArray jsonList = data.optJSONArray("list");
+                    if (jsonList != null) {
+                        videoList = extractEpisodes(jsonList);
                     }
+                }
+                // 回退正则提取
+                if (videoList.isEmpty()) {
+                    String fallbackHtml = OkHttp.string(lastVideo, getHeaders());
+                    Pattern pattern = getFallbackPattern(tid);
                     if (pattern != null) {
-                        playUrls = getEpisodesByRegex(html, pattern);
+                        videoList = extractEpisodesRegex(fallbackHtml, pattern);
+                        fromId = "央视";
                     }
-                } catch (Exception e) {
-                    e.printStackTrace();
                 }
             }
+        } catch (Exception e) {
+            // pass
         }
 
-        if (playUrls.isEmpty()) {
-            return "";
-        }
+        if (videoList.isEmpty()) return "";
 
+        Vod vod = new Vod();
+        vod.setVodId(ids.get(0));
+        vod.setVodName(title);
+        vod.setVodPic(logo);
+        vod.setTypeName(tid);
+        vod.setVodYear(vodYear);
+        vod.setVodArea("");
+        vod.setVodRemarks("");
+        vod.setVodActor(actors);
+        vod.setVodDirector("");
+        vod.setVodContent(brief);
         vod.setVodPlayFrom(fromId);
-        vod.setVodPlayUrl(TextUtils.join("#", playUrls));
-
+        vod.setVodPlayUrl(TextUtils.join("#", videoList));
         return Result.string(vod);
     }
 
     @Override
-    public String playerContent(String flag, String id, List<String> vipFlags) {
-        String playUrl = "";
+    public String searchContent(String key, boolean quick) throws Exception {
+        return searchContent(key, quick, "1");
+    }
+
+    @Override
+    public String searchContent(String key, boolean quick, String pg) throws Exception {
+        String encodedKey = encode(key);
+        // Python 始终用 page=1
+        String url = "https://search.cctv.com/ifsearch.php?page=1&qtext=" + encodedKey
+                + "&sort=relevance&pageSize=20&type=video&vtime=-1&datepid=1&channel=&pageflag=0&qtext_str=" + encodedKey;
+        List<Vod> videos = new ArrayList<>();
+        try {
+            String htmlTxt = OkHttp.string(url, getHeaders());
+            videos = parseSearchList(htmlTxt, "搜索");
+        } catch (Exception e) {
+            // ignore
+        }
+        return Result.string(videos);
+    }
+
+    @Override
+    public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
+        String url = "";
         int parse = 0;
+        Map<String, String> headers = getPlayerHeaders();
 
         if ("CCTV".equals(flag)) {
-            playUrl = getVideoUrl(id);
+            url = getM3u8(id);
         } else {
-            // 非 CCTV：尝试从页面提取 guid 再获取 m3u8
             try {
                 String html = OkHttp.string(id, getHeaders());
-                Matcher matcher = GUID_PATTERN.matcher(html);
-                if (matcher.find()) {
-                    playUrl = getVideoUrl(matcher.group(1));
-                } else {
-                    playUrl = id;
-                    parse = 1;
-                }
+                String guid = getRegexText(html, GUID_PATTERN);
+                url = getM3u8(guid);
             } catch (Exception e) {
-                playUrl = id;
+                url = id;
                 parse = 1;
             }
         }
 
-        // URL 不含 https: 时触发嗅探
-        if (TextUtils.isEmpty(playUrl) || !playUrl.contains("https:")) {
-            playUrl = id;
+        if (!url.contains("https:")) {
+            url = id;
             parse = 1;
         }
 
-        Map<String, String> headers = new HashMap<>();
-        headers.put("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 9_1 like Mac OS X) AppleWebKit/601.1.46 (KHTML, like Gecko) Version/9.0 Mobile/13B143 Safari/601.1");
-
-        Result result = Result.get().url(playUrl).header(headers);
-        if (parse == 1) result.parse();
-        return result.string();
+        return Result.get().url(url).header(headers).parse(parse).string();
     }
 
-    @Override
-    public String searchContent(String key, boolean quick) {
-        List<Vod> videos = new ArrayList<>();
+    /**
+     * 取 m3u8 高清地址
+     * 对应 Python get_m3u8
+     */
+    private String getM3u8(String pid) {
         try {
-            String encodedKey = encode(key);
-            String url = "https://search.cctv.com/ifsearch.php?page=1&qtext=" + encodedKey
-                    + "&sort=relevance&pageSize=20&type=video&vtime=-1&datepid=1&channel=&pageflag=0&qtext_str=" + encodedKey;
-            String response = OkHttp.string(url, getHeaders());
-            JSONObject object = new JSONObject(response);
-            JSONArray list = object.optJSONArray("list");
-            if (list != null) {
-                for (int i = 0; i < list.length(); i++) {
-                    JSONObject item = list.getJSONObject(i);
-                    String urllink = item.optString("urllink");
-                    if (TextUtils.isEmpty(urllink)) continue;
+            String url = "https://vdn.apps.cntv.cn/api/getHttpVideoInfo.do?pid=" + pid;
+            String html = OkHttp.string(url, getHeaders());
+            JSONObject jo = new JSONObject(html);
+            String link = jo.optString("hls_url").trim();
+            String content = OkHttp.string(link, getHeaders()).trim();
+            String[] arr = content.split("\n");
 
-                    String title = removeHtml(item.optString("title"));
-                    String imglink = item.optString("imglink");
-                    String id = item.optString("id");
-                    String channel = item.optString("channel");
-                    String uploadtime = item.optString("uploadtime");
+            Matcher m = DOMAIN_PATTERN.matcher(link);
+            String urlPrefix = m.find() ? m.group(1) : "";
 
-                    String vodId = "搜索" + "###" + title + "###" + urllink + "###" + imglink + "###" + id + "###" + uploadtime + "###" + "###" + channel;
-                    videos.add(new Vod(vodId, title, imglink, uploadtime));
-                }
+            String[] subUrl = arr[arr.length - 1].split("/");
+            subUrl[3] = "1200";
+            subUrl[subUrl.length - 1] = "1200.m3u8";
+            String hdUrl = urlPrefix + TextUtils.join("/", subUrl);
+
+            String testUrl = urlPrefix + arr[arr.length - 1];
+
+            if (testWebPage(hdUrl)) {
+                return hdUrl;
+            } else {
+                return "";
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            return "";
         }
-        return Result.string(videos);
+    }
+
+    /**
+     * 测试网络地址是否存在（HEAD 请求）
+     * 对应 Python TestWebPage
+     */
+    private boolean testWebPage(String url) {
+        try {
+            okhttp3.Response response = OkHttp.newCall(url, "");
+            int code = response.code();
+            response.close();
+            return code == 200;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * 正则取文本（单值）
+     * 对应 Python get_RegexGetText
+     */
+    private String getRegexText(String text, Pattern pattern) {
+        Matcher m = pattern.matcher(text);
+        if (m.find()) return m.group(1);
+        return "";
     }
 }
