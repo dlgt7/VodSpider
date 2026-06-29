@@ -53,92 +53,73 @@ public class Cntv extends Spider {
             encodedType = type;
         }
 
-        StringBuilder url = new StringBuilder();
+        String suffix = "&n=24&serviceId=tvcctv&topv=1&t=json";
         if ("动画片".equals(type)) {
-            url.append("https://api.cntv.cn/list/getVideoAlbumList?channelid=CHAL1460955899450127&area=")
-               .append(area)
-               .append("&sc=").append(sc)
-               .append("&fc=").append(encodedType)
-               .append("&letter=").append(letter)
-               .append("&p=").append(page)
-               .append("&n=24&serviceId=tvcctv&topv=1&t=json");
+            StringBuilder sb = new StringBuilder("https://api.cntv.cn/list/getVideoAlbumList?channelid=CHAL1460955899450127&area=");
+            sb.append(area).append("&sc=").append(sc).append("&fc=").append(encodedType)
+              .append("&letter=").append(letter).append("&p=");
+            return sb.append(page).append(suffix).toString();
         } else if ("纪录片".equals(type)) {
-            url.append("https://api.cntv.cn/list/getVideoAlbumList?channelid=CHAL1460955924871139&fc=")
-               .append(encodedType)
-               .append("&channel=").append(channel)
-               .append("&sc=").append(sc)
-               .append("&year=").append(year)
-               .append("&letter=").append(letter)
-               .append("&p=").append(page)
-               .append("&n=24&serviceId=tvcctv&topv=1&t=json");
+            StringBuilder sb = new StringBuilder("https://api.cntv.cn/list/getVideoAlbumList?channelid=CHAL1460955924871139&fc=");
+            sb.append(encodedType).append("&channel=").append(channel).append("&sc=").append(sc)
+              .append("&year=").append(year).append("&letter=").append(letter).append("&p=")
+              .append(page).append(suffix);
+            return sb.toString();
         } else if ("电视剧".equals(type)) {
-            url.append("https://api.cntv.cn/list/getVideoAlbumList?channelid=CHAL1460955853485115&area=")
-               .append(area)
-               .append("&sc=").append(sc)
-               .append("&fc=").append(encodedType)
-               .append("&year=").append(year)
-               .append("&letter=").append(letter)
-               .append("&p=").append(page)
-               .append("&n=24&serviceId=tvcctv&topv=1&t=json");
+            StringBuilder sb = new StringBuilder("https://api.cntv.cn/list/getVideoAlbumList?channelid=CHAL1460955853485115&area=");
+            sb.append(area).append("&sc=").append(sc).append("&fc=").append(encodedType)
+              .append("&year=").append(year).append("&letter=").append(letter).append("&p=")
+              .append(page).append(suffix);
+            return sb.toString();
         } else if ("特别节目".equals(type)) {
-            url.append("https://api.cntv.cn/list/getVideoAlbumList?channelid=CHAL1460955953877151&channel=")
-               .append(channel)
-               .append("&sc=").append(sc)
-               .append("&fc=").append(encodedType)
-               .append("&bigday=&letter=").append(letter)
-               .append("&p=").append(page)
-               .append("&n=24&serviceId=tvcctv&topv=1&t=json");
+            StringBuilder sb = new StringBuilder("https://api.cntv.cn/list/getVideoAlbumList?channelid=CHAL1460955953877151&channel=");
+            sb.append(channel).append("&sc=").append(sc).append("&fc=").append(encodedType)
+              .append("&bigday=&letter=").append(letter).append("&p=");
+            return sb.append(page).append(suffix).toString();
         } else {
             String cid = getExtend(extend, "cid");
             String fc = getExtend(extend, "fc");
             String fl = getExtend(extend, "fl");
-            url.append("https://api.cntv.cn/lanmu/columnSearch?&fl=")
-               .append(fl)
-               .append("&fc=").append(fc)
-               .append("&cid=").append(cid)
-               .append("&p=").append(page)
-               .append("&n=20&serviceId=tvcctv&t=json&cb=ko");
+            StringBuilder sb = new StringBuilder("https://api.cntv.cn/lanmu/columnSearch?&fl=");
+            sb.append(fl).append("&fc=").append(fc).append("&cid=").append(cid)
+              .append("&p=").append(page).append("&n=20&serviceId=tvcctv&t=json&cb=ko");
+            return sb.toString();
         }
-        return url.toString();
     }
 
-    private static List<Vod> parseList(String response, String type) {
+    private static List<Vod> parseList(String response, String type) throws Exception {
         List<Vod> list = new ArrayList<>();
-        try {
-            JSONObject object = new JSONObject(response);
-            JSONObject data = object.optJSONObject("data");
-            if (data == null) return list;
+        JSONObject object = new JSONObject(response);
+        JSONObject data = object.optJSONObject("data");
+        if (data == null) return list;
 
-            JSONArray array = data.optJSONArray("list");
-            if (array == null) return list;
+        JSONArray array = data.optJSONArray("list");
+        if (array == null) return list;
 
-            for (int i = 0; i < array.length(); i++) {
-                JSONObject item = array.getJSONObject(i);
-                String url = item.optString("url");
-                if (TextUtils.isEmpty(url)) continue;
+        for (int i = 0; i < array.length(); i++) {
+            JSONObject item = array.getJSONObject(i);
+            String url = item.optString("url");
+            if (TextUtils.isEmpty(url)) continue;
 
-                String title = item.optString("title");
-                String image = item.optString("image");
-                String id = item.optString("id");
-                String year = item.optString("year");
-                String actors = item.optString("actors");
-                String brief = item.optString("brief");
+            String title = item.optString("title");
+            String image = item.optString("image");
+            String id = item.optString("id");
+            String year = item.optString("year");
+            String actors = item.optString("actors");
+            String brief = item.optString("brief");
 
-                StringBuilder sb = new StringBuilder();
-                sb.append(type).append("###")
-                  .append(title).append("###")
-                  .append(url).append("###")
-                  .append(image).append("###")
-                  .append(id).append("###")
-                  .append(year).append("###")
-                  .append(actors).append("###")
-                  .append(brief);
-                String vodId = sb.toString();
+            StringBuilder sb = new StringBuilder();
+            sb.append(type).append("###")
+              .append(title).append("###")
+              .append(url).append("###")
+              .append(image).append("###")
+              .append(id).append("###")
+              .append(year).append("###")
+              .append(actors).append("###")
+              .append(brief);
+            String vodId = sb.toString();
 
-                list.add(new Vod(vodId, title, image, year));
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
+            list.add(new Vod(vodId, title, image, year));
         }
         return list;
     }
@@ -256,53 +237,49 @@ public class Cntv extends Spider {
     }
 
     @Override
-    public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) {
+    public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
         String page = TextUtils.isEmpty(pg) ? "1" : pg;
         String url = buildUrl(tid, page, extend);
 
         List<Vod> videos = new ArrayList<>();
-        try {
-            String response = OkHttp.string(url, getHeaders());
-            boolean isColumn = "栏目大全".equals(tid);
+        String response = OkHttp.string(url, getHeaders());
+        boolean isColumn = "栏目大全".equals(tid);
 
-            if (!isColumn && response.trim().startsWith("ko(")) {
-                isColumn = true;
+        if (!isColumn && response.trim().startsWith("ko(")) {
+            isColumn = true;
+        }
+
+        if (isColumn) {
+            int endIndex = response.lastIndexOf(");");
+            if (endIndex > 0) {
+                response = response.substring(response.indexOf("(") + 1, endIndex);
             }
 
-            if (isColumn) {
-                int endIndex = response.lastIndexOf(");");
-                if (endIndex > 0) {
-                    response = response.substring(response.indexOf("(") + 1, endIndex);
-                }
+            JSONObject object = new JSONObject(response);
+            JSONObject resp = object.optJSONObject("response");
+            if (resp != null) {
+                JSONArray docs = resp.optJSONArray("docs");
+                if (docs != null) {
+                    for (int i = 0; i < docs.length(); i++) {
+                        JSONObject doc = docs.getJSONObject(i);
+                        JSONObject lastVideo = doc.optJSONObject("lastVIDE");
+                        String videoId = lastVideo != null ? lastVideo.optString("videoSharedCode") : "";
 
-                JSONObject object = new JSONObject(response);
-                JSONObject resp = object.optJSONObject("response");
-                if (resp != null) {
-                    JSONArray docs = resp.optJSONArray("docs");
-                    if (docs != null) {
-                        for (int i = 0; i < docs.length(); i++) {
-                            JSONObject doc = docs.getJSONObject(i);
-                            JSONObject lastVideo = doc.optJSONObject("lastVIDE");
-                            String videoId = lastVideo != null ? lastVideo.optString("videoSharedCode") : "";
+                        String name = doc.optString("column_name");
+                        String website = doc.optString("column_website");
+                        String logo = doc.optString("column_logo");
+                        String playDate = doc.optString("column_playdate");
+                        String brief = doc.optString("column_brief");
 
-                            String name = doc.optString("column_name");
-                            String website = doc.optString("column_website");
-                            String logo = doc.optString("column_logo");
-                            String playDate = doc.optString("column_playdate");
-                            String brief = doc.optString("column_brief");
+                        if (TextUtils.isEmpty(website)) continue;
 
-                            if (TextUtils.isEmpty(website)) continue;
-
-                            String vodId = "栏目大全" + "###" + name + "###" + website + "###" + logo + "###" + videoId + "###" + playDate + "######" + brief;
-                            videos.add(new Vod(vodId, name, logo, ""));
-                        }
+                        String vodId = "栏目大全" + "###" + name + "###" + website + "###" + logo + "###" + videoId + "###" + playDate + "######" + brief;
+                        videos.add(new Vod(vodId, name, logo, ""));
                     }
                 }
-            } else {
-                videos = parseList(response, tid);
             }
-        } catch (Exception e) {
-            e.printStackTrace();
+        } else {
+            videos = parseList(response, tid);
         }
 
         return Result.string(videos);
