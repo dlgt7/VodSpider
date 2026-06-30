@@ -1,17 +1,23 @@
 package com.github.catvod.spider;
 
+import android.app.Activity;
 import android.app.Application;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class Init {
 
@@ -20,6 +26,12 @@ public class Init {
     private final Handler handler;
     private Application app;
     private SharedPreferences prefers;
+
+    private static volatile Activity mActivity;
+    private static volatile ClassLoader mClassLoader;
+    private static final AtomicReference<Runnable> mDialogRunnable = new AtomicReference<>(null);
+    private static volatile long mDialogTime = 0;
+    private static volatile boolean mChecking = false;
 
     private static class Loader {
         static volatile Init INSTANCE = new Init();
@@ -208,5 +220,181 @@ public class Init {
 
     public static boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {
         return get().executor.awaitTermination(timeout, unit);
+    }
+
+    // ==================== Activity相关方法 ====================
+
+    /**
+     * 获取当前Activity (反射方式)
+     */
+    public static Activity getActivity() {
+        try {
+            Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
+            Method currentActivityThreadMethod = activityThreadClass.getMethod("currentActivityThread");
+            Object activityThread = currentActivityThreadMethod.invoke(null);
+            Field mActivitiesField = activityThreadClass.getDeclaredField("mActivities");
+            mActivitiesField.setAccessible(true);
+            Map<?, ?> mActivities = (Map<?, ?>) mActivitiesField.get(activityThread);
+            if (mActivities == null) return null;
+            for (Object value : mActivities.values()) {
+                if (value == null) continue;
+                Class<?> klass = value.getClass();
+                Field pausedField = klass.getDeclaredField("paused");
+                pausedField.setAccessible(true);
+                if (pausedField.getBoolean(value)) continue;
+                Field activityField = klass.getDeclaredField("activity");
+                activityField.setAccessible(true);
+                return (Activity) activityField.get(value);
+            }
+        } catch (Exception e) {
+            // ignore
+        }
+        return null;
+    }
+
+    /**
+     * 获取配置Activity
+     */
+    public static Activity getConfigActivity() {
+        try {
+            Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
+            Method currentActivityThreadMethod = activityThreadClass.getMethod("currentActivityThread");
+            Object activityThread = currentActivityThreadMethod.invoke(null);
+            Field mActivitiesField = activityThreadClass.getDeclaredField("mActivities");
+            mActivitiesField.setAccessible(true);
+            Map<?, ?> mActivities = (Map<?, ?>) mActivitiesField.get(activityThread);
+            if (mActivities == null) return null;
+            for (Object value : mActivities.values()) {
+                if (value == null) continue;
+                Class<?> klass = value.getClass();
+                Field activityField = klass.getDeclaredField("activity");
+                activityField.setAccessible(true);
+                Activity activity = (Activity) activityField.get(value);
+                if (activity != null && !activity.isFinishing()) return activity;
+            }
+        } catch (Exception e) {
+            // ignore
+        }
+        return null;
+    }
+
+    /**
+     * 获取用于显示对话框的Activity
+     */
+    public static Activity activityForDialog() {
+        try {
+            if (mActivity != null && !mActivity.isFinishing() && !mActivity.isDestroyed()) {
+                return mActivity;
+            }
+            Activity activity = getActivity();
+            if (activity != null && !activity.isFinishing() && !activity.isDestroyed()) {
+                return activity;
+            }
+            return getConfigActivity();
+        } catch (Exception e) {
+            return getConfigActivity();
+        }
+    }
+
+    /**
+     * 设置Activity
+     */
+    public static void setActivity(Activity activity) {
+        mActivity = activity;
+    }
+
+    /**
+     * 设置ClassLoader
+     */
+    public static void setJarClassLoader(ClassLoader classLoader) {
+        if (classLoader == null) return;
+        ClassLoader old = mClassLoader;
+        mClassLoader = classLoader;
+    }
+
+    /**
+     * 获取ClassLoader
+     */
+    public static ClassLoader getClassLoader() {
+        return mClassLoader;
+    }
+
+    /**
+     * 在关闭详情页后显示对话框
+     */
+    public static void showDialogAfterKillingDetail(Runnable runnable) {
+        mDialogRunnable.set(runnable);
+        mDialogTime = System.currentTimeMillis() + 1200;
+        if (mChecking || context() == null) return;
+        mChecking = true;
+        schedule(() -> {
+            try {
+                long now = System.currentTimeMillis();
+                if (now >= mDialogTime) {
+                    Runnable r = mDialogRunnable.getAndSet(null);
+                    if (r != null) {
+                        post(r);
+                    }
+                    mChecking = false;
+                } else {
+                    mChecking = false;
+                    showDialogAfterKillingDetail(null);
+                }
+            } catch (Exception e) {
+                mChecking = false;
+            }
+        }, 200, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * 检查权限
+     */
+    public static void checkPermission() {
+        try {
+            Activity activity = getActivity();
+            if (activity == null) return;
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
+            java.util.ArrayList<String> permissions = new java.util.ArrayList<>();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                permissions.add("android.permission.READ_MEDIA_VIDEO");
+                permissions.add("android.permission.READ_MEDIA_AUDIO");
+                permissions.add("android.permission.READ_MEDIA_IMAGES");
+            } else {
+                permissions.add("android.permission.READ_EXTERNAL_STORAGE");
+                permissions.add("android.permission.WRITE_EXTERNAL_STORAGE");
+            }
+            java.util.ArrayList<String> needed = new java.util.ArrayList<>();
+            for (String permission : permissions) {
+                if (activity.checkSelfPermission(permission) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    needed.add(permission);
+                }
+            }
+            if (needed.isEmpty()) return;
+            activity.requestPermissions(needed.toArray(new String[0]), 0);
+        } catch (Exception e) {
+            // ignore
+        }
+    }
+
+    /**
+     * 显示通知
+     */
+    public static void show(String text) {
+        try {
+            com.github.catvod.utils.Notify.show(text);
+        } catch (Exception e) {
+            // ignore
+        }
+    }
+
+    /**
+     * 运行Runnable
+     */
+    public static void run(Runnable runnable) {
+        if (isMainThread()) {
+            runnable.run();
+        } else {
+            post(runnable);
+        }
     }
 }
