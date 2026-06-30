@@ -6,7 +6,6 @@ import com.github.catvod.bean.Class;
 import com.github.catvod.bean.Result;
 import com.github.catvod.bean.Vod;
 import com.github.catvod.crawler.Spider;
-import com.github.catvod.net.OkHttp;
 import com.github.catvod.utils.Notify;
 
 import org.json.JSONArray;
@@ -20,6 +19,7 @@ import java.util.regex.Pattern;
 
 /**
  * 夸克应用商店
+ * 下载分享盘apk需先登录夸克账号
  */
 public class QuarkAppStore extends Spider {
 
@@ -28,7 +28,20 @@ public class QuarkAppStore extends Spider {
     private static final String DEFAULT_SHARE_JSON = "[{\"shareId\":\"9a41cd6f82bc\",\"folder\":\"0\"}]";
     private static final String FOLDER_ICON = "https://cc-im-kefu-cos.7moor-fs2.com/im/2768a390-5474-11ea-afc9-7b323e3e16c0/e8213224-8902-4b2f-8042-ef5809445c8e/2024-06-07/2024-06-07_18:01:26/1717754486746/11664624/folder.png";
 
+    // 登录方式图标
+    private static final String ICON_QR = "https://cc-im-kefu-cos.7moor-fs2.com/im/2768a390-5474-11ea-afc9-7b323e3e16c0/e8213224-8902-4b2f-8042-ef5809445c8e/2024-06-07/2024-06-07_18:01:26/1717754486746/11664624/qr_login.png";
+    private static final String ICON_APP = "https://cc-im-kefu-cos.7moor-fs2.com/im/2768a390-5474-11ea-afc9-7b323e3e16c0/e8213224-8902-4b2f-8042-ef5809445c8e/2024-06-07/2024-06-07_18:01:26/1717754486746/11664624/app_login.png";
+    private static final String ICON_COOKIE = "https://cc-im-kefu-cos.7moor-fs2.com/im/2768a390-5474-11ea-afc9-7b323e3e16c0/e8213224-8902-4b2f-8042-ef5809445c8e/2024-06-07/2024-06-07_18:01:26/1717754486746/11664624/cookie_login.png";
+
     private String shareJson = DEFAULT_SHARE_JSON;
+    private String userName = "";
+
+    /**
+     * 是否已登录
+     */
+    private boolean isLoggedIn() {
+        return !TextUtils.isEmpty(userName);
+    }
 
     /**
      * 解析分享链接，提取shareId和sharePwd
@@ -73,13 +86,26 @@ public class QuarkAppStore extends Spider {
         try {
             if (TextUtils.isEmpty(action)) return "";
 
+            // 处理登录操作
+            if ("qr_login".equals(action)) {
+                Notify.show("请使用夸克APP扫码登录");
+                return "";
+            }
+            if ("app_login".equals(action)) {
+                Notify.show("请在夸克APP中确认登录");
+                return "";
+            }
+            if ("cookie_login".equals(action)) {
+                Notify.show("请手动设置Cookie");
+                return "";
+            }
+
+            // 分享操作
             if (action.startsWith("[")) {
-                // 执行分享操作
                 Notify.show("分享操作已执行");
                 return "";
             }
 
-            // 其他操作
             Notify.show("操作已执行");
             return "";
         } catch (Exception e) {
@@ -92,17 +118,21 @@ public class QuarkAppStore extends Spider {
         try {
             if (TextUtils.isEmpty(tid)) return Result.string(new ArrayList<>());
 
-            // 应用商店分类返回shareJson中的分享内容
+            // 登录分类 - 显示登录方式选项
+            if ("quark_app_login_tab".equals(tid)) {
+                return getLoginOptions();
+            }
+
+            // 应用商店分类 - 显示分享内容
             if ("quark_app_store".equals(tid) || "0".equals(tid)) {
+                if (!isLoggedIn()) {
+                    // 未登录时提示需要先登录
+                    return getLoginOptions();
+                }
                 return getFileList(shareJson);
             }
 
-            // 登录分类返回空
-            if ("quark_app_login_tab".equals(tid)) {
-                return Result.string(new ArrayList<>());
-            }
-
-            // 其他分类ID（shareId格式）解析获取内容列表
+            // 其他分类ID（shareId或JSON格式）解析获取内容列表
             return getFileList(tid);
         } catch (Exception e) {
             return Result.string(new ArrayList<>());
@@ -116,15 +146,30 @@ public class QuarkAppStore extends Spider {
 
             String id = ids.get(0).trim();
 
-            // 特殊分类返回空
-            if (id.startsWith("[") && !id.contains("shareId")) {
-                return Result.string(new Vod());
+            // 登录方式 - 显示登录提示
+            if ("qr_login".equals(id) || "app_login".equals(id) || "cookie_login".equals(id)) {
+                Vod vod = new Vod();
+                vod.setVodId(id);
+                vod.setVodName(getLoginDisplayName(id));
+                vod.setVodPic(FOLDER_ICON);
+                vod.setVodTag("action");
+                vod.setVodRemarks("点击执行");
+                vod.setVodPlayFrom("登录");
+                vod.setVodPlayUrl(id);
+                return Result.string(vod);
             }
+
+            // 特殊分类返回空
             if ("quark_app_store".equals(id) || "quark_app_login_tab".equals(id) || "0".equals(id)) {
                 return Result.string(new Vod());
             }
 
-            // 构建Vod对象
+            // 以[开头但不含shareId的返回空
+            if (id.startsWith("[") && !id.contains("shareId")) {
+                return Result.string(new Vod());
+            }
+
+            // 构建分享Vod对象
             Vod vod = new Vod();
             vod.setVodId(id);
             vod.setVodName("夸克分享");
@@ -132,7 +177,6 @@ public class QuarkAppStore extends Spider {
             vod.setVodTag("folder");
             vod.setVodRemarks("点击进入");
 
-            // 解析shareJson
             JSONArray playArray = new JSONArray(id.startsWith("[") ? id : shareJson);
             vod.setVodPlayFrom("夸克");
             vod.setVodPlayUrl(playArray.toString());
@@ -153,9 +197,15 @@ public class QuarkAppStore extends Spider {
             List<Class> classes = new ArrayList<>();
             List<Vod> videos = new ArrayList<>();
 
-            // 添加应用商店分类
-            String tabName = "应用商店";
-            classes.add(new Class("quark_app_store", tabName, "1"));
+            // 根据登录状态显示不同分类
+            if (isLoggedIn()) {
+                // 已登录 - 显示应用商店
+                String tabName = "应用商店 · " + userName;
+                classes.add(new Class("quark_app_store", tabName, "1"));
+            } else {
+                // 未登录 - 显示登录分类
+                classes.add(new Class("quark_app_login_tab", "登录夸克（扫码或APP）", "1"));
+            }
 
             return Result.string(classes, videos);
         } catch (Exception e) {
@@ -226,14 +276,58 @@ public class QuarkAppStore extends Spider {
     }
 
     /**
-     * 获取文件列表 - 核心方法
+     * 获取登录方式选项列表
+     * 下载分享盘apk需先登录夸克账号
+     */
+    private String getLoginOptions() {
+        try {
+            ArrayList<Vod> vodList = new ArrayList<>();
+
+            // 扫码登录
+            Vod qrLogin = new Vod("qr_login", "扫码登录", ICON_QR, "点击扫码");
+            qrLogin.setVodTag("action");
+            vodList.add(qrLogin);
+
+            // APP登录
+            Vod appLogin = new Vod("app_login", "APP登录", ICON_APP, "点击登录");
+            appLogin.setVodTag("action");
+            vodList.add(appLogin);
+
+            // 手动设置Cookie
+            Vod cookieLogin = new Vod("cookie_login", "手动设置Cookie", ICON_COOKIE, "点击设置");
+            cookieLogin.setVodTag("action");
+            vodList.add(cookieLogin);
+
+            return Result.string(vodList);
+        } catch (Exception e) {
+            return Result.string(new ArrayList<>());
+        }
+    }
+
+    /**
+     * 获取登录方式显示名称
+     */
+    private String getLoginDisplayName(String id) {
+        switch (id) {
+            case "qr_login":
+                return "扫码登录 - 使用夸克APP扫描二维码";
+            case "app_login":
+                return "APP登录 - 在夸克APP中确认";
+            case "cookie_login":
+                return "手动设置Cookie - 输入Cookie字符串";
+            default:
+                return "登录夸克";
+        }
+    }
+
+    /**
+     * 获取文件列表
      * 根据shareJson解析夸克分享内容
      */
     private String getFileList(String tid) {
         try {
             ArrayList<Vod> vodList = new ArrayList<>();
 
-            // 解析shareJson
             JSONArray shareArray;
             if (tid.startsWith("[")) {
                 shareArray = new JSONArray(tid);
@@ -249,7 +343,6 @@ public class QuarkAppStore extends Spider {
 
                 if (TextUtils.isEmpty(shareId)) continue;
 
-                // 构建Vod对象
                 String vodId = "[{\"shareId\":\"" + shareId + "\",\"folder\":\"" + folder + "\",\"sharePwd\":\"" + sharePwd + "\"}]";
                 Vod vod = new Vod(vodId, shareId, FOLDER_ICON, "文件夹");
                 vod.setVodTag("folder");
