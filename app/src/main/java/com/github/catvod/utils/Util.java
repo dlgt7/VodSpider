@@ -85,6 +85,26 @@ public class Util {
         return new DecimalFormat("#,##0.#").format(size / Math.pow(1024, digitGroups)) + " " + units[digitGroups];
     }
 
+    /**
+     * 从字符串中提取数字部分
+     */
+    public static String getDigit(String text) {
+        if (text == null || text.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder();
+        for (char c : text.toCharArray()) {
+            if (Character.isDigit(c)) sb.append(c);
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 将字节数组转换为 UTF-8 字符串
+     */
+    public static byte[] toUtf8(byte[] bytes) {
+        // 直接返回原字节数组，由调用方处理编码转换
+        return bytes;
+    }
+
     public static String removeExt(String text) {
         return text.contains(".") ? text.substring(0, text.lastIndexOf(".")) : text;
     }
