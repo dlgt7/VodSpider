@@ -14,7 +14,6 @@ import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 
-import com.github.catvod.BuildConfig;
 import com.github.catvod.bean.Result;
 import com.github.catvod.bean.Sub;
 import com.github.catvod.bean.Vod;
@@ -31,7 +30,6 @@ import com.github.catvod.bean.ali.Share;
 import com.github.catvod.bean.ali.User;
 import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.net.OkHttp;
-import com.github.catvod.net.OkResult;
 import com.github.catvod.spider.Init;
 import com.github.catvod.spider.Proxy;
 import com.github.catvod.utils.Json;
@@ -58,9 +56,16 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.locks.ReentrantLock;
 
+import okhttp3.MediaType;
+import okhttp3.Request;
+import okhttp3.RequestBody;
 import okhttp3.Response;
 
 public class AliYun {
+
+    private static final MediaType JSON_MEDIA_TYPE = MediaType.parse("application/json; charset=utf-8");
+    // 阿里云盘 OAuth Client ID（固定值）
+    private static final String CLIENT_ID = "XpQhDR";
 
     private final Map<String, Map<String, String>> m3u8MediaMap;
     private final Map<String, String> shareDownloadMap;
@@ -127,37 +132,65 @@ public class AliYun {
         return headers;
     }
 
+    /**
+     * 执行 POST 请求并返回 Response（包含 HTTP 状态码）
+     */
+    private Response postResponse(String url, String json, Map<String, String> headers) throws Exception {
+        RequestBody body = RequestBody.create(json, JSON_MEDIA_TYPE);
+        Request.Builder builder = new Request.Builder().url(url).post(body);
+        if (headers != null) {
+            for (Map.Entry<String, String> entry : headers.entrySet()) {
+                builder.addHeader(entry.getKey(), entry.getValue());
+            }
+        }
+        return OkHttp.client().newCall(builder.build()).execute();
+    }
+
     private boolean alist(String url, JsonObject param) {
         String api = "https://api.xhofe.top/alist/ali_open/" + url;
-        OkResult result = OkHttp.post(api, param.toString(), getHeader());
-        SpiderDebug.log(result.getCode() + "," + api + "," + result.getBody());
-        if (isManyRequest(result.getBody())) return false;
-        cache.setOAuth(OAuth.objectFrom(result.getBody()));
+        String body = OkHttp.post(api, param.toString(), getHeader());
+        SpiderDebug.log("200," + api + "," + body);
+        if (isManyRequest(body)) return false;
+        cache.setOAuth(OAuth.objectFrom(body));
         return true;
     }
 
     private String post(String url, JsonObject param) {
         url = url.startsWith("https") ? url : "https://api.aliyundrive.com/" + url;
-        OkResult result = OkHttp.post(url, param.toString(), getHeader());
-        SpiderDebug.log(result.getCode() + "," + url + "," + result.getBody());
-        return result.getBody();
+        String body = OkHttp.post(url, param.toString(), getHeader());
+        SpiderDebug.log("200," + url + "," + body);
+        return body;
     }
 
     private String auth(String url, String json, boolean retry) {
         url = url.startsWith("https") ? url : "https://api.aliyundrive.com/" + url;
-        OkResult result = OkHttp.post(url, json, url.contains("file/list") ? getHeaders() : getHeaderAuth());
-        SpiderDebug.log(result.getCode() + "," + url + "," + result.getBody());
-        if (retry && result.getCode() == 401 && refreshAccessToken()) return auth(url, json, false);
-        if (retry && result.getCode() == 429) return auth(url, json, false);
-        return result.getBody();
+        try {
+            Response response = postResponse(url, json, url.contains("file/list") ? getHeaders() : getHeaderAuth());
+            String body = response.body().string();
+            int code = response.code();
+            SpiderDebug.log(code + "," + url + "," + body);
+            if (retry && code == 401 && refreshAccessToken()) return auth(url, json, false);
+            if (retry && code == 429) return auth(url, json, false);
+            return body;
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+            return "";
+        }
     }
 
     private String oauth(String url, String json, boolean retry) {
         url = url.startsWith("https") ? url : "https://open.aliyundrive.com/adrive/v1.0/" + url;
-        OkResult result = OkHttp.post(url, json, getHeaderOpen());
-        SpiderDebug.log(result.getCode() + "," + url + "," + result.getBody());
-        if (retry && (result.getCode() == 400 || result.getCode() == 401) && refreshOpenToken()) return oauth(url, json, false);
-        return result.getBody();
+        try {
+            Response response = postResponse(url, json, getHeaderOpen());
+            String body = response.body().string();
+            int code = response.code();
+            SpiderDebug.log(code + "," + url + "," + body);
+            if (retry && (code == 400 || code == 401) && refreshOpenToken()) return oauth(url, json, false);
+            return body;
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+            return "";
+        }
     }
 
     private boolean isManyRequest(String result) {
@@ -219,7 +252,7 @@ public class AliYun {
         JsonObject param = new JsonObject();
         param.addProperty("authorize", 1);
         param.addProperty("scope", "user:base,file:all:read,file:all:write");
-        String url = "https://open.aliyundrive.com/oauth/users/authorize?client_id=" + BuildConfig.CLIENT_ID + "&redirect_uri=https://alist.nn.ci/tool/aliyundrive/callback&scope=user:base,file:all:read,file:all:write&state=";
+        String url = "https://open.aliyundrive.com/oauth/users/authorize?client_id=" + CLIENT_ID + "&redirect_uri=https://alist.nn.ci/tool/aliyundrive/callback&scope=user:base,file:all:read,file:all:write&state=";
         String json = auth(url, param.toString(), true);
         return oauthRedirect(Code.objectFrom(json).getCode());
     }
@@ -627,7 +660,7 @@ public class AliYun {
     private void startService(Map<String, String> params) {
         service = Executors.newScheduledThreadPool(1);
         service.scheduleAtFixedRate(() -> {
-            String result = OkHttp.post("https://passport.aliyundrive.com/newlogin/qrcode/query.do?appName=aliyun_drive&fromSite=52&_bx-v=2.2.3", params);
+            String result = OkHttp.post("https://passport.aliyundrive.com/newlogin/qrcode/query.do?appName=aliyun_drive&fromSite=52&_bx-v=2.2.3", params, null);
             Data data = Data.objectFrom(result).getContent().getData();
             if (data.hasToken()) setToken(data.getToken());
         }, 1, 1, TimeUnit.SECONDS);
