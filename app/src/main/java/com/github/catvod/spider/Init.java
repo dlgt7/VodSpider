@@ -1,8 +1,10 @@
 package com.github.catvod.spider;
 
 import android.app.Application;
+import android.app.Activity;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.os.Handler;
 import android.os.Looper;
 
@@ -19,6 +21,7 @@ public class Init {
     private final ScheduledExecutorService scheduler;
     private final Handler handler;
     private Application app;
+    private Activity activity;
     private SharedPreferences prefers;
 
     private static class Loader {
@@ -43,6 +46,22 @@ public class Init {
         get().app = ((Application) context);
         get().prefers = context.getSharedPreferences(context.getPackageName() + "_preferences", Context.MODE_PRIVATE);
         Proxy.init();
+    }
+
+    public static void setActivity(Activity activity) {
+        get().activity = activity;
+    }
+
+    public static Activity getActivity() {
+        return get().activity;
+    }
+
+    public static void checkPermission() {
+        // 权限检查占位实现
+    }
+
+    public static void run(Runnable runnable) {
+        post(runnable);
     }
 
     public static void execute(Runnable runnable) {
