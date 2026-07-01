@@ -10,6 +10,7 @@ import com.github.catvod.bean.Vod;
 import com.github.catvod.crawler.Spider;
 import com.github.catvod.bean.gate.GateConfig;
 import com.github.catvod.bean.gate.RemoteGate;
+import com.github.catvod.bean.gate.QuarkAPI;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -167,9 +168,9 @@ public class QuarkAppStore extends Spider {
         // 对应 smali: invoke-static {}, Init;->checkPermission()V
         // 注意: Init 类中没有 checkPermission() 方法，已删除调用
 
-        // TODO: 对应 smali: invoke-static {}, merge/A/a;->N0()V
+        // 对应 smali: invoke-static {}, merge/A/a;->N0()V
         // 功能: 初始化Quark环境 (可能涉及Cookie、Token等初始化)
-        // 暂时跳过
+        QuarkAPI.initQuark();
 
         // 对应 smali: sget-object + invoke-virtual, merge/a/D.a;->f0()V
         // 功能: 初始化 merge/a/D.a 单例 (Quark核心管理类)
@@ -192,9 +193,8 @@ public class QuarkAppStore extends Spider {
                 // 如果JSON配置不为空,直接使用
                 if (!TextUtils.isEmpty(quarkAppStoreJson)) {
                     this.storeConfig = quarkAppStoreJson;
-                    // TODO: 对应 smali: sput-object, merge/A/a;->e:String
-                    // 功能: 设置全局配置缓存到静态字段 e
-                    // 暂时跳过
+                    // 对应 smali: sput-object, merge/A/a;->e:String
+                    QuarkAPI.configCache = quarkAppStoreJson;
                     return;
                 }
 
@@ -211,9 +211,8 @@ public class QuarkAppStore extends Spider {
 
                     // 如果解析后配置不为空,设置到静态字段
                     if (!TextUtils.isEmpty(this.storeConfig)) {
-                        // TODO: 对应 smali: sput-object, merge/A/a;->e:String
-                        // 功能: 设置全局配置缓存到静态字段 e
-                        // 暂时跳过
+                        // 对应 smali: sput-object, merge/A/a;->e:String
+                        QuarkAPI.configCache = this.storeConfig;
                     }
                 }
             }
@@ -230,9 +229,8 @@ public class QuarkAppStore extends Spider {
 
         // 最终检查:如果配置不为空,设置到静态字段
         if (!TextUtils.isEmpty(this.storeConfig)) {
-            // TODO: 对应 smali: sput-object, merge/A/a;->e:String
-            // 功能: 设置全局配置缓存到静态字段 e
-            // 暂时跳过
+            // 对应 smali: sput-object, merge/A/a;->e:String
+            QuarkAPI.configCache = this.storeConfig;
         }
 
         // TODO: 对应 smali: invoke-static {}, merge/f/I0;->a()V
@@ -273,28 +271,29 @@ public class QuarkAppStore extends Spider {
 
             // 如果配置不为空,设置到静态字段
             if (!TextUtils.isEmpty(configStr)) {
-                // TODO: 对应 smali: sput-object, merge/A/a;->e:String
-                // 功能: 设置全局配置缓存到静态字段 e
-                // 暂时跳过
+                // 对应 smali: sput-object, merge/A/a;->e:String
+                QuarkAPI.configCache = configStr;
             }
 
             // TODO: 对应 smali: sget-object + invoke-virtual, merge/a/D.a;->f0()V
             // 功能: 初始化 merge/a/D.a 单例 (Quark核心管理类)
             // TODO: 需要 merge/a/D 类的实现
 
-            // TODO: 对应 smali: invoke-static {}, merge/A/a;->J1()Z
+            // 对应 smali: invoke-static {}, merge/A/a;->J1()Z
             // 功能: 检查是否已登录
-            boolean isLoggedIn = false;  // 暂时假设未登录
+            boolean isLoggedIn = QuarkAPI.isLoggedIn();
 
             // 如果已登录但昵称为空,尝试初始化登录流程
             if (isLoggedIn) {
-                // TODO: 对应 smali: invoke-static {}, merge/A/a;->t2()String
+                // 对应 smali: invoke-static {}, merge/A/a;->t2()String
                 // 功能: 获取用户昵称
-                String nickname = "";  // 暂时为空
+                String nickname = QuarkAPI.getNickname();
 
-                // TODO: 对应 smali: invoke-static {}, merge/A/a;->I3()V
+                // 对应 smali: invoke-static {}, merge/A/a;->I3()V
                 // 功能: 初始化登录 (可能涉及Cookie刷新或Token验证)
-                // 暂时跳过
+                if (TextUtils.isEmpty(nickname)) {
+                    QuarkAPI.initLogin();
+                }
             }
 
             // 创建分类列表
@@ -310,8 +309,8 @@ public class QuarkAppStore extends Spider {
                 classes.add(loginClass);
             } else {
                 // 已登录:显示应用商店分类
-                // TODO: 获取用户昵称 (merge/A/a.t2())
-                String nickname = "";  // 暂时为空
+                // 对应 smali: invoke-static {}, merge/A/a;->t2()String
+                String nickname = QuarkAPI.getNickname();
 
                 String displayName;
                 if (TextUtils.isEmpty(nickname)) {
@@ -357,10 +356,9 @@ public class QuarkAppStore extends Spider {
      */
     @Override
     public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
-        // TODO: 对应 smali: invoke-static {p1}, merge/A/a;->W(String)String
+        // 对应 smali: invoke-static {p1}, merge/A/a;->W(String)String
         // 功能: 根据 tid 解析并返回分类内容 (可能是文件列表或应用列表)
-        // 暂时返回空字符串
-        return "";
+        return QuarkAPI.getContentById(tid);
     }
 
     /**
@@ -393,9 +391,9 @@ public class QuarkAppStore extends Spider {
                                "0".equals(id);
 
         if (isSpecialId) {
-            // TODO: 对应 smali: invoke-static {p1}, merge/A/a;->W(String)String
+            // 对应 smali: invoke-static {p1}, merge/A/a;->W(String)String
             // 功能: 根据 id 解析并返回详情内容
-            return "";
+            return QuarkAPI.getContentById(id);
         }
 
         // 其他ID:需要显示对话框
@@ -472,15 +470,15 @@ public class QuarkAppStore extends Spider {
             // 功能: 初始化 merge/a/D.a 单例
             // TODO: 需要 merge/a/D 类的实现
 
-            // TODO: 对应 smali: invoke-static {}, merge/A/a;->J1()Z
+            // 对应 smali: invoke-static {}, merge/A/a;->J1()Z
             // 功能: 检查是否已登录
-            boolean isLoggedIn = false;  // 暂时假设未登录
+            boolean isLoggedIn = QuarkAPI.isLoggedIn();
 
             if (!isLoggedIn) {
                 // 未登录时返回提示信息
-                // TODO: 对应 smali: invoke-static {}, merge/A/a;->w2()String
+                // 对应 smali: invoke-static {}, merge/A/a;->w2()String
                 // 功能: 返回登录提示信息
-                return "";
+                return QuarkAPI.getLoginPrompt();
             }
 
             // 已登录:解析分享链接
@@ -490,9 +488,9 @@ public class QuarkAppStore extends Spider {
                 sharePwd = matcher.group(2);
             }
 
-            // TODO: 对应 smali: invoke-static {v0, v1, p1}, merge/A/a;->E(String, String, String)String
+            // 对应 smali: invoke-static {v0, v1, p1}, merge/A/a;->E(String, String, String)String
             // 功能: 根据 shareId, folder("0"), sharePwd 获取详情ID
-            String detailId = "";  // 暂时为空
+            String detailId = QuarkAPI.getDetailId(shareId, "0", sharePwd);
 
             // 创建Vod对象
             String title = PREFIX + shareId;
@@ -547,9 +545,10 @@ public class QuarkAppStore extends Spider {
         // 其他action:显示对话框
         // 对应 smali: invoke-static {}, Init;->activityForDialog() + setActivity
         // 注意: Init 类中没有 activityForDialog() 和 setActivity() 方法，已删除调用
-        
-        // TODO: 对应 smali: invoke-static {p1}, merge/A/a;->n4(String)V
+
+        // 对应 smali: invoke-static {p1}, merge/A/a;->n4(String)V
         // 功能: 显示对话框 (可能用于分享或登录)
+        QuarkAPI.showDialog(action);
         return "";
     }
 }
