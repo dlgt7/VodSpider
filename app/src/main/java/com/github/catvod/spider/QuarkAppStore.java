@@ -165,7 +165,7 @@ public class QuarkAppStore extends Spider {
     @Override
     public void init(Context context, String extend) throws Exception {
         // 对应 smali: invoke-static {}, Init;->checkPermission()V
-        Init.checkPermission();
+        // 注意: Init 类中没有 checkPermission() 方法，已删除调用
 
         // TODO: 对应 smali: invoke-static {}, merge/A/a;->N0()V
         // 功能: 初始化Quark环境 (可能涉及Cookie、Token等初始化)
@@ -400,13 +400,9 @@ public class QuarkAppStore extends Spider {
 
         // 其他ID:需要显示对话框
         // 对应 smali: invoke-static {}, Init;->activityForDialog() + setActivity
+        // 注意: Init 类中没有 activityForDialog() 和 setActivity() 方法，已删除调用
         // TODO: 需要 merge/f/r 类的实现
         // 功能: 创建 Runnable 显示文件详情对话框
-        
-        Activity activity = Init.activityForDialog();
-        if (activity != null) {
-            Init.setActivity(activity);
-        }
         
         // TODO: 对应 smali: new-instance + invoke-direct, merge/f/r;-><init>(String, I)V
         // 功能: 创建 Runnable (第二个参数 1 表示类型)
@@ -550,10 +546,7 @@ public class QuarkAppStore extends Spider {
 
         // 其他action:显示对话框
         // 对应 smali: invoke-static {}, Init;->activityForDialog() + setActivity
-        Activity activity = Init.activityForDialog();
-        if (activity != null) {
-            Init.setActivity(activity);
-        }
+        // 注意: Init 类中没有 activityForDialog() 和 setActivity() 方法，已删除调用
         
         // TODO: 对应 smali: invoke-static {p1}, merge/A/a;->n4(String)V
         // 功能: 显示对话框 (可能用于分享或登录)
