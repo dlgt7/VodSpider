@@ -1,6 +1,5 @@
 package com.github.catvod.spider;
 
-import android.app.Activity;
 import android.content.Context;
 import android.text.TextUtils;
 
@@ -111,9 +110,6 @@ public class QuarkAppStore extends Spider {
      */
     @Override
     public void init(Context context, String extend) throws Exception {
-        // 检查权限
-        Init.checkPermission();
-
         // TODO: 调用 merge/A/a.N0() 初始化Quark环境
         // 暂时跳过，因为找不到对应方法
 
@@ -292,12 +288,6 @@ public class QuarkAppStore extends Spider {
         }
 
         // 其他ID：需要显示对话框
-        // 获取Activity
-        Activity activity = Init.activityForDialog();
-        if (activity != null) {
-            Init.setActivity(activity);
-        }
-
         // TODO: 创建 merge/f.r Runnable并显示对话框
         // 暂时返回空字符串
         return "";
@@ -396,11 +386,6 @@ public class QuarkAppStore extends Spider {
         }
 
         // 其他action：显示对话框
-        Activity activity = Init.activityForDialog();
-        if (activity != null) {
-            Init.setActivity(activity);
-        }
-
         // TODO: 调用 merge/A/a.n4(action) 显示对话框
         // 暂时跳过
         return "";
