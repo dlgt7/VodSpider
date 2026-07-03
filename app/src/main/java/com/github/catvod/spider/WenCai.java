@@ -217,14 +217,22 @@ public class WenCai extends Spider {
             area = "";
         }
 
-        // 处理年份参数（忠实还原 smali 逻辑：当 year 有效时，将其赋给 area 并清空 year）
+        // 处理年份参数
         String year = "";
         if (extend != null) {
             year = extend.get("year");
         }
-        if (!TextUtils.isEmpty(year) && !"全部".equals(year)) {
-            area = year;  // smali 原始逻辑：将 year 值赋给 area 变量
-            year = "";    // smali 中 year 变量未被赋值，保持为空
+        if (TextUtils.isEmpty(year) || "全部".equals(year)) {
+            year = "";
+        }
+
+        // smali 原始逻辑：当 year 有效时，将 year 值赋给 area 参数位置
+        // 注意：这是 smali 的真实逻辑，虽然看起来不合理但必须忠实还原
+        String areaParam = area;
+        String yearParam = year;
+        if (!TextUtils.isEmpty(year)) {
+            areaParam = "";  // area 参数变为空
+            yearParam = year; // year 参数保持原值
         }
 
         // 处理分页参数
@@ -233,14 +241,14 @@ public class WenCai extends Spider {
         }
 
         // URL 编码参数
-        String encodedArea = URLEncoder.encode(area, "UTF-8");
-        String encodedYear = URLEncoder.encode(year, "UTF-8");
+        String encodedArea = URLEncoder.encode(areaParam, "UTF-8");
+        String encodedYear = URLEncoder.encode(yearParam, "UTF-8");
 
         // 构造 URL 和请求体（参数顺序严格按照 smali）
         String url = String.format("/api/mw-movie/anonymous/video/list?type1=%s&pageNum=%s&area=%s&year=%s",
                 tid, pg, encodedArea, encodedYear);
         String body = String.format("area=%s&pageNum=%s&type1=%s&year=%s&key={key}&t={t}",
-                area, pg, tid, year);
+                areaParam, pg, tid, yearParam);
 
         JSONObject response = requestAPI(url, body);
         JSONObject data = response.optJSONObject("data");
