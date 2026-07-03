@@ -388,7 +388,7 @@ public class TingBookJinXia extends Spider {
 
             try {
                 String apiUrl = BASE_URL + "/?s=api-getneoplay";
-                String response = OkHttp.post(apiUrl, params, headers).getBody();
+                String response = OkHttp.post(apiUrl, params, headers);
 
                 // 去除 BOM 头
                 if (response.startsWith("\ufeff")) {
