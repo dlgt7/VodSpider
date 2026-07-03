@@ -111,7 +111,9 @@ public class Cntv extends Spider {
             if (array == null) return list;
 
             for (int i = 0; i < array.length(); i++) {
-                JSONObject item = array.getJSONObject(i);
+                JSONObject item = array.optJSONObject(i);
+                if (item == null) continue;
+
                 String url = item.optString("url");
                 if (TextUtils.isEmpty(url)) continue;
 
@@ -167,7 +169,9 @@ public class Cntv extends Spider {
                     JSONArray array = data.optJSONArray("list");
                     if (array != null && array.length() > 0) {
                         for (int i = 0; i < array.length(); i++) {
-                            JSONObject item = array.getJSONObject(i);
+                            JSONObject item = array.optJSONObject(i);
+                            if (item == null) continue;
+
                             String itemGuid = item.optString("guid");
                             String title = item.optString("title");
                             if (!TextUtils.isEmpty(itemGuid)) {
@@ -200,6 +204,7 @@ public class Cntv extends Spider {
 
     /**
      * 获取视频播放地址 (实例方法 d)
+     * 支持多清晰度 fallback: 2000 -> 1500 -> 1200 -> 800 -> 450
      */
     private String getPlayUrl(String pid) {
         try {
@@ -219,26 +224,33 @@ public class Cntv extends Spider {
             if (!matcher.find()) return hlsUrl;
             String domain = matcher.group(1);
 
-            // 尝试高清播放地址
+            // 尝试多种清晰度（从高到低）
+            int[] qualities = new int[]{2000, 1500, 1200, 800, 450};
             String lastLine = lines[lines.length - 1];
             String[] parts = lastLine.split("/");
-            if (parts.length > 3) {
-                parts[3] = "1200";
-                parts[parts.length - 1] = "1200.m3u8";
-                StringBuilder hdUrl = new StringBuilder(domain);
-                for (int i = 0; i < parts.length; i++) {
-                    hdUrl.append("/").append(parts[i]);
-                }
 
-                try {
-                    String hdResp = OkHttp.string(hdUrl.toString(), getHeaders());
-                    return hdUrl.toString();
-                } catch (Exception e) {
-                    // HD URL 不可用，回退
+            if (parts.length > 3) {
+                for (int quality : qualities) {
+                    parts[3] = String.valueOf(quality);
+                    parts[parts.length - 1] = quality + ".m3u8";
+
+                    StringBuilder hdUrl = new StringBuilder(domain);
+                    for (int i = 0; i < parts.length; i++) {
+                        hdUrl.append("/").append(parts[i]);
+                    }
+
+                    try {
+                        String hdResp = OkHttp.string(hdUrl.toString(), getHeaders());
+                        if (!TextUtils.isEmpty(hdResp) && hdResp.contains("#EXT")) {
+                            return hdUrl.toString();
+                        }
+                    } catch (Exception e) {
+                        // 该清晰度不可用，继续尝试下一个
+                    }
                 }
             }
 
-            // 回退：拼接最后一段
+            // 回退：拼接最后一段（原始清晰度）
             StringBuilder fallbackUrl = new StringBuilder(domain);
             fallbackUrl.append("/").append(lastLine);
             return fallbackUrl.toString();
@@ -297,7 +309,9 @@ public class Cntv extends Spider {
                         JSONArray docs = response.optJSONArray("docs");
                         if (docs != null) {
                             for (int i = 0; i < docs.length(); i++) {
-                                JSONObject doc = docs.getJSONObject(i);
+                                JSONObject doc = docs.optJSONObject(i);
+                                if (doc == null) continue;
+
                                 JSONObject lastVIDE = doc.optJSONObject("lastVIDE");
                                 String videoSharedCode = lastVIDE != null ? lastVIDE.optString("videoSharedCode") : "";
                                 String column_name = doc.optString("column_name");
@@ -354,34 +368,63 @@ public class Cntv extends Spider {
         if ("栏目大全".equals(tid)) {
             playUrls = getVideoList(videoId);
         } else {
-            // 其他分类
-            try {
-                String apiUrl = "https://api.cntv.cn/NewVideo/getVideoListByAlbumIdNew?id=" + videoId + "&serviceId=tvcctv&p=1&n=100&mode=0&pub=1";
-                String resp = OkHttp.string(apiUrl, getHeaders());
-                JSONObject obj = new JSONObject(resp);
-                JSONObject data = obj.optJSONObject("data");
+            // 其他分类：尝试多种方式获取播放列表
 
-                if (data != null) {
-                    JSONArray list = data.optJSONArray("list");
-                    if (list != null) {
-                        for (int i = 0; i < list.length(); i++) {
-                            JSONObject item = list.getJSONObject(i);
-                            String guid = item.optString("guid");
-                            String title = item.optString("title");
-                            if (!TextUtils.isEmpty(guid)) {
-                                playUrls.add(title + "$" + guid);
+            // 方式1: 通过 albumId 获取（电视剧、纪录片、特别节目常用）
+            if (!TextUtils.isEmpty(videoId)) {
+                try {
+                    String apiUrl = "https://api.cntv.cn/NewVideo/getVideoListByAlbumIdNew?id=" + videoId + "&serviceId=tvcctv&p=1&n=100&mode=0&pub=1";
+                    String resp = OkHttp.string(apiUrl, getHeaders());
+                    JSONObject obj = new JSONObject(resp);
+                    JSONObject data = obj.optJSONObject("data");
+
+                    if (data != null) {
+                        JSONArray list = data.optJSONArray("list");
+                        if (list != null) {
+                            for (int i = 0; i < list.length(); i++) {
+                                JSONObject item = list.optJSONObject(i);
+                                if (item == null) continue;
+
+                                String guid = item.optString("guid");
+                                String title = item.optString("title");
+                                if (!TextUtils.isEmpty(guid)) {
+                                    playUrls.add(title + "$" + guid);
+                                }
                             }
                         }
                     }
+                } catch (Exception e) {
+                    // skip
                 }
-            } catch (Exception e) {
-                // skip
             }
 
-            // 回退：videoId 是 32位哈希值或 url
+            // 方式2: 如果方式1失败，尝试通过 url 页面获取 guid（动画片常用）
+            if (playUrls.isEmpty() && !TextUtils.isEmpty(url)) {
+                try {
+                    String html = OkHttp.string(url, getHeaders());
+                    Matcher matcher = GUID_PATTERN.matcher(html);
+                    if (matcher.find()) {
+                        String guid = matcher.group(1);
+                        playUrls = getVideoList(guid);
+                    }
+                } catch (Exception e) {
+                    // skip
+                }
+            }
+
+            // 方式3: 如果方式2失败，videoId 是 32位哈希值，尝试直接获取
             if (playUrls.isEmpty() && !TextUtils.isEmpty(videoId)) {
                 if (videoId.matches("[0-9a-fA-F]{32}")) {
                     playUrls = getVideoList(videoId);
+                }
+            }
+
+            // 方式4: 最后尝试用 url 作为页面解析
+            if (playUrls.isEmpty() && !TextUtils.isEmpty(url) && url.startsWith("http")) {
+                try {
+                    playUrls = getVideoList(url);
+                } catch (Exception e) {
+                    // skip
                 }
             }
         }
