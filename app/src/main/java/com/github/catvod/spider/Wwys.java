@@ -359,7 +359,7 @@ public class Wwys extends Spider {
             }
         }
 
-        String playUrls = TextUtils.isEmpty(playList) ? "" : TextUtils.join("#", playList);
+        String playUrls = (playList == null || playList.isEmpty()) ? "" : TextUtils.join("#", playList);
 
         if (TextUtils.isEmpty(playUrls)) {
             return Result.error("无 mac_url");

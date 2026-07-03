@@ -257,7 +257,7 @@ public class SaoHuo extends Spider {
      * 发送 HTTP GET 请求，返回 Jsoup Document，同时提取 set-cookie
      */
     private Document fetchDocument(String url) throws Exception {
-        OkResult result = OkHttp.newCall(url, buildHeaders()).execute();
+        OkResult result = OkHttp.newCall(url, buildHeaders());
         if (result.getResp() != null) {
             for (Map.Entry<String, List<String>> entry : result.getResp().entrySet()) {
                 if (entry.getKey() != null && entry.getKey().equalsIgnoreCase("set-cookie")) {

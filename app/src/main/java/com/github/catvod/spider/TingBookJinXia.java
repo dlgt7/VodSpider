@@ -283,7 +283,7 @@ public class TingBookJinXia extends Spider {
         String author = extractInfo("作者", doc);
         String type = extractInfo("类型", doc);
         String status = extractInfo("状态", doc);
-        String播音 = extractInfo("播音", doc);
+        String announcer = extractInfo("播音", doc);
 
         String content = "";
         Elements introPs = doc.select(".intro p");
@@ -315,7 +315,7 @@ public class TingBookJinXia extends Spider {
         vod.setVodPic(pic);
         vod.setVodContent(content);
         vod.setVodActor(author);
-        vod.setVodDirector(播音);
+        vod.setVodDirector(announcer);
         vod.setTypeName(type);
         vod.setVodRemarks(status);
         vod.setVodPlayFrom(PLAY_FROM);
@@ -361,7 +361,7 @@ public class TingBookJinXia extends Spider {
 
             try {
                 String apiUrl = hostUrl + "/?s=api-getneoplay";
-                String response = OkHttp.post(apiUrl, params, headers).getBody();
+                String response = OkHttp.post(apiUrl, params, headers);
                 if (response.startsWith("\ufeff")) {
                     response = response.substring(1);
                 }
