@@ -511,7 +511,7 @@ public class Yst extends Spider {
         }
 
         for (int i = 0; i < array.length(); i++) {
-            Object item = array.get(i);
+            Object item = array.opt(i);
             if (item instanceof JSONArray) {
                 JSONArray nested = (JSONArray) item;
                 for (int j = 0; j < nested.length(); j++) {
