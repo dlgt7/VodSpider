@@ -134,7 +134,7 @@ public class WenCai extends Spider {
      *
      * @return 热搜视频列表
      */
-    private ArrayList<Vod> getHotSearchList() {
+    private ArrayList<Vod> getHotSearchList() throws Exception {
         JSONObject response = requestAPI("/api/mw-movie/anonymous/home/hotSearch", "key={key}&t={t}");
         JSONArray array = response.optJSONArray("data");
         ArrayList<Vod> list = new ArrayList<>();
