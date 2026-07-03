@@ -104,7 +104,7 @@ public class WenCai extends Spider {
      * @param bodyTemplate 请求体模板（含 {key} 和 {t} 占位符）
      * @return JSONObject 响应数据
      */
-    private JSONObject requestAPI(String path, String bodyTemplate) {
+    private JSONObject requestAPI(String path, String bodyTemplate) throws Exception {
         // 构造完整 URL
         String url = new StringBuilder(host).append(path).toString();
 
