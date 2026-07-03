@@ -217,13 +217,14 @@ public class WenCai extends Spider {
             area = "";
         }
 
-        // 处理年份参数
+        // 处理年份参数（忠实还原 smali 逻辑：当 year 有效时，将其赋给 area 并清空 year）
         String year = "";
         if (extend != null) {
             year = extend.get("year");
         }
         if (!TextUtils.isEmpty(year) && !"全部".equals(year)) {
-            area = year;  // 注意：smali 中这里的逻辑比较奇怪，需要忠实还原
+            area = year;  // smali 原始逻辑：将 year 值赋给 area 变量
+            year = "";    // smali 中 year 变量未被赋值，保持为空
         }
 
         // 处理分页参数
@@ -235,7 +236,7 @@ public class WenCai extends Spider {
         String encodedArea = URLEncoder.encode(area, "UTF-8");
         String encodedYear = URLEncoder.encode(year, "UTF-8");
 
-        // 构造 URL 和请求体
+        // 构造 URL 和请求体（参数顺序严格按照 smali）
         String url = String.format("/api/mw-movie/anonymous/video/list?type1=%s&pageNum=%s&area=%s&year=%s",
                 tid, pg, encodedArea, encodedYear);
         String body = String.format("area=%s&pageNum=%s&type1=%s&year=%s&key={key}&t={t}",

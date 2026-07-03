@@ -232,13 +232,18 @@ public class TingBookJinXia extends Spider {
             }
         }
 
-        StringBuilder pathBuilder = new StringBuilder();
+        StringBuilder pathBuilder = new StringBuilder("/");
         if (!TextUtils.isEmpty(order)) {
-            pathBuilder.append("/").append(tid).append("/index").append(page).append("-order-").append(order);
+            // 有排序参数：/tid/index{page}-order-{order}.html
+            pathBuilder.append(tid).append("/index").append(page).append("-order-").append(order);
         } else {
-            pathBuilder.append("/").append(tid);
+            // 无排序参数：严格按照 smali 逻辑
+            pathBuilder.append(tid);
             if (page > 1) {
                 pathBuilder.append("/index").append(page);
+            } else {
+                // smali 原始逻辑：page <= 1 时额外添加 "/"
+                pathBuilder.append("/");
             }
         }
         pathBuilder.append(".html");
