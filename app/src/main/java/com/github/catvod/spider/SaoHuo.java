@@ -257,25 +257,28 @@ public class SaoHuo extends Spider {
      * 发送 HTTP GET 请求，返回 Jsoup Document，同时提取 set-cookie
      */
     private Document fetchDocument(String url) throws Exception {
-        OkResult result = OkHttp.newCall(url, buildHeaders());
-        if (result.getResp() != null) {
-            for (Map.Entry<String, List<String>> entry : result.getResp().entrySet()) {
-                if (entry.getKey() != null && entry.getKey().equalsIgnoreCase("set-cookie")) {
-                    List<String> values = entry.getValue();
-                    if (values != null && !values.isEmpty()) {
-                        String cookieValue = values.get(0);
-                        if (!TextUtils.isEmpty(cookieValue)) {
-                            int semicolonIndex = cookieValue.indexOf(';');
-                            if (semicolonIndex > 0) {
-                                cookieValue = cookieValue.substring(0, semicolonIndex);
-                            }
-                            this.cookie = cookieValue;
+        okhttp3.Response response = OkHttp.newCall(url, buildHeaders());
+        try {
+            // 提取 set-cookie
+            okhttp3.Headers headers = response.headers();
+            for (String name : headers.names()) {
+                if (name.equalsIgnoreCase("set-cookie")) {
+                    String cookieValue = headers.get(name);
+                    if (!TextUtils.isEmpty(cookieValue)) {
+                        int semicolonIndex = cookieValue.indexOf(';');
+                        if (semicolonIndex > 0) {
+                            cookieValue = cookieValue.substring(0, semicolonIndex);
                         }
+                        this.cookie = cookieValue;
                     }
                 }
             }
+            // 获取响应体并解析 HTML
+            String body = response.body().string();
+            return Jsoup.parse(body);
+        } finally {
+            response.close();  // 重要:关闭 Response
         }
-        return Jsoup.parse(result.getBody());
     }
 
     /**
