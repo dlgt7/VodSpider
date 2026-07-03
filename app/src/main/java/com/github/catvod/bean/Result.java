@@ -102,6 +102,21 @@ public class Result {
         return Result.get().vod(item).string();
     }
 
+    /**
+     * 分页静态方法: 返回带分页信息的视频列表
+     * 用于 categoryContent 等需要分页的场景
+     *
+     * @param page 当前页码
+     * @param pagecount 总页数
+     * @param limit 每页数量
+     * @param total 总数量
+     * @param list 视频列表
+     * @return JSON字符串
+     */
+    public static String string(int page, int pagecount, int limit, int total, List<Vod> list) {
+        return Result.get().vod(list).page(page, pagecount, limit, total).string();
+    }
+
     public static String error(String msg) {
         return Result.get().vod(Collections.emptyList()).msg(msg).code(500).string();
     }
