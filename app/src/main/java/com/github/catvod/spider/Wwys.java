@@ -119,7 +119,7 @@ public class Wwys extends Spider {
         return Jsoup.parse(html);
     }
 
-    public final String buildUrl(String path, String param) {
+    public final String buildUrl(String path, String param) throws Exception {
         if (TextUtils.isEmpty(path)) return "";
         if (TextUtils.isEmpty(param)) return path;
 
