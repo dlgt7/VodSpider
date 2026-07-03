@@ -201,11 +201,13 @@ public class Douban extends Spider {
 
         // 构建返回结果
         // 如果 filter=true 且 extendUrl 不为空,则尝试请求 extendUrl 并解析为 filters
-        String filters = filter && !TextUtils.isEmpty(this.extendUrl)
+        JsonElement filters = filter && !TextUtils.isEmpty(this.extendUrl)
             ? Json.parse(OkHttp.string(this.extendUrl))
             : null;
 
-        return Result.string(classes, vodList, filters);
+        return filters != null
+            ? Result.string(classes, vodList, filters)
+            : Result.string(classes, vodList);
     }
 
     /**
