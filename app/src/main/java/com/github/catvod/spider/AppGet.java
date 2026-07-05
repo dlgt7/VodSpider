@@ -119,23 +119,43 @@ public class AppGet extends Spider {
             config.addProperty("host", trimmed);
         }
 
-        this.apiUrl = config.has("host") ? config.get("host").getAsString() : null;
-        this.dataKey = config.has("datakey") ? config.get("datakey").getAsString() : null;
-        this.dataIv = config.has("dataiv") ? config.get("dataiv").getAsString() : null;
+        String hostUrl = getFirstNonEmptyString(config, new String[]{"host", "url", "site"});
+        this.dataKey = getFirstNonEmptyString(config, new String[]{"datakey", "dataKey", "key"});
+        this.dataIv = getFirstNonEmptyString(config, new String[]{"dataiv", "dataIv", "iv"});
 
-        if (this.apiUrl == null || this.dataKey == null || this.dataIv == null) {
+        if (hostUrl == null || hostUrl.isEmpty()) {
             throw new Exception("AppGet ext 缺少 host/url 或 datakey/key");
         }
 
-        if (!this.apiUrl.endsWith("/")) {
-            this.apiUrl = this.apiUrl + "/";
+        // 处理 host URL（如果是 txt/json 文件，需要先拉取内容）
+        if (URL_PATTERN.matcher(hostUrl).matches()) {
+            hostUrl = OkHttp.string(hostUrl, headers).trim().replaceAll("/+$", "");
+        }
+        hostUrl = hostUrl.replaceAll("/+$", "");
+
+        this.apiUrl = hostUrl + "/api.php/getappapi";
+
+        if (this.dataKey == null || this.dataKey.isEmpty()) {
+            throw new Exception("AppGet ext 缺少 host/url 或 datakey/key");
         }
 
-        if (config.has("ua")) {
-            headers.put("User-Agent", config.get("ua").getAsString());
+        if (this.dataIv == null || this.dataIv.isEmpty()) {
+            this.dataIv = this.dataKey;  // 如果 dataIv 为空，回退使用 dataKey
         }
 
-        String initSuffix = config.has("init_suffix") ? config.get("init_suffix").getAsString() : "init";
+        String ua = getFirstNonEmptyString(config, new String[]{"ua"});
+        if (ua != null && !ua.isEmpty()) {
+            headers.put("User-Agent", ua);
+        }
+
+        String initSuffix = getFirstNonEmptyString(config, new String[]{"init_suffix", "init"});
+        if (initSuffix == null || initSuffix.isEmpty()) {
+            initSuffix = "init";
+        }
+        if (!initSuffix.toLowerCase().startsWith("init")) {
+            initSuffix = "init" + initSuffix;
+        }
+
         String initUrl = this.apiUrl + ".index/" + initSuffix;
 
         String initResponse = OkHttp.string(initUrl, headers);
