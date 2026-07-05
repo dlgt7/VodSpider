@@ -177,6 +177,10 @@ public class AppGet extends Spider {
         ArrayList<Class> classes = new ArrayList<>();
         JsonObject filters = new JsonObject();
 
+        if (configData == null || !configData.has("type_list")) {
+            return Result.string(classes);
+        }
+
         JsonArray typeList = configData.getAsJsonArray("type_list");
 
         HashMap<String, String> filterNames = new HashMap<>();
@@ -243,6 +247,11 @@ public class AppGet extends Spider {
     @Override
     public String homeVideoContent() throws Exception {
         ArrayList<Vod> list = new ArrayList<>();
+
+        if (configData == null || !configData.has("type_list")) {
+            return Result.string(list);
+        }
+
         JsonArray typeList = configData.getAsJsonArray("type_list");
 
         for (JsonElement typeElement : typeList) {
