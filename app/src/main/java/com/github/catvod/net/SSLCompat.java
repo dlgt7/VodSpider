@@ -2,6 +2,7 @@ package com.github.catvod.net;
 
 import android.annotation.SuppressLint;
 
+import java.io.IOException;
 import java.net.InetAddress;
 import java.net.Socket;
 import java.security.cert.X509Certificate;
@@ -75,35 +76,35 @@ public class SSLCompat extends SSLSocketFactory {
     }
 
     @Override
-    public Socket createSocket(String host, int port) {
+    public Socket createSocket(String host, int port) throws IOException {
         Socket socket = factory.createSocket(host, port);
         if (socket instanceof SSLSocket) upgradeTLS((SSLSocket) socket);
         return socket;
     }
 
     @Override
-    public Socket createSocket(String host, int port, InetAddress localAddress, int localPort) {
+    public Socket createSocket(String host, int port, InetAddress localAddress, int localPort) throws IOException {
         Socket socket = factory.createSocket(host, port, localAddress, localPort);
         if (socket instanceof SSLSocket) upgradeTLS((SSLSocket) socket);
         return socket;
     }
 
     @Override
-    public Socket createSocket(InetAddress host, int port) {
+    public Socket createSocket(InetAddress host, int port) throws IOException {
         Socket socket = factory.createSocket(host, port);
         if (socket instanceof SSLSocket) upgradeTLS((SSLSocket) socket);
         return socket;
     }
 
     @Override
-    public Socket createSocket(InetAddress address, int port, InetAddress localAddress, int localPort) {
+    public Socket createSocket(InetAddress address, int port, InetAddress localAddress, int localPort) throws IOException {
         Socket socket = factory.createSocket(address, port, localAddress, localPort);
         if (socket instanceof SSLSocket) upgradeTLS((SSLSocket) socket);
         return socket;
     }
 
     @Override
-    public Socket createSocket(Socket socket, String host, int port, boolean autoClose) {
+    public Socket createSocket(Socket socket, String host, int port, boolean autoClose) throws IOException {
         Socket sslSocket = factory.createSocket(socket, host, port, autoClose);
         if (sslSocket instanceof SSLSocket) upgradeTLS((SSLSocket) sslSocket);
         return sslSocket;
