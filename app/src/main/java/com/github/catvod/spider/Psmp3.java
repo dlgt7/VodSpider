@@ -48,7 +48,6 @@ public class Psmp3 extends Spider {
     private static final String HOST_URL = "https://www.psmp3.com";
     private static final String REFERER = "https://www.psmp3.com/";
     private static final String USER_AGENT = "Mozilla/5.0 (Linux; Android 12; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36";
-    private static final String AUDIO_FORMAT = "audio";
 
     @Override
     public String homeContent(boolean filter) throws Exception {
@@ -175,24 +174,14 @@ public class Psmp3 extends Spider {
     @Override
     public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
         if (TextUtils.isEmpty(id)) {
-            return Result.get().url("").parse(0).string();
+            return "";
         }
 
-        try {
-            String playUrl = normalizeUrl(id);
-            String proxyUrl = Proxy.getUrl();
-            String encodedUrl = URLEncoder.encode(playUrl, "UTF-8");
-            String encodedReferer = URLEncoder.encode(REFERER, "UTF-8");
+        String playUrl = normalizeUrl(id);
+        HashMap<String, String> headers = new HashMap<>();
+        headers.put("Referer", REFERER);
 
-            String finalUrl = new StringBuilder(proxyUrl)
-                    .append("?do=mp3&url=").append(encodedUrl)
-                    .append("&ref=").append(encodedReferer)
-                    .toString();
-
-            return Result.get().url(finalUrl).format(AUDIO_FORMAT).parse(0).string();
-        } catch (Exception e) {
-            return Result.get().url(normalizeUrl(id)).format(AUDIO_FORMAT).parse(0).string();
-        }
+        return Result.get().url(playUrl).header(headers).string();
     }
 
     @Override
