@@ -212,7 +212,7 @@ public class TingYou extends Spider {
                         .readTimeout(30, TimeUnit.SECONDS)
                         .writeTimeout(30, TimeUnit.SECONDS)
                         .hostnameVerifier(new TrustAllHostnameVerifier())
-                        .sslSocketFactory(new SSLCompat().getSSLSocketFactory(), SSLCompat.TM)
+                        .sslSocketFactory(new SSLCompat(), SSLCompat.TM)
                         .build();
             }
             return CLIENT;
