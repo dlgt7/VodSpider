@@ -430,7 +430,8 @@ public class AppGet extends Spider {
     public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
         String[] parts = id.split(",", 5);
 
-        // parts[0] = name$parse (parse 是解析 API 标识，name 是集名)
+        // 播放器按 $ 分割名称和 URL，id 只包含 URL 部分
+        // parts[0] = parse (解析 API 标识或 URL 前缀)
         // parts[1] = url
         // parts[2] = token+XXX
         // parts[3] = player_parse_type
@@ -450,7 +451,7 @@ public class AppGet extends Spider {
         } else if ("2".equals(parseType)) {
             // 嗅探模式：parts[0] + parts[1] 作为 URL
             result.parse(1).url(parts[0] + parts[1]);
-        } else if ("1".equals(playerParseType)) {
+        } else if ("2".equals(playerParseType)) {
             // JSON 解析模式：parts[0] + parts[1] 作为请求 URL
             String url = parts[0] + parts[1];
             String response = OkHttp.string(url, this.headers);
