@@ -335,8 +335,7 @@ public class AppGet extends Spider {
 
         for (String api : detailApis) {
             try {
-                String url = apiUrl + ".index/" + api;
-                String decrypted = fetchAndDecrypt(url, params);
+                String decrypted = fetchAndDecrypt(".index/" + api, params);
                 vodData = JsonParser.parseString(decrypted).getAsJsonObject();
                 break;
             } catch (Exception e) {
@@ -392,9 +391,9 @@ public class AppGet extends Spider {
                 episodeBuilder.append("token+");
                 episodeBuilder.append(urlObj.get("token").getAsString());
                 episodeBuilder.append(",");
-                episodeBuilder.append(parseType);  // parts[3]
+                episodeBuilder.append(playerParseType);  // parts[3] = player_parse_type
                 episodeBuilder.append(",");
-                episodeBuilder.append(playerParseType);  // parts[4]
+                episodeBuilder.append(parseType);  // parts[4] = parse_type
             }
 
             if (playUrlBuilder.length() > 0) {
@@ -431,28 +430,37 @@ public class AppGet extends Spider {
     public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
         String[] parts = id.split(",", 5);
 
-        String parseType = parts.length > 3 ? parts[3] : DEFAULT_PARSE_TYPE;  // parse_api
-        String playerParseType = parts.length > 4 ? parts[4] : DEFAULT_PARSE_TYPE;  // player_parse_type
+        // parts[0] = name$parse (parse 是解析 API 标识，name 是集名)
+        // parts[1] = url
+        // parts[2] = token+XXX
+        // parts[3] = player_parse_type
+        // parts[4] = parse_type
         String token = parts.length > 2 ? parts[2].replace("token+", "") : "";
+        String playerParseType = parts.length > 3 ? parts[3] : DEFAULT_PARSE_TYPE;
+        String parseType = parts.length > 4 ? parts[4] : DEFAULT_PARSE_TYPE;
 
         HashMap<String, String> headers = new HashMap<>();
         headers.put("User-Agent", DEFAULT_USER_AGENT);
 
         Result result = Result.get();
 
-        if ("0".equals(playerParseType)) {
+        if ("0".equals(parseType)) {
+            // 直接播放
             result.parse(0).url(parts[1]);
-        } else if ("2".equals(playerParseType)) {
-            result.parse(1).url(parseType + parts[1]);
-        } else if ("1".equals(parseType)) {
-            String url = parseType + parts[1];
-            String response = OkHttp.string(url, headers);
+        } else if ("2".equals(parseType)) {
+            // 嗅探模式：parts[0] + parts[1] 作为 URL
+            result.parse(1).url(parts[0] + parts[1]);
+        } else if ("1".equals(playerParseType)) {
+            // JSON 解析模式：parts[0] + parts[1] 作为请求 URL
+            String url = parts[0] + parts[1];
+            String response = OkHttp.string(url, this.headers);
             JsonObject json = JsonParser.parseString(response).getAsJsonObject();
             String playUrl = json.get("url").getAsString();
-            result.url(playUrl);
+            result.parse(0).url(playUrl);
         } else {
+            // 加密 API 解析模式
             HashMap<String, String> params = new HashMap<>();
-            params.put("parse_api", parseType);
+            params.put("parse_api", parts[0]);
             params.put("url", Crypto.aesEncrypt(parts[1], dataKey, dataIv));
             params.put("player_parse_type", playerParseType);
             params.put("token", token);
@@ -463,7 +471,7 @@ public class AppGet extends Spider {
 
             JsonObject playJson = JsonParser.parseString(jsonData).getAsJsonObject();
             String playUrl = playJson.get("url").getAsString();
-            result.url(playUrl);
+            result.parse(0).url(playUrl);
         }
 
         result.header(headers);
