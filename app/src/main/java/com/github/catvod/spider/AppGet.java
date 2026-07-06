@@ -392,9 +392,9 @@ public class AppGet extends Spider {
                 episodeBuilder.append("token+");
                 episodeBuilder.append(urlObj.get("token").getAsString());
                 episodeBuilder.append(",");
-                episodeBuilder.append(playerParseType);
+                episodeBuilder.append(parseType);  // parts[3]
                 episodeBuilder.append(",");
-                episodeBuilder.append(parseType);
+                episodeBuilder.append(playerParseType);  // parts[4]
             }
 
             if (playUrlBuilder.length() > 0) {
@@ -431,8 +431,8 @@ public class AppGet extends Spider {
     public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
         String[] parts = id.split(",", 5);
 
-        String parseType = parts.length > 3 ? parts[3] : DEFAULT_PARSE_TYPE;
-        String playerParseType = parts.length > 4 ? parts[4] : DEFAULT_PARSE_TYPE;
+        String parseType = parts.length > 3 ? parts[3] : DEFAULT_PARSE_TYPE;  // parse_api
+        String playerParseType = parts.length > 4 ? parts[4] : DEFAULT_PARSE_TYPE;  // player_parse_type
         String token = parts.length > 2 ? parts[2].replace("token+", "") : "";
 
         HashMap<String, String> headers = new HashMap<>();
