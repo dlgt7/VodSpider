@@ -241,10 +241,60 @@ public class Jpys extends Spider {
 
     @Override
     public String detailContent(List<String> ids) throws Exception {
-        // TODO: smali 源码极度混淆（控制流混淆 + 字符串混淆），无法完整还原
-        // 参考 version 需要手动分析 smali 的 sparse-switch 控制流
-        // 建议后续通过运行时调试或参考其他同类 Spider 的 detailContent 实现模式
-        return Result.string(new Vod());
+        String vodId = ids.get(0);
+        
+        // 签名计算
+        String timestamp = String.valueOf(System.currentTimeMillis());
+        String signData = "id=" + vodId + String.format("&key=%s&t=%s", apiKey, timestamp);
+        String sign = sha1(signData);
+        
+        HashMap<String, String> headers = new HashMap<>();
+        headers.put("sign", sign);
+        headers.put("T", timestamp);
+        headers.put("Deviceid", "Deviceid");
+        
+        // API 请求
+        String url = host + "/api/mw-movie/anonymous/v2/video/detail?id=" + vodId;
+        String response = OkHttp.string(url, headers);
+        
+        // 解析响应
+        JSONObject data = new JSONObject(response).getJSONObject("data");
+        
+        // 构建 Vod 对象
+        Vod vod = new Vod();
+        vod.setVodId(vodId);
+        vod.setVodName(data.optString("vodName"));
+        vod.setVodPic(data.optString("vodPic"));
+        vod.setVodRemarks(data.optString("vodRemarks"));
+        vod.setVodContent(data.optString("vodContent"));
+        vod.setVodYear(data.optString("vodYear"));
+        vod.setVodActor(data.optString("vodActor"));
+        vod.setVodDirector(data.optString("vodDirector"));
+        
+        // 播放列表解析
+        JSONArray episodes = data.optJSONArray("episodes");
+        ArrayList<String> playFrom = new ArrayList<>();
+        ArrayList<String> playUrl = new ArrayList<>();
+        
+        if (episodes != null && episodes.length() > 0) {
+            playFrom.add("默认线路");
+            
+            ArrayList<String> episodeList = new ArrayList<>();
+            for (int i = 0; i < episodes.length(); i++) {
+                JSONObject ep = episodes.getJSONObject(i);
+                StringBuilder sb = new StringBuilder();
+                sb.append(ep.optString("episodeName")).append("$");  // 剧集名
+                sb.append(ep.optString("id")).append("@");            // 视频ID
+                sb.append(ep.optString("nid"));                       // 节点ID
+                episodeList.add(sb.toString());
+            }
+            playUrl.add(TextUtils.join("#", episodeList));
+        }
+        
+        vod.setVodPlayFrom(TextUtils.join("$$$", playFrom));
+        vod.setVodPlayUrl(TextUtils.join("$$$", playUrl));
+        
+        return Result.string(vod);
     }
 
     @Override
