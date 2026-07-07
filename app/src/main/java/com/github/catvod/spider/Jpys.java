@@ -97,16 +97,18 @@ public class Jpys extends Spider {
     }
 
     private String xorDecrypt(byte[] data, byte[] key) {
-        // XOR 解密实现 (对应原 C1820a.m4153b())
-        // 注意: 方法对第一个参数(data)进行XOR操作，使用第二个参数(key)作为密钥
-        for (int i = 0; i < data.length; i++) {
-            if (i >= key.length) {
-                // 当密钥长度不足时，重置索引从头循环使用密钥
-                int keyIndex = i % key.length;
-                data[i] = (byte) (data[i] ^ key[keyIndex]);
-            } else {
-                data[i] = (byte) (data[i] ^ key[i]);
+        // XOR 解密实现 (完全还原 C1820a.m4153b() 的逻辑)
+        int length = data.length;
+        int length2 = key.length;
+        int i = 0;
+        int i2 = 0;
+        while (i < length) {
+            if (i2 >= length2) {
+                i2 = 0;
             }
+            data[i] = (byte) (data[i] ^ key[i2]);
+            i++;
+            i2++;
         }
         return new String(data);
     }
@@ -127,44 +129,44 @@ public class Jpys extends Spider {
 
     @Override
     public String homeContent(boolean filter) throws Exception {
-        ArrayList<Class> classes = new ArrayList<>();
-        ArrayList<Vod> videos = new ArrayList<>();
+        // 严格按照原代码变量命名和顺序
+        ArrayList arrayList = new ArrayList();  // 存储 Vod 视频列表
+        ArrayList arrayList2 = new ArrayList(); // 存储 Class 分类列表
+        new LinkedHashMap();  // 未使用的 filters map（原代码创建了但未赋值）
 
-        // 添加分类 (第一个分类ID通过XOR解密生成)
-        // 注意: 参数顺序是 (要解密的数据, 密钥)
-        // 数据: {0} -> 0 XOR 49 = 49 (ASCII '1')
-        // 密钥: {49, -128, -107, -84, 109, 92, 73, 53}
-        byte[] encryptedData = new byte[]{0};
-        byte[] xorKey = new byte[]{49, -128, -107, -84, 109, 92, 73, 53};
-        String decryptedId = xorDecrypt(encryptedData, xorKey); // 结果为 "1"
-        classes.add(new Class(decryptedId, "电影"));
-        classes.add(new Class("2", "电视剧"));
-        classes.add(new Class("4", "动漫"));
-        classes.add(new Class("3", "综艺"));
+        // 添加分类（完全按照原代码的顺序和参数）
+        arrayList2.add(new Class(xorDecrypt(new byte[]{0}, new byte[]{49, -128, -107, -84, 109, 92, 73, 53}), "电影"));
+        arrayList2.add(new Class("2", "电视剧"));
+        arrayList2.add(new Class("4", "动漫"));
+        arrayList2.add(new Class("3", "综艺"));
 
-        // 获取热门搜索推荐
-        String timestamp = String.valueOf(System.currentTimeMillis());
-        String signParams = String.format("key=%s&t=%s", apiKey, timestamp);
-        String sign = buildSign(signParams);
-        HashMap<String, String> headers = buildHeaders(sign, timestamp);
+        // 创建过滤器JSON（完全按照原代码）
+        JSONObject jSONObject = new JSONObject(FILTERS_JSON);
 
-        String url = apiHost + "/api/mw-movie/anonymous/home/hotSearch";
-        String response = OkHttp.string(url, null, headers);
-        JSONObject json = new JSONObject(response);
-        JSONArray hotList = json.getJSONArray("data");
+        // 构建请求参数（完全按照原代码）
+        String strValueOf = String.valueOf(System.currentTimeMillis());
+        String strSha1 = sha1(buildSign(String.format("key=%s&t=%s", apiKey, strValueOf)));
 
-        for (int i = 0; i < hotList.length(); i++) {
-            JSONObject item = hotList.getJSONObject(i);
-            videos.add(new Vod(
-                item.getString("vodId"),
-                item.getString("vodName"),
-                item.getString("vodPic"),
-                item.getString("vodVersion")
+        HashMap map = new HashMap();
+        map.put("sign", strSha1);
+        map.put("T", strValueOf);
+        map.put("Deviceid", deviceId);
+
+        // 发送请求并解析响应（完全按照原代码）
+        JSONArray jSONArray = new JSONObject(OkHttp.string(apiHost + "/api/mw-movie/anonymous/home/hotSearch", null, map)).getJSONArray("data");
+
+        for (int i = 0; i < jSONArray.length(); i++) {
+            JSONObject jSONObject2 = jSONArray.getJSONObject(i);
+            arrayList.add(new Vod(
+                jSONObject2.getString("vodId"),
+                jSONObject2.getString("vodName"),
+                jSONObject2.getString("vodPic"),
+                jSONObject2.getString("vodVersion")
             ));
         }
 
-        JSONObject filters = new JSONObject(FILTERS_JSON);
-        return Result.string(classes, videos, filters);
+        // 返回结果（完全按照原代码的参数顺序：arrayList2=分类, arrayList=视频, jSONObject=过滤器）
+        return Result.string(arrayList2, arrayList, jSONObject);
     }
 
     @Override
