@@ -96,13 +96,19 @@ public class Jpys extends Spider {
         return sha1(params);
     }
 
-    private String xorDecrypt(byte[] key, byte[] data) {
+    private String xorDecrypt(byte[] data, byte[] key) {
         // XOR 解密实现 (对应原 C1820a.m4153b())
-        byte[] result = new byte[data.length];
+        // 注意: 方法对第一个参数(data)进行XOR操作，使用第二个参数(key)作为密钥
         for (int i = 0; i < data.length; i++) {
-            result[i] = (byte) (data[i] ^ key[i % key.length]);
+            if (i >= key.length) {
+                // 当密钥长度不足时，重置索引从头循环使用密钥
+                int keyIndex = i % key.length;
+                data[i] = (byte) (data[i] ^ key[keyIndex]);
+            } else {
+                data[i] = (byte) (data[i] ^ key[i]);
+            }
         }
-        return new String(result);
+        return new String(data);
     }
 
     @Override
@@ -125,9 +131,12 @@ public class Jpys extends Spider {
         ArrayList<Vod> videos = new ArrayList<>();
 
         // 添加分类 (第一个分类ID通过XOR解密生成)
-        byte[] xorKey = new byte[]{0};
-        byte[] encryptedId = new byte[]{49, -128, -107, -84, 109, 92, 73, 53};
-        String decryptedId = xorDecrypt(xorKey, encryptedId);
+        // 注意: 参数顺序是 (要解密的数据, 密钥)
+        // 数据: {0} -> 0 XOR 49 = 49 (ASCII '1')
+        // 密钥: {49, -128, -107, -84, 109, 92, 73, 53}
+        byte[] encryptedData = new byte[]{0};
+        byte[] xorKey = new byte[]{49, -128, -107, -84, 109, 92, 73, 53};
+        String decryptedId = xorDecrypt(encryptedData, xorKey); // 结果为 "1"
         classes.add(new Class(decryptedId, "电影"));
         classes.add(new Class("2", "电视剧"));
         classes.add(new Class("4", "动漫"));
