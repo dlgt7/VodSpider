@@ -13,6 +13,7 @@ import com.github.catvod.net.OkHttp;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.math.BigInteger;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
@@ -146,10 +147,10 @@ public class Jpys extends Spider {
 
         // 构建请求参数（完全按照原代码）
         String strValueOf = String.valueOf(System.currentTimeMillis());
-        String strSha1 = sha1(buildSign(String.format("key=%s&t=%s", apiKey, strValueOf)));
+        String strMd5 = md5(String.format("key=%s&t=%s", apiKey, strValueOf)); // 使用MD5加密（原代码C1994z.m4721a()）
 
         HashMap map = new HashMap();
-        map.put("sign", strSha1);
+        map.put("sign", strMd5);
         map.put("T", strValueOf);
         map.put("Deviceid", deviceId);
 
@@ -222,14 +223,17 @@ public class Jpys extends Spider {
         String vodId = ids.get(0);
         ArrayList<Vod> videos = new ArrayList<>();
 
-        // 获取详情信息
+        // 获取详情信息（完全按照原代码的签名和请求头构建）
         String timestamp = String.valueOf(System.currentTimeMillis());
-        String signParams = String.format("id=%s&key=%s&t=%s", vodId, apiKey, timestamp);
-        String sign = buildSign(signParams);
-        HashMap<String, String> headers = buildHeaders(sign, timestamp);
+        String sign = md5(String.format("id=%s&key=%s&t=%s", vodId, apiKey, timestamp));
+
+        HashMap map = new HashMap();
+        map.put("sign", sign);
+        map.put("T", timestamp);
+        map.put("Deviceid", deviceId);
 
         String url = apiHost + "/api/mw-movie/anonymous/video/detail?id=" + vodId;
-        String response = OkHttp.string(url, null, headers);
+        String response = OkHttp.string(url, null, map);
 
         JSONObject json = new JSONObject(response);
         JSONObject data = json.getJSONObject("data");
@@ -281,13 +285,17 @@ public class Jpys extends Spider {
             String epId = parts[0];
             String epNid = parts[1];
 
+            // 构建签名和请求头（完全按照原代码）
             String timestamp = String.valueOf(System.currentTimeMillis());
-            String signParams = String.format("id=%s&nid=%s&key=%s&t=%s", epId, epNid, apiKey, timestamp);
-            String sign = buildSign(signParams);
-            HashMap<String, String> headers = buildHeaders(sign, timestamp);
+            String sign = md5(String.format("id=%s&nid=%s&key=%s&t=%s", epId, epNid, apiKey, timestamp));
+
+            HashMap map = new HashMap();
+            map.put("sign", sign);
+            map.put("T", timestamp);
+            map.put("Deviceid", deviceId);
 
             String url = apiHost + "/api/mw-movie/anonymous/v2/video/episode/url?id=" + epId + "&nid=" + epNid;
-            String response = OkHttp.string(url, null, headers);
+            String response = OkHttp.string(url, null, map);
 
             JSONObject json = new JSONObject(response);
             String playUrl = json.getJSONObject("data").getJSONArray("list").getJSONObject(0).getString("url");
@@ -315,15 +323,19 @@ public class Jpys extends Spider {
     public String searchContent(String keyword, boolean quick) throws Exception {
         ArrayList<Vod> videos = new ArrayList<>();
 
+        // 构建签名和请求头（完全按照原代码）
         String timestamp = String.valueOf(System.currentTimeMillis());
-        String signParams = String.format("keyword=%s&pageNum=1&pageSize=8&key=%s&t=%s",
-            keyword, apiKey, timestamp);
-        String sign = buildSign(signParams);
-        HashMap<String, String> headers = buildHeaders(sign, timestamp);
+        String sign = md5(String.format("keyword=%s&pageNum=1&pageSize=8&key=%s&t=%s",
+            keyword, apiKey, timestamp));
+
+        HashMap map = new HashMap();
+        map.put("sign", sign);
+        map.put("T", timestamp);
+        map.put("Deviceid", deviceId);
 
         String url = apiHost + "/api/mw-movie/anonymous/video/searchByWord?keyword=" +
             URLEncoder.encode(keyword) + "&pageNum=1&pageSize=8";
-        String response = OkHttp.string(url, null, headers);
+        String response = OkHttp.string(url, null, map);
 
         JSONObject json = new JSONObject(response);
         JSONArray list = json.getJSONObject("data").getJSONObject("result").getJSONArray("list");
@@ -343,5 +355,43 @@ public class Jpys extends Spider {
         }
 
         return Result.string(videos);
+    }
+
+    /**
+     * MD5加密方法（完全还原 C1994z.m4721a() 实现）
+     * 返回32位小写十六进制字符串，不足32位前面补0
+     */
+    private String md5(String str) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("MD5");
+            byte[] digest = md.digest(str.getBytes("UTF-8"));
+            StringBuilder sb = new StringBuilder(new BigInteger(1, digest).toString(16));
+            while (sb.length() < 32) {
+                sb.insert(0, "0");
+            }
+            return sb.toString().toLowerCase();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /**
+     * XOR解密方法（完全还原 C1820a.m4153b() 实现）
+     * 对第一个参数(data)进行XOR操作，使用第二个参数(key)作为密钥
+     */
+    private String xorDecrypt(byte[] data, byte[] key) {
+        int length = data.length;
+        int length2 = key.length;
+        int i = 0;
+        int i2 = 0;
+        while (i < length) {
+            if (i2 >= length2) {
+                i2 = 0;
+            }
+            data[i] = (byte) (data[i] ^ key[i2]);
+            i++;
+            i2++;
+        }
+        return new String(data);
     }
 }
