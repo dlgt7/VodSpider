@@ -253,7 +253,7 @@ public class Jpys extends Spider {
         headers.put("T", timestamp);
         headers.put("Deviceid", "Deviceid");
         
-        // API 请求
+        // API 请求（修正字段名：使用 episodeList）
         String url = host + "/api/mw-movie/anonymous/v2/video/detail?id=" + vodId;
         String response = OkHttp.string(url, headers);
         
@@ -271,24 +271,24 @@ public class Jpys extends Spider {
         vod.setVodActor(data.optString("vodActor"));
         vod.setVodDirector(data.optString("vodDirector"));
         
-        // 播放列表解析
-        JSONArray episodes = data.optJSONArray("episodes");
+        // 播放列表解析（修正字段名：episodeList，字段：name + nid）
+        JSONArray episodeListArray = data.optJSONArray("episodeList");
         ArrayList<String> playFrom = new ArrayList<>();
         ArrayList<String> playUrl = new ArrayList<>();
         
-        if (episodes != null && episodes.length() > 0) {
+        if (episodeListArray != null && episodeListArray.length() > 0) {
             playFrom.add("默认线路");
             
-            ArrayList<String> episodeList = new ArrayList<>();
-            for (int i = 0; i < episodes.length(); i++) {
-                JSONObject ep = episodes.getJSONObject(i);
+            ArrayList<String> episodeUrls = new ArrayList<>();
+            for (int i = 0; i < episodeListArray.length(); i++) {
+                JSONObject ep = episodeListArray.getJSONObject(i);
                 StringBuilder sb = new StringBuilder();
-                sb.append(ep.optString("episodeName")).append("$");  // 剧集名
-                sb.append(ep.optString("id")).append("@");            // 视频ID
-                sb.append(ep.optString("nid"));                       // 节点ID
-                episodeList.add(sb.toString());
+                sb.append(ep.optString("name")).append("$");  // 剧集名（字段名：name）
+                sb.append(vodId).append("@");                 // 视频ID（使用 vodId）
+                sb.append(ep.optString("nid"));               // 节点ID（字段名：nid）
+                episodeUrls.add(sb.toString());
             }
-            playUrl.add(TextUtils.join("#", episodeList));
+            playUrl.add(TextUtils.join("#", episodeUrls));
         }
         
         vod.setVodPlayFrom(TextUtils.join("$$$", playFrom));
