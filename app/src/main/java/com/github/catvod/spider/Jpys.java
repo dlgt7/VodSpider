@@ -130,7 +130,7 @@ public class Jpys extends Spider {
     public String homeContent(boolean filter) throws Exception {
         ArrayList<Class> classes = new ArrayList<>();
         ArrayList<Vod> list = new ArrayList<>();
-        LinkedHashMap<String, ArrayList<Filter>> filters = new LinkedHashMap<>();
+        LinkedHashMap<String, List<Filter>> filters = new LinkedHashMap<>();
         
         // 分类列表
         classes.add(new Class("1", "电影"));
