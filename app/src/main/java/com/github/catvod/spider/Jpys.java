@@ -68,30 +68,6 @@ public class Jpys extends Spider {
         return java.util.UUID.randomUUID().toString();
     }
 
-    private static String sha1(String input) {
-        try {
-            MessageDigest md = MessageDigest.getInstance("SHA-1");
-            byte[] digest = md.digest(input.getBytes());
-            StringBuilder sb = new StringBuilder();
-            for (byte b : digest) {
-                String hex = Integer.toHexString(b & 0xff);
-                if (hex.length() == 1) sb.append('0');
-                sb.append(hex);
-            }
-            return sb.toString();
-        } catch (Exception e) {
-            return "";
-        }
-    }
-
-    private HashMap<String, String> buildHeaders(String sign, String timestamp) {
-        HashMap<String, String> headers = new HashMap<>();
-        headers.put("sign", sign);
-        headers.put("T", timestamp);
-        headers.put("Deviceid", deviceId);
-        return headers;
-    }
-
     @Override
     public void init(Context context, String extend) throws Exception {
         if (TextUtils.isEmpty(extend)) return;
@@ -160,18 +136,20 @@ public class Jpys extends Spider {
         String area = extend.get("area");
         if (area == null || area.equals("全部")) area = "";
 
-        // 构建签名
+        // 构建签名（使用MD5加密，完全按照原代码）
         String timestamp = String.valueOf(System.currentTimeMillis());
-        String signParams = String.format("area=%s&pageNum=%s&type1=%s&year=%s&key=%s&t=%s",
-            area, pg, tid, year, apiKey, timestamp);
-        // 注意: 原 C1994z.m4721a() 可能需要对参数排序,这里简化处理
-        String sign = buildSign(signParams);
+        String sign = md5(String.format("area=%s&pageNum=%s&type1=%s&year=%s&key=%s&t=%s",
+            area, pg, tid, year, apiKey, timestamp));
 
-        HashMap<String, String> headers = buildHeaders(sign, timestamp);
+        HashMap map = new HashMap();
+        map.put("sign", sign);
+        map.put("T", timestamp);
+        map.put("Deviceid", deviceId);
+
         String url = String.format(apiHost + "/api/mw-movie/anonymous/video/list?type1=%s&pageNum=%s&area=%s&year=%s",
             tid, pg, area, year);
 
-        String response = OkHttp.string(url, null, headers);
+        String response = OkHttp.string(url, null, map);
         JSONObject json = new JSONObject(response);
         JSONArray list = json.getJSONObject("data").getJSONArray("list");
 
