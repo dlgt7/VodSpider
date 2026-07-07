@@ -92,29 +92,6 @@ public class Jpys extends Spider {
         return headers;
     }
 
-    private String buildSign(String params) {
-        // 注意: 原 merge/C1994z.m4721a() 方法行为未知,这里使用简化实现
-        // 实际可能需要对参数进行排序、拼接等处理
-        return sha1(params);
-    }
-
-    private String xorDecrypt(byte[] data, byte[] key) {
-        // XOR 解密实现 (完全还原 C1820a.m4153b() 的逻辑)
-        int length = data.length;
-        int length2 = key.length;
-        int i = 0;
-        int i2 = 0;
-        while (i < length) {
-            if (i2 >= length2) {
-                i2 = 0;
-            }
-            data[i] = (byte) (data[i] ^ key[i2]);
-            i++;
-            i2++;
-        }
-        return new String(data);
-    }
-
     @Override
     public void init(Context context, String extend) throws Exception {
         if (TextUtils.isEmpty(extend)) return;
