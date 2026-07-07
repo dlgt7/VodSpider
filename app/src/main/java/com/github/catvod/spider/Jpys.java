@@ -253,12 +253,23 @@ public class Jpys extends Spider {
         headers.put("T", timestamp);
         headers.put("Deviceid", "Deviceid");
         
-        // API 请求（修正字段名：使用 episodeList）
+        // API 请求
         String url = host + "/api/mw-movie/anonymous/v2/video/detail?id=" + vodId;
         String response = OkHttp.string(url, headers);
         
+        // 调试日志：打印API响应
+        SpiderDebug.log("Jpys detailContent API响应: " + response);
+        
         // 解析响应
-        JSONObject data = new JSONObject(response).getJSONObject("data");
+        JSONObject jsonResponse = new JSONObject(response);
+        
+        // 检查响应码
+        if (jsonResponse.optInt("code") != 200) {
+            SpiderDebug.log("Jpys detailContent API错误: " + jsonResponse.optString("msg"));
+            return Result.string(new Vod());
+        }
+        
+        JSONObject data = jsonResponse.getJSONObject("data");
         
         // 构建 Vod 对象
         Vod vod = new Vod();
@@ -271,10 +282,13 @@ public class Jpys extends Spider {
         vod.setVodActor(data.optString("vodActor"));
         vod.setVodDirector(data.optString("vodDirector"));
         
-        // 播放列表解析（修正字段名：episodeList，字段：name + nid）
+        // 播放列表解析
         JSONArray episodeListArray = data.optJSONArray("episodeList");
         ArrayList<String> playFrom = new ArrayList<>();
         ArrayList<String> playUrl = new ArrayList<>();
+        
+        SpiderDebug.log("Jpys episodeList字段存在: " + (episodeListArray != null));
+        SpiderDebug.log("Jpys episodeList长度: " + (episodeListArray != null ? episodeListArray.length() : 0));
         
         if (episodeListArray != null && episodeListArray.length() > 0) {
             playFrom.add("默认线路");
@@ -283,16 +297,23 @@ public class Jpys extends Spider {
             for (int i = 0; i < episodeListArray.length(); i++) {
                 JSONObject ep = episodeListArray.getJSONObject(i);
                 StringBuilder sb = new StringBuilder();
-                sb.append(ep.optString("name")).append("$");  // 剧集名（字段名：name）
-                sb.append(vodId).append("@");                 // 视频ID（使用 vodId）
-                sb.append(ep.optString("nid"));               // 节点ID（字段名：nid）
+                sb.append(ep.optString("name")).append("$");
+                sb.append(vodId).append("@");
+                sb.append(ep.optString("nid"));
                 episodeUrls.add(sb.toString());
+                
+                // 调试日志：打印每集信息
+                SpiderDebug.log("Jpys 剧集" + i + ": name=" + ep.optString("name") + ", nid=" + ep.optString("nid"));
             }
             playUrl.add(TextUtils.join("#", episodeUrls));
         }
         
         vod.setVodPlayFrom(TextUtils.join("$$$", playFrom));
         vod.setVodPlayUrl(TextUtils.join("$$$", playUrl));
+        
+        // 调试日志：打印最终播放列表
+        SpiderDebug.log("Jpys vodPlayFrom: " + vod.getVodPlayFrom());
+        SpiderDebug.log("Jpys vodPlayUrl: " + vod.getVodPlayUrl());
         
         return Result.string(vod);
     }
