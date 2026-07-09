@@ -4,6 +4,7 @@ import android.content.Context;
 import android.text.TextUtils;
 
 import com.github.catvod.bean.Class;
+import com.github.catvod.bean.Filter;
 import com.github.catvod.bean.Result;
 import com.github.catvod.bean.Vod;
 import com.github.catvod.crawler.Spider;
@@ -133,6 +134,7 @@ public class Jpys extends Spider {
     public String homeContent(boolean filter) throws Exception {
         ArrayList<Class> classes = new ArrayList<>();
         ArrayList<Vod> list = new ArrayList<>();
+        ArrayList<Filter> filters = new ArrayList<>();
 
         try {
             // 签名计算 (smali行3812-3852)
@@ -181,14 +183,35 @@ public class Jpys extends Spider {
                 }
             }
 
-            // 添加分类 (smali行3970-4076包含Filter配置，此处简化为硬编码)
+            // 添加分类 (smali行3970-4076包含Filter配置)
             classes.add(new Class("1", "电影"));
             classes.add(new Class("2", "电视剧"));
             classes.add(new Class("3", "动漫"));
             classes.add(new Class("4", "综艺"));
             classes.add(new Class("5", "伦理"));
 
-            return Result.string(classes, list);
+            // 【修复问题2】添加Filter配置 (smali第3664-3800行)
+            // Filter 1: key="1", name="电影"
+            ArrayList<Filter.Value> values1 = new ArrayList<>();
+            values1.add(new Filter.Value("全部", "1"));
+            filters.add(new Filter("1", "电影", values1));
+
+            // Filter 2: key="2", name="电视剧"
+            ArrayList<Filter.Value> values2 = new ArrayList<>();
+            values2.add(new Filter.Value("全部", "2"));
+            filters.add(new Filter("2", "电视剧", values2));
+
+            // Filter 3: key="4", name="动漫"
+            ArrayList<Filter.Value> values3 = new ArrayList<>();
+            values3.add(new Filter.Value("全部", "4"));
+            filters.add(new Filter("4", "动漫", values3));
+
+            // Filter 4: key="3", name="综艺"
+            ArrayList<Filter.Value> values4 = new ArrayList<>();
+            values4.add(new Filter.Value("全部", "3"));
+            filters.add(new Filter("3", "综艺", values4));
+
+            return Result.string(classes, list, filters);
 
         } catch (Exception e) {
             // 异常时回退到硬编码分类 (smali无异常回退，但Java需要容错)
@@ -270,10 +293,10 @@ public class Jpys extends Spider {
 
             // 构造签名(完整还原smali detailContent流程)
             String timestamp = String.valueOf(System.currentTimeMillis());
-            // 【修复】根据smali detailContent,签名需要包含id参数
-            // 格式: id参数 + token + timestamp (具体分隔符可能需要调整)
-            String signInput = "id=" + id + "&" + token + "&" + timestamp;
-            // 【修复】merge/n/a0.a预处理: URL编码签名字符串
+            // 【修复】根据smali第1893-1951行解密结果,正确格式为:
+            // "id=" + id + "&key=" + token + "&t=" + timestamp
+            String signInput = "id=" + id + "&key=" + token + "&t=" + timestamp;
+            // merge/n/a0.a预处理: URL编码签名字符串
             String encodedSignInput = urlEncode(signInput);
             String sign = sha1(encodedSignInput);
 
@@ -407,8 +430,10 @@ public class Jpys extends Spider {
 
             // 构造签名(完整还原smali searchContent流程)
             String timestamp = String.valueOf(System.currentTimeMillis());
-            String signInput = timestamp + token;
-            // 【修复】merge/n/a0.a预处理: URL编码签名字符串
+            // 【修复】根据smali第8156-8164行解密结果,格式为:
+            // "&key=" + token + "&t=" + timestamp
+            String signInput = "&key=" + token + "&t=" + timestamp;
+            // merge/n/a0.a预处理: URL编码签名字符串
             String encodedSignInput = urlEncode(signInput);
             String sign = sha1(encodedSignInput);
 
