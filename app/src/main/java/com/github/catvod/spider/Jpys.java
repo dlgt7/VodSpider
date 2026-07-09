@@ -9,7 +9,7 @@ import com.github.catvod.bean.Result;
 import com.github.catvod.bean.Vod;
 import com.github.catvod.crawler.Spider;
 import com.github.catvod.net.OkHttp;
-import com.github.catvod.utils.SpiderDebug;
+import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.utils.Util;
 
 import org.json.JSONArray;
@@ -20,6 +20,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -39,9 +40,6 @@ import java.util.UUID;
  * - 所有方法完整还原(10个)
  */
 public class Jpys extends Spider {
-
-    // 静态字段: 关键词映射表
-    private static Map<String, Boolean> keywordsMap;
 
     // 实例字段
     private String host;      // 主机URL
@@ -120,7 +118,6 @@ public class Jpys extends Spider {
         }
 
         try {
-            keywordsMap = Init.getKeywordsMap();
             this.uuid = getUUID();
         } catch (Exception e) {
             throw new RuntimeException("Jpys init failed", e);
@@ -134,7 +131,7 @@ public class Jpys extends Spider {
     public String homeContent(boolean filter) throws Exception {
         ArrayList<Class> classes = new ArrayList<>();
         ArrayList<Vod> list = new ArrayList<>();
-        ArrayList<Filter> filters = new ArrayList<>();
+        LinkedHashMap<String, List<Filter>> filters = new LinkedHashMap<>();
 
         try {
             // 签名计算 (smali行3812-3852)
@@ -167,17 +164,11 @@ public class Jpys extends Spider {
 
                         String vodName = item.optString("vodName");
 
-                        // 关键词过滤 (smali行4051-4067)
-                        if (keywordsMap != null && !keywordsMap.isEmpty()
-                            && keywordsMap.containsKey(vodName)) {
-                            continue;  // 跳过包含关键词的视频
-                        }
-
                         Vod vod = new Vod();
-                        vod.setVod_id(item.optString("vodId"));
-                        vod.setVod_name(vodName);
-                        vod.setVod_pic(item.optString("vodPic"));
-                        vod.setVod_remarks(item.optString("vodRemarks"));
+                        vod.setVodId(item.optString("vodId"));
+                        vod.setVodName(vodName);
+                        vod.setVodPic(item.optString("vodPic"));
+                        vod.setVodRemarks(item.optString("vodRemarks"));
                         list.add(vod);
                     }
                 }
@@ -192,24 +183,32 @@ public class Jpys extends Spider {
 
             // 【修复问题2】添加Filter配置 (smali第3664-3800行)
             // Filter 1: key="1", name="电影"
+            ArrayList<Filter> filters1 = new ArrayList<>();
             ArrayList<Filter.Value> values1 = new ArrayList<>();
             values1.add(new Filter.Value("全部", "1"));
-            filters.add(new Filter("1", "电影", values1));
+            filters1.add(new Filter("1", "电影", values1));
+            filters.put("1", filters1);
 
             // Filter 2: key="2", name="电视剧"
+            ArrayList<Filter> filters2 = new ArrayList<>();
             ArrayList<Filter.Value> values2 = new ArrayList<>();
             values2.add(new Filter.Value("全部", "2"));
-            filters.add(new Filter("2", "电视剧", values2));
+            filters2.add(new Filter("2", "电视剧", values2));
+            filters.put("2", filters2);
 
             // Filter 3: key="4", name="动漫"
-            ArrayList<Filter.Value> values3 = new ArrayList<>();
-            values3.add(new Filter.Value("全部", "4"));
-            filters.add(new Filter("4", "动漫", values3));
+            ArrayList<Filter> filters4 = new ArrayList<>();
+            ArrayList<Filter.Value> values4 = new ArrayList<>();
+            values4.add(new Filter.Value("全部", "4"));
+            filters4.add(new Filter("4", "动漫", values4));
+            filters.put("4", filters4);
 
             // Filter 4: key="3", name="综艺"
-            ArrayList<Filter.Value> values4 = new ArrayList<>();
-            values4.add(new Filter.Value("全部", "3"));
-            filters.add(new Filter("3", "综艺", values4));
+            ArrayList<Filter> filters3 = new ArrayList<>();
+            ArrayList<Filter.Value> values3 = new ArrayList<>();
+            values3.add(new Filter.Value("全部", "3"));
+            filters3.add(new Filter("3", "综艺", values3));
+            filters.put("3", filters3);
 
             return Result.string(classes, list, filters);
 
@@ -261,10 +260,10 @@ public class Jpys extends Spider {
                     JSONObject item = array.optJSONObject(i);
                     if (item != null) {
                         Vod vod = new Vod();
-                        vod.setVod_id(item.optString("vodId"));
-                        vod.setVod_name(item.optString("vodName"));
-                        vod.setVod_pic(item.optString("vodPic"));
-                        vod.setVod_remarks(item.optString("vodRemarks"));
+                        vod.setVodId(item.optString("vodId"));
+                        vod.setVodName(item.optString("vodName"));
+                        vod.setVodPic(item.optString("vodPic"));
+                        vod.setVodRemarks(item.optString("vodRemarks"));
                         list.add(vod);
                     }
                 }
@@ -313,15 +312,15 @@ public class Jpys extends Spider {
 
             if (data != null) {
                 Vod vod = new Vod();
-                vod.setVod_id(data.optString("vodId"));
-                vod.setVod_name(data.optString("vodName"));
-                vod.setVod_pic(data.optString("vodPic"));
-                vod.setVod_remarks(data.optString("vodRemarks"));
-                vod.setVod_year(data.optString("vodYear"));
-                vod.setVod_area(data.optString("vodArea"));
-                vod.setVod_director(data.optString("vodDirector"));
-                vod.setVod_actor(data.optString("vodActor"));
-                vod.setVod_content(data.optString("vodContent"));
+                vod.setVodId(data.optString("vodId"));
+                vod.setVodName(data.optString("vodName"));
+                vod.setVodPic(data.optString("vodPic"));
+                vod.setVodRemarks(data.optString("vodRemarks"));
+                vod.setVodYear(data.optString("vodYear"));
+                vod.setVodArea(data.optString("vodArea"));
+                vod.setVodDirector(data.optString("vodDirector"));
+                vod.setVodActor(data.optString("vodActor"));
+                vod.setVodContent(data.optString("vodContent"));
                 
                 // 构建播放列表 (从字节数组解密)
                 JSONArray episodeList = data.optJSONArray("episodeList");
@@ -343,8 +342,8 @@ public class Jpys extends Spider {
                                .append(episode.optString("episodeUrl"));
                     }
                     
-                    vod.setVod_play_from(playFrom.toString());
-                    vod.setVod_play_url(playUrl.toString());
+                    vod.setVodPlayFrom(playFrom.toString());
+                    vod.setVodPlayUrl(playUrl.toString());
                 }
 
                 return Result.string(vod);
@@ -453,10 +452,10 @@ public class Jpys extends Spider {
                     JSONObject item = array.optJSONObject(i);
                     if (item != null) {
                         Vod vod = new Vod();
-                        vod.setVod_id(item.optString("vodId"));
-                        vod.setVod_name(item.optString("vodName"));
-                        vod.setVod_pic(item.optString("vodPic"));
-                        vod.setVod_remarks(item.optString("vodRemarks"));
+                        vod.setVodId(item.optString("vodId"));
+                        vod.setVodName(item.optString("vodName"));
+                        vod.setVodPic(item.optString("vodPic"));
+                        vod.setVodRemarks(item.optString("vodRemarks"));
                         list.add(vod);
                     }
                 }
