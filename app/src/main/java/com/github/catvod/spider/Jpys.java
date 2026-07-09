@@ -135,8 +135,9 @@ public class Jpys extends Spider {
 
         try {
             // 签名计算 (smali行3812-3852)
+            // 正确格式: "key=" + token + "&t=" + timestamp
             String timestamp = String.valueOf(System.currentTimeMillis());
-            String signInput = timestamp + token;
+            String signInput = "key=" + token + "&t=" + timestamp;
             String encodedSignInput = urlEncode(signInput);  // merge/n/a0.a预处理
             String sign = sha1(encodedSignInput);
 
@@ -236,9 +237,10 @@ public class Jpys extends Spider {
             String url = host + "/api/mw-movie/anonymous/video/listByType?type=" + tid + "&page=" + pg + "&size=20";
 
             // 构造签名(完整还原smali categoryContent流程)
+            // 正确格式: "key=" + token + "&t=" + timestamp
             String timestamp = String.valueOf(System.currentTimeMillis());
-            String signInput = timestamp + token;
-            // 【修复】merge/n/a0.a预处理: URL编码签名字符串
+            String signInput = "key=" + token + "&t=" + timestamp;
+            // merge/n/a0.a预处理: URL编码签名字符串
             String encodedSignInput = urlEncode(signInput);
             String sign = sha1(encodedSignInput);
 
@@ -375,9 +377,10 @@ public class Jpys extends Spider {
             }
             
             // 阶段3: 签名计算(完整还原smali playerContent流程)
+            // 正确格式: "key=" + token + "&t=" + timestamp
             String timestamp = String.valueOf(System.currentTimeMillis());
-            String signInput = timestamp + token;
-            // 【修复】merge/n/a0.a预处理: URL编码签名字符串
+            String signInput = "key=" + token + "&t=" + timestamp;
+            // merge/n/a0.a预处理: URL编码签名字符串
             String encodedSignInput = urlEncode(signInput);
             String sign = sha1(encodedSignInput);
             
