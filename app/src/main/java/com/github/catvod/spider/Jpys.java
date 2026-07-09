@@ -142,11 +142,11 @@ public class Jpys extends Spider {
             String sign = sha1(encodedSignInput);
 
             // 请求头设置 (smali行3856-3916)
+            // 只有3个header: sign, t, Deviceid
             HashMap<String, String> headers = new HashMap<>();
-            headers.put("Deviceid", uuid);
             headers.put("sign", sign);
             headers.put("t", timestamp);
-            headers.put("key", "ebfebc5647055e56");
+            headers.put("Deviceid", uuid);
 
             // HTTP请求 (smali行3918-3946)
             String url = host + "/api/mw-movie/anonymous/video/home";
@@ -246,10 +246,9 @@ public class Jpys extends Spider {
 
             // 设置请求头
             HashMap<String, String> headers = new HashMap<>();
-            headers.put("Deviceid", uuid);
             headers.put("sign", sign);
             headers.put("t", timestamp);
-            headers.put("key", "ebfebc5647055e56");
+            headers.put("Deviceid", uuid);
 
             // 发送请求
             String response = OkHttp.string(url, headers);
@@ -301,12 +300,11 @@ public class Jpys extends Spider {
             String encodedSignInput = urlEncode(signInput);
             String sign = sha1(encodedSignInput);
 
-            // 设置请求头
+            // 设置请求头 (smali中只有3个header: sign, t, Deviceid)
             HashMap<String, String> headers = new HashMap<>();
-            headers.put("Deviceid", uuid);
             headers.put("sign", sign);
             headers.put("t", timestamp);
-            headers.put("key", "ebfebc5647055e56");
+            headers.put("Deviceid", uuid);
 
             String response = OkHttp.string(url, headers);
             JSONObject json = new JSONObject(response);
@@ -385,12 +383,12 @@ public class Jpys extends Spider {
             String sign = sha1(encodedSignInput);
             
             // 阶段4: HTTP请求
+            // 只有3个header: sign, t, Deviceid
             HashMap<String, String> headers = new HashMap<>();
-            headers.put("Deviceid", uuid);
             headers.put("sign", sign);
             headers.put("t", timestamp);
-            headers.put("key", "ebfebc5647055e56");
-            
+            headers.put("Deviceid", uuid);
+
             String response = OkHttp.string(url, headers);
             JSONObject json = new JSONObject(response);
             JSONObject data = json.optJSONObject("data");
@@ -439,12 +437,11 @@ public class Jpys extends Spider {
             String encodedSignInput = urlEncode(signInput);
             String sign = sha1(encodedSignInput);
 
-            // 设置请求头
+            // 设置请求头 (只有3个header: sign, t, Deviceid)
             HashMap<String, String> headers = new HashMap<>();
-            headers.put("Deviceid", uuid);
             headers.put("sign", sign);
             headers.put("t", timestamp);
-            headers.put("key", "ebfebc5647055e56");
+            headers.put("Deviceid", uuid);
 
             String response = OkHttp.string(url, headers);
             JSONObject json = new JSONObject(response);
