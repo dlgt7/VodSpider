@@ -2,9 +2,6 @@ package com.github.catvod.spider;
 
 import android.text.TextUtils;
 
-import com.github.catvod.bean.Class;
-import com.github.catvod.bean.Result;
-import com.github.catvod.bean.Vod;
 import com.github.catvod.crawler.Spider;
 import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.net.OkHttp;
@@ -31,6 +28,7 @@ public class Rydj extends Spider {
 
     private static final Pattern TAG_PATTERN = Pattern.compile("<tag>|</tag>");
 
+    // 注意：这些 token 容易过期，如失效请抓包更新
     private static final String SESSION = "eyJpbmZvIjp7InVpZCI6IiIsInJ0IjoiMTc0MDY2ODk4NiIsInVuIjoiT1BHX2U5ODQ4NTgzZmM4ZjQzZTJhZjc5ZTcxNjRmZTE5Y2JjIiwiZnQiOiIxNzQwNjY4OTg2In19";
     private static final String FEEDS_SESSION = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1dHlwIjowLCJidWlkIjoxNjM0MDU3ODE4OTgxNDk5OTA0LCJhdWQiOiJkcmFtYSIsInZlciI6MiwicmF0IjoxNzQwNjY4OTg2LCJ1bm0iOiJPUEdfZTk4NDg1ODNmYzhmNDNlMmFmNzllNzE2NGZlMTljYmMiLCJpZCI6ImVhZGE1NmEyZWEzYTE0YmMwMzE3ZDc2ZmVjODJjNzc3IiwiZXhwIjoxNzQxMjczNzg2LCJkYyI6ImJqaHQifQ.IwuI0gK077RF4G10JRxgxx4GCG502vR8Z0W9EV4kd-c";
 
@@ -68,8 +66,8 @@ public class Rydj extends Spider {
 
     @Override
     public String homeContent(boolean filter) throws Exception {
-        List<Vod> videos = new ArrayList<>();
-        List<Class> classes = new ArrayList<>();
+        Map<String, Object> result = new HashMap<>();
+        List<Map<String, String>> classes = new ArrayList<>();
 
         Map<String, String> params = new HashMap<>();
         params.put("reqType", "duanjuCategory");
@@ -89,22 +87,28 @@ public class Rydj extends Spider {
                     String cid = vo.get("categoryId").getAsString();
                     String typeId = oppo + "@" + cid;
 
-                    classes.add(new Class(typeId, oppo));
+                    Map<String, String> cls = new HashMap<>();
+                    cls.put("type_id", typeId);
+                    cls.put("type_name", oppo);
+                    classes.add(cls);
                 }
             }
         }
 
-        return Result.string(classes, videos);
+        result.put("class", classes);
+        return gson.toJson(result);
     }
 
     @Override
     public String homeVideoContent() throws Exception {
+        // 首页推荐直接复用分类页（空 tid + 第1页）
         return categoryContent("", "1", false, null);
     }
 
     @Override
     public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
-        List<Vod> videos = new ArrayList<>();
+        Map<String, Object> result = new HashMap<>();
+        List<Map<String, String>> videos = new ArrayList<>();
 
         int page = Integer.parseInt(pg);
         int offset = (page - 1) * 30;
@@ -152,72 +156,87 @@ public class Rydj extends Spider {
                     String source = duanju.get("source").getAsString();
                     String pic = duanju.get("coverImageUrl").getAsString();
 
-                    videos.add(new Vod(id + "#" + source, name, pic, "热播推荐"));
+                    Map<String, String> vod = new HashMap<>();
+                    vod.put("vod_id", id + "#" + source);
+                    vod.put("vod_name", name);
+                    vod.put("vod_pic", pic);
+                    vod.put("vod_remarks", "热播推荐");
+                    videos.add(vod);
                 }
             }
         }
 
-        return Result.get().page(page, 9999, 90, 999999).vod(videos).string();
+        result.put("list", videos);
+        result.put("page", page);
+        result.put("pagecount", 9999);
+        result.put("limit", 90);
+        result.put("total", 999999);
+        return gson.toJson(result);
     }
 
     @Override
     public String detailContent(List<String> ids) {
-        try {
-            String id = ids.get(0);
-            String[] parts = id.split("#");
-            long ts = getTimestamp();
+        Map<String, Object> result = new HashMap<>();
+        List<Map<String, String>> list = new ArrayList<>();
 
-            Map<String, String> params = new HashMap<>();
-            params.put("duanjuId", parts[0]);
-            params.put("source", parts[1]);
-            params.put("openFrom", "homescreen");
-            params.put("type", "");
-            params.put("pageID", "page_inner_flow");
-            params.put("density", "1.5");
-            params.put("version", "2001001");
-            params.put("androidVersionCode", "28");
-            params.put("requestId", ts + "aa498144140ef297");
-            params.put("appId", "drama");
-            params.put("teenMode", "false");
-            params.put("userBaseMode", "false");
-            params.put("session", SESSION);
-            params.put("feedssession", FEEDS_SESSION);
+        String id = ids.get(0);
+        String[] parts = id.split("#");
+        long ts = getTimestamp();
 
-            JsonObject data = fetchResult(buildUrl("/xifan/drama/getDuanjuInfo", params));
+        Map<String, String> params = new HashMap<>();
+        params.put("duanjuId", parts[0]);
+        params.put("source", parts[1]);
+        params.put("openFrom", "homescreen");
+        params.put("type", "");
+        params.put("pageID", "page_inner_flow");
+        params.put("density", "1.5");
+        params.put("version", "2001001");
+        params.put("androidVersionCode", "28");
+        params.put("requestId", ts + "aa498144140ef297");
+        params.put("appId", "drama");
+        params.put("teenMode", "false");
+        params.put("userBaseMode", "false");
+        params.put("session", SESSION);
+        params.put("feedssession", FEEDS_SESSION);
 
-            String name = data.has("title") ? data.get("title").getAsString() : id;
-            String desc = data.has("desc") ? data.get("desc").getAsString() : "暂无简介";
-            JsonArray episodes = data.getAsJsonArray("episodeList");
+        JsonObject data = fetchResult(buildUrl("/xifan/drama/getDuanjuInfo", params));
 
-            StringBuilder playUrl = new StringBuilder();
-            if (episodes != null) {
-                for (JsonElement ep : episodes) {
-                    JsonObject obj = ep.getAsJsonObject();
-                    String epName = obj.get("index").getAsString();
-                    String url = obj.get("playUrl").getAsString();
-                    playUrl.append(epName).append("$").append(url).append("#");
-                }
-                if (playUrl.length() > 0) {
-                    playUrl.deleteCharAt(playUrl.length() - 1);
-                }
+        String desc = data.has("desc") ? data.get("desc").getAsString() : "暂无简介";
+        JsonArray episodes = data.getAsJsonArray("episodeList");
+
+        StringBuilder playUrl = new StringBuilder();
+        if (episodes != null) {
+            for (JsonElement ep : episodes) {
+                JsonObject obj = ep.getAsJsonObject();
+                String name = obj.get("index").getAsString();
+                String url = obj.get("playUrl").getAsString();
+                playUrl.append(name).append("$").append(url).append("#");
             }
-
-            Vod vod = new Vod();
-            vod.setVodId(id);
-            vod.setVodName(name);
-            vod.setVodContent("剧情简介：" + desc);
-            vod.setVodPlayFrom("如意短剧");
-            vod.setVodPlayUrl(playUrl.toString());
-
-            return Result.string(vod);
-        } catch (Exception e) {
-            return Result.error("获取详情失败").toString();
+            if (playUrl.length() > 0) {
+                playUrl.deleteCharAt(playUrl.length() - 1);
+            }
         }
+
+        Map<String, String> vod = new HashMap<>();
+        vod.put("vod_id", id);
+        vod.put("vod_name", id); // 可后续通过其他接口补标题
+        vod.put("vod_content", "剧情简介：" + desc);
+        vod.put("vod_play_from", "如意短剧");
+        vod.put("vod_play_url", playUrl.toString());
+        list.add(vod);
+
+        result.put("list", list);
+        return gson.toJson(result);
     }
 
     @Override
     public String playerContent(String flag, String id, List<String> vipFlags) {
-        return Result.get().url(id).parse(0).header(HEADERS).string();
+        Map<String, Object> result = new HashMap<>();
+        result.put("parse", 0);
+        result.put("playUrl", "");
+        result.put("url", id);
+        result.put("header", gson.toJson(HEADERS));
+        return gson.toJson(result);
     }
 
     @Override
@@ -227,7 +246,8 @@ public class Rydj extends Spider {
 
     @Override
     public String searchContent(String key, boolean quick, String pg) throws Exception {
-        List<Vod> videos = new ArrayList<>();
+        Map<String, Object> result = new HashMap<>();
+        List<Map<String, String>> videos = new ArrayList<>();
 
         int page = Integer.parseInt(pg);
         long ts = getTimestamp();
@@ -263,11 +283,21 @@ public class Rydj extends Spider {
                     String source = duanju.get("source").getAsString();
                     String pic = duanju.get("coverImageUrl").getAsString();
 
-                    videos.add(new Vod(id + "#" + source, name, pic, "搜索结果"));
+                    Map<String, String> vod = new HashMap<>();
+                    vod.put("vod_id", id + "#" + source);
+                    vod.put("vod_name", name);
+                    vod.put("vod_pic", pic);
+                    vod.put("vod_remarks", "搜索结果");
+                    videos.add(vod);
                 }
             }
         }
 
-        return Result.get().page(page, 9999, 90, 999999).vod(videos).string();
+        result.put("list", videos);
+        result.put("page", page);
+        result.put("pagecount", 9999);
+        result.put("limit", 90);
+        result.put("total", 999999);
+        return gson.toJson(result);
     }
 }
