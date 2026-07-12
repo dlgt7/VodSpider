@@ -285,10 +285,9 @@ public class Y360 extends Spider {
 
     /**
      * 构建详情页分批请求URL
-     * @param baseUrl 基础URL（API_DETAIL + cat + &id= + entId）
-     * @param site 线路名称
-     * @param start 起始集数（0表示不分批）
-     * @param end 结束集数（0表示不分批）
+     * 不分批时：baseUrl + &site=siteName + &callback=
+     * 分批时：baseUrl + &start=start + &end=end + &site=siteName + &callback=
+     * 注意：smali中start是1-based
      */
     private static String buildDetailUrl(String baseUrl, String site, int start, int end) {
         StringBuilder sb = new StringBuilder(baseUrl);
@@ -302,18 +301,13 @@ public class Y360 extends Spider {
     }
 
     /**
-     * 从分批请求响应中获取指定site的剧集JSONArray
-     * 响应格式：data.allepidetail.siteName 或 data.defaultepisode.siteName
+     * 从请求响应中获取 data 下指定 key 的 JSONObject
      */
-    private static JSONArray fetchSiteEpisodes(String url, String referer, String site, String dataKey) {
+    private static JSONObject fetchSiteData(String url, String referer) {
         try {
             String resp = fetchWithRetry(url, referer, SUCCESS_MARKER_DETAIL);
             JSONObject json = new JSONObject(resp);
-            JSONObject data = json.optJSONObject("data");
-            if (data == null) return null;
-            JSONObject container = data.optJSONObject(dataKey);
-            if (container == null) return null;
-            return container.optJSONArray(site);
+            return json.optJSONObject("data");
         } catch (Exception e) {
             return null;
         }
@@ -337,10 +331,10 @@ public class Y360 extends Spider {
             } else {
                 try {
                     JSONObject idJson = new JSONObject(id);
-                    String detailUrl = idJson.optString("detailUrl", "");
-                    if (!detailUrl.isEmpty()) {
-                        cat = extractValue(detailUrl, "cat");
-                        entId = extractValue(detailUrl, "id");
+                    String detailUrlStr = idJson.optString("detailUrl", "");
+                    if (!detailUrlStr.isEmpty()) {
+                        cat = extractValue(detailUrlStr, "cat");
+                        entId = extractValue(detailUrlStr, "id");
                     } else {
                         cat = "1";
                         entId = id;
@@ -361,7 +355,7 @@ public class Y360 extends Spider {
 
             // 构建Vod信息（注意：moviecategory/area/director/actor 是 JSONArray）
             Vod vod = new Vod();
-            vod.setVodId(id);
+            vod.setVodId(buildVodId(cat, entId));
             vod.setVodName(data.optString("title", ""));
             vod.setVodPic(fixUrl(data.optString("cdncover", "")));
             vod.setTypeName(jsonArrayToString(data.optJSONArray("moviecategory")));
@@ -375,55 +369,58 @@ public class Y360 extends Spider {
             LinkedHashMap<String, String> playMap = new LinkedHashMap<>();
             JSONArray playlinkSites = data.optJSONArray("playlink_sites");
             JSONObject playlinksdetail = data.optJSONObject("playlinksdetail");
+            boolean hasAllepidetail = data.has("allepidetail");
+            boolean hasDefaultepisode = data.has("defaultepisode");
 
             // 路径1：allepidetail - 全量剧集（需多次HTTP请求分批获取）
-            if (data.has("allepidetail") && playlinkSites != null) {
+            if (hasAllepidetail && playlinkSites != null) {
                 for (int i = 0; i < playlinkSites.length(); i++) {
                     try {
-                        String site = playlinkSites.getString(i);
+                        String site = String.valueOf(playlinkSites.get(i));
 
-                        // 先请求获取总集数
+                        // 先请求获取总集数（从 data.allupinfo.siteName 取）
                         String siteUrl = buildDetailUrl(baseUrl, site, 0, 0);
-                        String siteResp = fetchWithRetry(siteUrl, REFERER_WEB, SUCCESS_MARKER_DETAIL);
-                        JSONObject siteJson = new JSONObject(siteResp);
-                        JSONObject siteData = siteJson.optJSONObject("data");
+                        JSONObject siteData = fetchSiteData(siteUrl, REFERER_WEB);
                         if (siteData == null) continue;
 
-                        JSONObject sitePlsd = siteData.optJSONObject("playlinksdetail");
-                        JSONObject allupinfo = sitePlsd != null ? sitePlsd.optJSONObject("allupinfo") : null;
                         int totalCount = 0;
+                        JSONObject allupinfo = siteData.optJSONObject("allupinfo");
                         if (allupinfo != null && allupinfo.has(site)) {
-                            totalCount = Integer.parseInt(String.valueOf(allupinfo.get(site)));
+                            try {
+                                totalCount = Integer.parseInt(String.valueOf(allupinfo.get(site)));
+                            } catch (Exception ignored) {}
                         }
 
                         if (totalCount <= 0) continue;
 
-                        // 分批获取剧集（每批200集）
-                        int batchIdx = 0;
+                        // 分批获取剧集（每批200集），所有批次合并到一个列表
+                        ArrayList<String> epList = new ArrayList<>();
                         for (int start = 0; start < totalCount; start += EPISODE_BATCH_SIZE) {
                             int end = Math.min(start + EPISODE_BATCH_SIZE, totalCount);
-                            batchIdx++;
-                            String batchUrl = buildDetailUrl(baseUrl, site, start, end);
-                            JSONArray eps = fetchSiteEpisodes(batchUrl, REFERER_WEB, site, "allepidetail");
-                            if (eps == null || eps.length() == 0) continue;
+                            // smali中start是1-based：先+1再append
+                            String batchUrl = buildDetailUrl(baseUrl, site, start + 1, end);
+                            JSONObject batchData = fetchSiteData(batchUrl, REFERER_WEB);
+                            if (batchData == null) continue;
+                            JSONObject allepidetail = batchData.optJSONObject("allepidetail");
+                            if (allepidetail == null) continue;
+                            JSONArray eps = allepidetail.optJSONArray(site);
+                            if (eps == null) continue;
 
                             // allepidetail 路径用简单格式：第N集$url
-                            ArrayList<String> epList = new ArrayList<>();
                             for (int j = 0; j < eps.length(); j++) {
                                 try {
                                     JSONObject ep = eps.getJSONObject(j);
                                     String num = ep.optString("playlink_num", "");
                                     String url = cleanUrl(ep.optString("url", ""));
-                                    String epName = "第" + num + "集";
-                                    epList.add(epName + "$" + url);
+                                    epList.add("第" + num + "集$" + url);
                                 } catch (Exception e) {
                                     // skip
                                 }
                             }
-                            if (epList.isEmpty()) continue;
+                        }
 
-                            String key = (totalCount > EPISODE_BATCH_SIZE) ? site + " " + batchIdx : site;
-                            playMap.put(key, Util.join("#", epList));
+                        if (!epList.isEmpty()) {
+                            playMap.put(site, Util.join("#", epList));
                         }
                     } catch (Exception e) {
                         // skip invalid site
@@ -432,10 +429,10 @@ public class Y360 extends Spider {
             }
 
             // 路径2：defaultepisode - 默认剧集（需HTTP请求获取）
-            if (playMap.isEmpty() && data.has("defaultepisode") && playlinkSites != null) {
+            if (playMap.isEmpty() && hasDefaultepisode && playlinkSites != null) {
                 for (int i = 0; i < playlinkSites.length(); i++) {
                     try {
-                        String site = playlinkSites.getString(i);
+                        String site = String.valueOf(playlinkSites.get(i));
 
                         // 综艺（tid==3）且有tag时，按年份遍历获取
                         if ("3".equals(cat) && data.has("tag")) {
@@ -446,7 +443,11 @@ public class Y360 extends Spider {
                                     try {
                                         String year = keys.next();
                                         String yearUrl = baseUrl + "&year=" + year + "&callback=";
-                                        JSONArray eps = fetchSiteEpisodes(yearUrl, REFERER_WEB, site, "defaultepisode");
+                                        JSONObject yearData = fetchSiteData(yearUrl, REFERER_WEB);
+                                        if (yearData == null) continue;
+                                        JSONObject defaultEp = yearData.optJSONObject("defaultepisode");
+                                        if (defaultEp == null) continue;
+                                        JSONArray eps = defaultEp.optJSONArray(site);
                                         if (eps == null || eps.length() == 0) continue;
                                         ArrayList<String> epList = new ArrayList<>();
                                         buildEpisodes(epList, eps);
@@ -461,9 +462,7 @@ public class Y360 extends Spider {
                         } else {
                             // 非综艺：请求获取该site的defaultepisode
                             String siteUrl = buildDetailUrl(baseUrl, site, 0, 0);
-                            String siteResp = fetchWithRetry(siteUrl, REFERER_WEB, SUCCESS_MARKER_DETAIL);
-                            JSONObject siteJson = new JSONObject(siteResp);
-                            JSONObject siteData = siteJson.optJSONObject("data");
+                            JSONObject siteData = fetchSiteData(siteUrl, REFERER_WEB);
                             if (siteData == null) continue;
 
                             // 从 playlinksdetail.siteName.siteName 获取总集数
@@ -479,29 +478,38 @@ public class Y360 extends Spider {
                             }
 
                             if (totalCount <= 0) {
-                                // 无集数信息，直接从 defaultepisode 取数组
-                                JSONArray eps = siteData.optJSONObject("defaultepisode") != null
-                                        ? siteData.optJSONObject("defaultepisode").optJSONArray(site) : null;
-                                if (eps == null || eps.length() == 0) continue;
-                                ArrayList<String> epList = new ArrayList<>();
-                                buildEpisodes(epList, eps);
-                                if (!epList.isEmpty()) {
-                                    playMap.put(site, Util.join("#", epList));
+                                // 无集数信息，重新请求同一个URL从 defaultepisode 取数组
+                                JSONObject retryData = fetchSiteData(siteUrl, REFERER_WEB);
+                                if (retryData != null) {
+                                    JSONObject defaultEp = retryData.optJSONObject("defaultepisode");
+                                    if (defaultEp != null) {
+                                        JSONArray eps = defaultEp.optJSONArray(site);
+                                        if (eps != null && eps.length() > 0) {
+                                            ArrayList<String> epList = new ArrayList<>();
+                                            buildEpisodes(epList, eps);
+                                            if (!epList.isEmpty()) {
+                                                playMap.put(site, Util.join("#", epList));
+                                            }
+                                        }
+                                    }
                                 }
                             } else {
-                                // 分批获取
-                                int batchIdx = 0;
+                                // 分批获取，所有批次合并到一个列表
+                                ArrayList<String> epList = new ArrayList<>();
                                 for (int start = 0; start < totalCount; start += EPISODE_BATCH_SIZE) {
                                     int end = Math.min(start + EPISODE_BATCH_SIZE, totalCount);
-                                    batchIdx++;
-                                    String batchUrl = buildDetailUrl(baseUrl, site, start, end);
-                                    JSONArray eps = fetchSiteEpisodes(batchUrl, REFERER_WEB, site, "defaultepisode");
-                                    if (eps == null || eps.length() == 0) continue;
-                                    ArrayList<String> epList = new ArrayList<>();
+                                    // smali中start是1-based
+                                    String batchUrl = buildDetailUrl(baseUrl, site, start + 1, end);
+                                    JSONObject batchData = fetchSiteData(batchUrl, REFERER_WEB);
+                                    if (batchData == null) continue;
+                                    JSONObject defaultEp = batchData.optJSONObject("defaultepisode");
+                                    if (defaultEp == null) continue;
+                                    JSONArray eps = defaultEp.optJSONArray(site);
+                                    if (eps == null) continue;
                                     buildEpisodes(epList, eps);
-                                    if (epList.isEmpty()) continue;
-                                    String key = (totalCount > EPISODE_BATCH_SIZE) ? site + " " + batchIdx : site;
-                                    playMap.put(key, Util.join("#", epList));
+                                }
+                                if (!epList.isEmpty()) {
+                                    playMap.put(site, Util.join("#", epList));
                                 }
                             }
                         }
@@ -511,11 +519,12 @@ public class Y360 extends Spider {
                 }
             }
 
-            // 路径3：playlinksdetail - 从每个site取default_url构建单条播放
-            if (playMap.isEmpty() && playlinksdetail != null && playlinkSites != null) {
+            // 路径3：playlinksdetail - 既无 allepidetail 也无 defaultepisode 时
+            if (playMap.isEmpty() && !hasAllepidetail && !hasDefaultepisode
+                    && playlinkSites != null && playlinksdetail != null) {
                 for (int i = 0; i < playlinkSites.length(); i++) {
                     try {
-                        String site = playlinkSites.getString(i);
+                        String site = String.valueOf(playlinkSites.get(i));
                         JSONObject siteObj = playlinksdetail.optJSONObject(site);
                         if (siteObj == null) continue;
                         String defaultUrl = cleanUrl(siteObj.optString("default_url", ""));
@@ -544,7 +553,7 @@ public class Y360 extends Spider {
     @Override
     public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
         if (id == null || id.isEmpty()) {
-            return Result.get().string();
+            return Result.error("播放地址为空");
         }
         return Result.get().url(id).parse().jx().string();
     }
