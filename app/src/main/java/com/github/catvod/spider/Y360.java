@@ -263,7 +263,8 @@ public class Y360 extends Spider {
             }
             return Result.get().vod(list).page(page, 9999, 35, list.size()).string();
         } catch (Exception e) {
-            return Result.get().vod(list).page(pg, 9999, 35, list.size()).string();
+            int page = pg.matches("\\d+") ? Integer.parseInt(pg) : 1;
+            return Result.get().vod(list).page(page, 9999, 35, list.size()).string();
         }
     }
 
