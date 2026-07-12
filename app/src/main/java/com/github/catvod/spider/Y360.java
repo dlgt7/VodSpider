@@ -124,8 +124,10 @@ public class Y360 extends Spider {
     }
 
     /**
-     * 从剧集JSONArray构建剧集列表
+     * 从剧集JSONArray构建剧集列表（defaultepisode 路径用）
      * 每集格式：集标题$url
+     * 逻辑：period非空 → name=period+" "+name；num非空 → name="第"+num+"集"（覆盖）；
+     *       name空 → name="第"+序号+"集"
      */
     private static void buildEpisodes(ArrayList<String> list, JSONArray arr) {
         if (arr == null) return;
@@ -138,14 +140,13 @@ public class Y360 extends Spider {
                 String url = cleanUrl(item.optString("url", ""));
 
                 if (Util.isNotEmpty(period)) {
-                    name = period + " " + name;
-                }
-                if (Util.isNotEmpty(num)) {
-                    name = "第" + num + "集" + name;
-                }
-                if (name == null || name.isEmpty()) {
+                    name = (period + " " + name).trim();
+                } else if (Util.isNotEmpty(num)) {
+                    name = "第" + num + "集";
+                } else if (name == null || name.isEmpty()) {
                     name = "第" + (i + 1) + "集";
                 }
+
                 list.add(name + "$" + url);
             } catch (Exception e) {
                 // skip invalid item
@@ -406,8 +407,19 @@ public class Y360 extends Spider {
                             JSONArray eps = fetchSiteEpisodes(batchUrl, REFERER_WEB, site, "allepidetail");
                             if (eps == null || eps.length() == 0) continue;
 
+                            // allepidetail 路径用简单格式：第N集$url
                             ArrayList<String> epList = new ArrayList<>();
-                            buildEpisodes(epList, eps);
+                            for (int j = 0; j < eps.length(); j++) {
+                                try {
+                                    JSONObject ep = eps.getJSONObject(j);
+                                    String num = ep.optString("playlink_num", "");
+                                    String url = cleanUrl(ep.optString("url", ""));
+                                    String epName = "第" + num + "集";
+                                    epList.add(epName + "$" + url);
+                                } catch (Exception e) {
+                                    // skip
+                                }
+                            }
                             if (epList.isEmpty()) continue;
 
                             String key = (totalCount > EPISODE_BATCH_SIZE) ? site + " " + batchIdx : site;
@@ -454,16 +466,20 @@ public class Y360 extends Spider {
                             JSONObject siteData = siteJson.optJSONObject("data");
                             if (siteData == null) continue;
 
-                            JSONObject defaultEp = siteData.optJSONObject("defaultepisode");
-                            if (defaultEp == null || !defaultEp.has(site)) continue;
-
+                            // 从 playlinksdetail.siteName.siteName 获取总集数
                             int totalCount = 0;
-                            try {
-                                totalCount = Integer.parseInt(String.valueOf(defaultEp.get(site)));
-                            } catch (Exception ignored) {}
+                            JSONObject sitePlsd = siteData.optJSONObject("playlinksdetail");
+                            if (sitePlsd != null) {
+                                JSONObject siteObj = sitePlsd.optJSONObject(site);
+                                if (siteObj != null && siteObj.has(site)) {
+                                    try {
+                                        totalCount = Integer.parseInt(String.valueOf(siteObj.get(site)));
+                                    } catch (Exception ignored) {}
+                                }
+                            }
 
                             if (totalCount <= 0) {
-                                // 无集数信息，直接取数据
+                                // 无集数信息，直接从 defaultepisode 取数组
                                 JSONArray eps = siteData.optJSONObject("defaultepisode") != null
                                         ? siteData.optJSONObject("defaultepisode").optJSONArray(site) : null;
                                 if (eps == null || eps.length() == 0) continue;
@@ -528,13 +544,9 @@ public class Y360 extends Spider {
     @Override
     public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
         if (id == null || id.isEmpty()) {
-            return Result.error("播放地址为空");
+            return Result.get().string();
         }
-        JSONObject result = new JSONObject();
-        result.put("url", id);
-        result.put("parse", 1);
-        result.put("jx", 1);
-        return result.toString();
+        return Result.get().url(id).parse().jx().string();
     }
 
     @Override
