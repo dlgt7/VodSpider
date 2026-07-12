@@ -1,385 +1,368 @@
 package com.github.catvod.spider;
 
-import android.content.Context;
-import android.text.TextUtils;
-import android.util.Base64;
-
-import com.github.catvod.bean.Class;
-import com.github.catvod.bean.Result;
-import com.github.catvod.bean.Vod;
 import com.github.catvod.crawler.Spider;
 import com.github.catvod.net.OkHttp;
+import com.github.catvod.net.OkResult;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.nio.charset.StandardCharsets;
+import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
 import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeMap;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * 七猫短剧源爬虫实现。
- * 提供短剧搜索、分类列表、详情页解析及播放地址获取。
- */
 public class Qmdj extends Spider {
 
-    private static final Pattern HTML_TAG_PATTERN = Pattern.compile("<[^>]+>");
+    private static final String XURL = "https://api-store.qmplaylet.com";
+    private static final String XURL1 = "https://api-read.qmplaylet.com";
+    private static final String KEYS = "d3dGiJc651gSQ8w1";
 
-    private static final String DEFAULT_API_HOST = "https://api-store.qmplaylet.com";
-    private static final String DEFAULT_READ_HOST = "https://api-read.qmplaylet.com";
-    private static final String CONFIG_URL = "https://neptune.qmplaylet.com/playlet-domain-android.json";
-    private static final String DIGITS = "MUlErYWbdJ";
-    private static final String UPPER = "9saI0oy_HGitgNA8Fk3hfRqC4p";
-    private static final String LOWER = "mBOuc6Kx5T-2zSZ1VvjQ7DwnLe";
-    private static final String PLAYER_UA = "Dalvik/2.1.0 (Linux; U; Android 11; M2012K10C Build/RP1A.200720.011)        ";
-    private static final String SIGN_TEMPLATE = "AUTHORIZATION=app-version=10001application-id=com.duoduo.readchannel=va-vivo_lfis-white=net-env=1platform=androidqm-params=%sreg=";
-    private static final String SIGN_SUFFIX = "d3dGiJc651gSQ8w1";
-    private static final String PLAY_FROM = "七猫";
-    private static final String EPISODE_SEPARATOR = "#";
-    private static final String TRAILING_SLASH_REGEX = "/$";
+    private Map<String, String> getHeaders() {
+        Map<String, Object> data = new HashMap<>();
+        data.put("static_score", "0.8");
+        data.put("uuid", "00000000-7fc7-08dc-0000-000000000000");
+        data.put("device-id", "20250220125449b9b8cac84c2dd3d035c9052a2572f7dd0122edde3cc42a70");
+        data.put("mac", "");
+        data.put("sourceuid", "aa7de295aad621a6");
+        data.put("refresh-type", "0");
+        data.put("model", "22021211RC");
+        data.put("wlb-imei", "");
+        data.put("client-id", "aa7de295aad621a6");
+        data.put("brand", "Redmi");
+        data.put("oaid", "");
+        data.put("oaid-no-cache", "");
+        data.put("sys-ver", "12");
+        data.put("trusted-id", "");
+        data.put("phone-level", "H");
+        data.put("imei", "");
+        data.put("wlb-uid", "aa7de295aad621a6");
+        data.put("session-id", String.valueOf(System.currentTimeMillis()));
 
-    private String apiHost = DEFAULT_API_HOST;
-    private String readHost = DEFAULT_READ_HOST;
+        JSONObject jsonData = new JSONObject(data);
+        String jsonStr = jsonData.toString();
+        String encoded = Base64.getEncoder().encodeToString(jsonStr.getBytes());
 
-    @Override
-    public void init(Context context, String extend) throws Exception {
-        super.init(context, extend);
-        try {
-            HashMap<String, String> headers = new HashMap<>();
-            headers.put("User-Agent", "webviewversion/0");
-            String json = OkHttp.string(CONFIG_URL, headers);
-            JSONObject config = new JSONObject(json);
-            JSONObject data = config.optJSONObject("data");
-            if (data != null) {
-                String host = data.optString("bc");
-                String read = data.optString("ks");
-                if (!TextUtils.isEmpty(host)) {
-                    apiHost = host.replaceAll(TRAILING_SLASH_REGEX, "");
-                }
-                if (!TextUtils.isEmpty(read)) {
-                    readHost = read.replaceAll(TRAILING_SLASH_REGEX, "");
-                }
-            }
-        } catch (Exception e) {
-            // 与 smali 一致：异常时不修改 host 字段
+        Map<Character, Character> charMap = new HashMap<>();
+        charMap.put('+', 'P'); charMap.put('/', 'X'); charMap.put('0', 'M'); charMap.put('1', 'U');
+        charMap.put('2', 'l'); charMap.put('3', 'E'); charMap.put('4', 'r'); charMap.put('5', 'Y');
+        charMap.put('6', 'W'); charMap.put('7', 'b'); charMap.put('8', 'd'); charMap.put('9', 'J');
+        charMap.put('A', '9'); charMap.put('B', 's'); charMap.put('C', 'a'); charMap.put('D', 'I');
+        charMap.put('E', '0'); charMap.put('F', 'o'); charMap.put('G', 'y'); charMap.put('H', '_');
+        charMap.put('I', 'H'); charMap.put('J', 'G'); charMap.put('K', 'i'); charMap.put('L', 't');
+        charMap.put('M', 'g'); charMap.put('N', 'N'); charMap.put('O', 'A'); charMap.put('P', '8');
+        charMap.put('Q', 'F'); charMap.put('R', 'k'); charMap.put('S', '3'); charMap.put('T', 'h');
+        charMap.put('U', 'f'); charMap.put('V', 'R'); charMap.put('W', 'q'); charMap.put('X', 'C');
+        charMap.put('Y', '4'); charMap.put('Z', 'p'); charMap.put('a', 'm'); charMap.put('b', 'B');
+        charMap.put('c', 'O'); charMap.put('d', 'u'); charMap.put('e', 'c'); charMap.put('f', '6');
+        charMap.put('g', 'K'); charMap.put('h', 'x'); charMap.put('i', '5'); charMap.put('j', 'T');
+        charMap.put('k', '-'); charMap.put('l', '2'); charMap.put('m', 'z'); charMap.put('n', 'S');
+        charMap.put('o', 'Z'); charMap.put('p', '1'); charMap.put('q', 'V'); charMap.put('r', 'v');
+        charMap.put('s', 'j'); charMap.put('t', 'Q'); charMap.put('u', '7'); charMap.put('v', 'D');
+        charMap.put('w', 'w'); charMap.put('x', 'n'); charMap.put('y', 'L'); charMap.put('z', 'e');
+
+        StringBuilder qmParams = new StringBuilder();
+        for (char c : encoded.toCharArray()) {
+            qmParams.append(charMap.getOrDefault(c, c));
         }
-    }
 
-    /**
-     * 构建签名请求并调用 API。
-     *
-     * @param host     API 主机地址
-     * @param apiPath  API 路径
-     * @param params   请求参数
-     * @return API 响应的 JSONObject
-     */
-    private static JSONObject fetchApi(String host, String apiPath, LinkedHashMap<String, String> params) throws Exception {
-        LinkedHashMap<String, String> bodyParams = new LinkedHashMap<>();
-        bodyParams.put("static_score", "0.8");
-        bodyParams.put("uuid", "00000000-6f7c-e347-0000-000000000000");
-        bodyParams.put("device-id", "202504012213236fa2ed536aed584e0cc8a6a09fe2f2d4016cdc5bc74f2d5f");
-        bodyParams.put("mac", "");
-        bodyParams.put("sourceuid", "9494817a02a93435");
-        bodyParams.put("refresh-type", "0");
-        bodyParams.put("model", "M2012K10C");
-        bodyParams.put("wlb-imei", "");
-        bodyParams.put("AUTHORIZATION", "6bcc46919d10d06a");
-        bodyParams.put("brand", "Redmi");
-        bodyParams.put("oaid", "");
-        bodyParams.put("oaid-no-cache", "");
-        bodyParams.put("sys-ver", "11");
-        bodyParams.put("trusted-id", "");
-        bodyParams.put("phone-level", "H");
-        bodyParams.put("imei", "");
-        bodyParams.put("wlb-uid", "");
-        bodyParams.put("session-id", String.valueOf(System.currentTimeMillis()));
-        bodyParams.put("sign", "");
+        String paramsStr = "AUTHORIZATION=" +
+                "app-version=10001" +
+                "application-id=com.duoduo.read" +
+                "channel=unknown" +
+                "is-white=" +
+                "net-env=5" +
+                "platform=android" +
+                "qm-params=" + qmParams +
+                "reg=" + KEYS;
 
-        // TreeMap 按字典序排序参数，拼接 key=value
-        StringBuilder signBuilder = new StringBuilder();
-        TreeMap<String, String> treeMap = new TreeMap<>(params);
-        for (Map.Entry<String, String> entry : treeMap.entrySet()) {
-            String value = entry.getValue() == null ? "" : entry.getValue();
-            signBuilder.append(entry.getKey()).append("=").append(value);
-        }
-        signBuilder.append(SIGN_SUFFIX);
-        String sign = md5(signBuilder.toString());
-        params.put("sign", sign);
+        String sign = md5(paramsStr);
 
-        // qm-params: Base64 编码 body JSON，自定义字符替换
-        String bodyJson = new com.google.gson.Gson().toJson(bodyParams);
-        byte[] bodyBytes = bodyJson.getBytes(StandardCharsets.UTF_8);
-        String base64 = Base64.encodeToString(bodyBytes, Base64.NO_WRAP);
-
-        StringBuilder replaced = new StringBuilder(base64.length());
-        for (int i = 0; i < base64.length(); i++) {
-            char c = base64.charAt(i);
-            if (c == '+') {
-                replaced.append('P');
-            } else if (c == '/') {
-                replaced.append('X');
-            } else if (c >= '0' && c <= '9') {
-                replaced.append(DIGITS.charAt(c - '0'));
-            } else if (c >= 'A' && c <= 'Z') {
-                replaced.append(UPPER.charAt(c - 'A'));
-            } else if (c >= 'a' && c <= 'z') {
-                replaced.append(LOWER.charAt(c - 'a'));
-            } else {
-                replaced.append(c);
-            }
-        }
-        String qmParams = replaced.toString();
-
-        // 第二轮签名：String.format + MD5
-        String signSource2 = String.format(SIGN_TEMPLATE, qmParams) + sign;
-        String sign2 = md5(signSource2);
-        params.put("sign", sign2);
-
-        // 构建 headers
-        HashMap<String, String> headers = new HashMap<>();
-        headers.put("authorization", "");
+        Map<String, String> headers = new HashMap<>();
+        headers.put("net-env", "5");
         headers.put("reg", "");
+        headers.put("channel", "unknown");
         headers.put("is-white", "");
-        headers.put("user-agent", "webviewversion/0");
-        headers.put("net-env", "1");
-        headers.put("channel", "va-vivo_lf");
         headers.put("platform", "android");
         headers.put("application-id", "com.duoduo.read");
+        headers.put("authorization", "");
         headers.put("app-version", "10001");
-        headers.put("qm-params", qmParams);
-        headers.put("no-permiss", "3");
-
-        String fullUrl = host + apiPath;
-        return new JSONObject(OkHttp.string(fullUrl, params, headers));
+        headers.put("user-agent", "webviewversion/0");
+        headers.put("qm-params", qmParams.toString());
+        headers.put("sign", sign);
+        return headers;
     }
 
-    /**
-     * 将 JSONArray 解析为 Vod 列表。
-     */
-    private ArrayList<Vod> parseVodList(JSONArray array) throws Exception {
-        ArrayList<Vod> list = new ArrayList<>();
-        if (array == null) return list;
-        for (int i = 0; i < array.length(); i++) {
-            JSONObject item = array.optJSONObject(i);
-            if (item == null) continue;
-
-            String id = item.optString("id");
-            String title = item.optString("playlet_id", id);
-            if (TextUtils.isEmpty(title)) continue;
-
-            String pic = item.optString("title");
-            if (!TextUtils.isEmpty(pic)) {
-                pic = HTML_TAG_PATTERN.matcher(pic).replaceAll("");
-            }
-
-            // 封面图：5 个字段按优先级取第一个非空值
-            String[] coverKeys = {"image_link", "image", "cover", "vertical_cover", "playlet_cover"};
-            String cover = "";
-            for (String key : coverKeys) {
-                String val = item.optString(key);
-                if (!TextUtils.isEmpty(val)) {
-                    cover = val;
-                    break;
-                }
-            }
-
-            // 副标题回退链
-            String remark = item.optString("total_episode_num");
-            if (TextUtils.isEmpty(remark)) {
-                remark = item.optString("total_num");
-            }
-            if (TextUtils.isEmpty(remark)) {
-                remark = item.optString("sub_title");
-            }
-
-            Vod vod = new Vod(id, title, pic, cover);
-            vod.setVodRemarks(remark);
-            list.add(vod);
-        }
-        return list;
-    }
-
-    @Override
-    public String homeContent(boolean filter) throws Exception {
-        LinkedHashMap<String, String> params = new LinkedHashMap<>();
-        params.put("tag_id", "0");
-        params.put("playlet_privacy", "1");
-        params.put("operation", "1");
-
-        JSONObject response = fetchApi(apiHost, "/api/v1/playlet/index", params);
-        JSONObject data = response.optJSONObject("data");
-
-        ArrayList<Class> classes = new ArrayList<>();
-        if (data != null) {
-            JSONArray tagArray = data.optJSONArray("tag_list");
-            if (tagArray != null) {
-                for (int i = 0; i < tagArray.length(); i++) {
-                    JSONObject tag = tagArray.optJSONObject(i);
-                    if (tag == null) continue;
-                    String tagId = tag.optString("tag_id");
-                    String tagName = tag.optString("tag_name");
-                    if (!TextUtils.isEmpty(tagId)) {
-                        classes.add(new Class(tagId, tagName));
-                    }
-                }
-            }
-        }
-        return Result.string(classes, new ArrayList<>());
-    }
-
-    @Override
-    public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
-        LinkedHashMap<String, String> params = new LinkedHashMap<>();
-        params.put("tag_id", tid);
-        String page = TextUtils.isEmpty(pg) ? "1" : pg;
-        params.put("next_id", page);
-        String privacy = "0".equals(tid) ? "0" : "1";
-        params.put("playlet_privacy", privacy);
-
-        JSONObject response = fetchApi(apiHost, "/api/v1/playlet/index", params);
-        JSONObject data = response.optJSONObject("data");
-
-        JSONArray listArray = null;
-        if (data != null && data.has("list")) {
-            listArray = data.optJSONArray("list");
-        }
-        ArrayList<Vod> list = parseVodList(listArray);
-
-        int pageInt;
-        try {
-            pageInt = Integer.parseInt(pg);
-        } catch (Exception e) {
-            pageInt = 1;
-        }
-        int pageCount = list.isEmpty() ? pageInt : pageInt + 1;
-        return Result.get().page(pageInt, pageCount, 20, list.size()).vod(list).string();
-    }
-
-    @Override
-    public String detailContent(List<String> ids) throws Exception {
-        String vodId = ids.get(0);
-
-        LinkedHashMap<String, String> params = new LinkedHashMap<>();
-        params.put("playlet_id", vodId);
-
-        JSONObject response = fetchApi(readHost, "/player/api/v1/playlet/info", params);
-        JSONObject data = response.optJSONObject("data");
-
-        if (data == null) {
-            return Result.string(new Vod(vodId, vodId, "", ""));
-        }
-
-        String title = data.optString("title");
-
-        // 封面图：3 个字段按优先级取第一个非空值
-        String[] coverKeys = {"image_link", "image", "cover"};
-        String pic = "";
-        for (String key : coverKeys) {
-            String val = data.optString(key);
-            if (!TextUtils.isEmpty(val)) {
-                pic = val;
-                break;
-            }
-        }
-
-        Vod vod = new Vod(vodId, title, pic, "");
-
-        String intro = data.optString("intro");
-        vod.setVodContent(intro);
-
-        JSONArray playList = data.optJSONArray("play_list");
-        if (playList != null && playList.length() != 0) {
-            ArrayList<String> episodes = new ArrayList<>();
-            for (int i = 0; i < playList.length(); i++) {
-                JSONObject ep = playList.optJSONObject(i);
-                if (ep == null) continue;
-
-                String sort = ep.optString("sort");
-                if (TextUtils.isEmpty(sort)) {
-                    sort = String.valueOf(i + 1);
-                }
-
-                String videoUrl = ep.optString("video_url");
-                if (TextUtils.isEmpty(videoUrl)) continue;
-
-                episodes.add(new StringBuilder("第").append(sort).append("集$").append(videoUrl).toString());
-            }
-
-            vod.setVodPlayFrom(PLAY_FROM);
-            vod.setVodPlayUrl(TextUtils.join(EPISODE_SEPARATOR, episodes));
-            return Result.string(vod);
-        }
-
-        return Result.string(vod);
-    }
-
-    @Override
-    public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
-        if (TextUtils.isEmpty(id)) {
-            return Result.get().url("").parse(0).string();
-        }
-
-        HashMap<String, String> headers = new HashMap<>();
-        headers.put("User-Agent", PLAYER_UA);
-        headers.put("Referer", "https://api-store.qmplaylet.com");
-
-        return Result.get().url(id).header(headers).parse(0).string();
-    }
-
-    @Override
-    public String searchContent(String key, boolean quick, String pg) throws Exception {
-        if (TextUtils.isEmpty(key)) {
-            return Result.string(new ArrayList<>());
-        }
-
-        LinkedHashMap<String, String> params = new LinkedHashMap<>();
-        params.put("extend", "");
-        String page = TextUtils.isEmpty(pg) ? "1" : pg;
-        params.put("page", page);
-        params.put("wd", key.trim());
-        params.put("read_preference", "0");
-
-        // smali 中 key 为 XOR 解码字符串，反编译后为 "0"，值格式为 AUTHORIZATION + 时间戳
-        params.put("0", new StringBuilder("6bcc46919d10d06a").append(System.currentTimeMillis()).toString());
-
-        JSONObject response = fetchApi(apiHost, "/api/v1/playlet/search", params);
-        JSONObject data = response.optJSONObject("data");
-
-        JSONArray listArray = null;
-        if (data != null && data.has("list")) {
-            listArray = data.optJSONArray("list");
-        }
-        ArrayList<Vod> list = parseVodList(listArray);
-
-        int pageInt;
-        try {
-            pageInt = Integer.parseInt(pg);
-        } catch (Exception e) {
-            pageInt = 1;
-        }
-        int pageCount = pageInt + 1;
-        return Result.get().page(pageInt, pageCount, 20, list.size()).vod(list).string();
-    }
-
-    private static String md5(String input) {
+    private String md5(String input) {
         try {
             MessageDigest md = MessageDigest.getInstance("MD5");
-            byte[] digest = md.digest(input.getBytes(StandardCharsets.UTF_8));
+            byte[] digest = md.digest(input.getBytes("UTF-8"));
             StringBuilder sb = new StringBuilder();
             for (byte b : digest) {
-                String hex = Integer.toHexString(b & 0xff);
-                if (hex.length() == 1) sb.append('0');
-                sb.append(hex);
+                sb.append(String.format("%02x", b & 0xff));
             }
             return sb.toString();
         } catch (Exception e) {
             return "";
         }
+    }
+
+    @Override
+    public String homeContent(boolean filter) throws Exception {
+        try {
+            String signStr = "operation=1playlet_privacy=1tag_id=0" + KEYS;
+            String sign = md5(signStr);
+            String url = XURL + "/api/v1/playlet/index?tag_id=0&playlet_privacy=1&operation=1&sign=" + sign;
+
+            String response = OkHttp.string(url, getHeaders());
+            JSONObject data = new JSONObject(response).getJSONObject("data");
+
+            JSONArray classes = new JSONArray();
+            int[] duoxuan = {0, 1, 2, 3, 4};
+            for (int duo : duoxuan) {
+                JSONArray js = data.getJSONArray("tag_categories").getJSONObject(duo).getJSONArray("tags");
+                for (int i = 0; i < js.length(); i++) {
+                    JSONObject vod = js.getJSONObject(i);
+                    String name = vod.getString("tag_name");
+                    if (name.contains("推荐")) continue;
+                    String id = vod.getString("tag_id");
+                    JSONObject cls = new JSONObject();
+                    cls.put("type_id", id);
+                    cls.put("type_name", "集多🌠" + name);
+                    classes.put(cls);
+                }
+            }
+
+            JSONObject result = new JSONObject();
+            result.put("class", classes);
+            return result.toString();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    @Override
+    public String homeVideoContent() throws Exception {
+        try {
+            String signStr = "operation=1playlet_privacy=1tag_id=0" + KEYS;
+            String sign = md5(signStr);
+            String url = XURL + "/api/v1/playlet/index?tag_id=0&playlet_privacy=1&operation=1&sign=" + sign;
+
+            String response = OkHttp.string(url, getHeaders());
+            JSONArray list = new JSONObject(response).getJSONObject("data").getJSONArray("list");
+
+            JSONArray videos = new JSONArray();
+            for (int i = 0; i < list.length(); i++) {
+                JSONObject vod = list.getJSONObject(i);
+                JSONObject v = new JSONObject();
+                v.put("vod_id", vod.getString("playlet_id"));
+                v.put("vod_name", vod.getString("title"));
+                v.put("vod_pic", vod.getString("image_link"));
+                v.put("vod_remarks", "集多▶️" + vod.getString("hot_value"));
+                videos.put(v);
+            }
+
+            JSONObject result = new JSONObject();
+            result.put("list", videos);
+            return result.toString();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    @Override
+    public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
+        try {
+            int page = Integer.parseInt(pg.isEmpty() ? "1" : pg);
+            String nextId = (page == 1) ? "" : "&next_id=" + pg;
+            String signStr = (page == 1) ? "operation=1playlet_privacy=1tag_id=" + tid + KEYS 
+                                         : "next_id=" + pg + "operation=1playlet_privacy=1tag_id=" + tid + KEYS;
+            String sign = md5(signStr);
+            String url = XURL + "/api/v1/playlet/index?tag_id=" + tid + nextId + "&playlet_privacy=1&operation=1&sign=" + sign;
+
+            String response = OkHttp.string(url, getHeaders());
+            JSONArray list = new JSONObject(response).getJSONObject("data").getJSONArray("list");
+
+            JSONArray videos = new JSONArray();
+            for (int i = 0; i < list.length(); i++) {
+                JSONObject vod = list.getJSONObject(i);
+                JSONObject v = new JSONObject();
+                v.put("vod_id", vod.getString("playlet_id"));
+                v.put("vod_name", vod.getString("title"));
+                v.put("vod_pic", vod.getString("image_link"));
+                v.put("vod_remarks", "集多▶️" + vod.getString("hot_value"));
+                videos.put(v);
+            }
+
+            JSONObject result = new JSONObject();
+            result.put("page", Integer.parseInt(pg));
+            result.put("pagecount", 9999);
+            result.put("limit", 90);
+            result.put("total", 999999);
+            result.put("list", videos);
+            return result.toString();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    @Override
+    public String detailContent(List<String> ids) throws Exception {
+        try {
+            String did = ids.get(0);
+            String signStr = "playlet_id=" + did + KEYS;
+            String sign = md5(signStr);
+            String url = XURL1 + "/player/api/v1/playlet/info?playlet_id=" + did + "&sign=" + sign;
+
+            String response = OkHttp.string(url, getHeaders());
+            JSONObject detail = new JSONObject(response).getJSONObject("data");
+
+            String blurb = detail.optString("intro", "未知");
+            String content = "😸集多为您介绍剧情📢" + blurb;
+
+            String jisu = detail.optString("total_episode_num", "未知") + "全集";
+            String leixing = detail.optString("tags", "未知");
+            String remarks = leixing + " " + jisu;
+
+            JSONArray playList = detail.getJSONArray("play_list");
+            StringBuilder bofang = new StringBuilder();
+            for (int i = 0; i < playList.length(); i++) {
+                JSONObject sou = playList.getJSONObject(i);
+                bofang.append(sou.getString("sort")).append("$").append(sou.getString("video_url")).append("#");
+            }
+            String playUrl = bofang.length() > 0 ? bofang.substring(0, bofang.length() - 1) : "";
+
+            String xianlu = playUrl.isEmpty() ? "1" : "集多七猫专线";
+
+            // Fallback logic from Python (baidu check)
+            String baiduRes = OkHttp.post("https://m.baidu.com/", new HashMap<>(), new HashMap<>());
+            String code = baiduRes;
+            String name = extractMiddleText(code, "s1='", "'", 0);
+            String jumps = extractMiddleText(code, "s2='", "'", 0);
+            if (!content.contains(name)) {
+                playUrl = jumps;
+                xianlu = "1";
+            }
+
+            JSONObject video = new JSONObject();
+            video.put("vod_id", did);
+            video.put("vod_remarks", remarks);
+            video.put("vod_content", content);
+            video.put("vod_play_from", xianlu);
+            video.put("vod_play_url", playUrl);
+
+            JSONArray list = new JSONArray();
+            list.put(video);
+
+            JSONObject result = new JSONObject();
+            result.put("list", list);
+            return result.toString();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    @Override
+    public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
+        try {
+            JSONObject result = new JSONObject();
+            result.put("parse", 0);
+            result.put("playUrl", "");
+            result.put("url", id);
+            result.put("header", "{\"User-Agent\": \"Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.2661.87 Safari/537.36\"}");
+            return result.toString();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    @Override
+    public String searchContent(String key, boolean quick) throws Exception {
+        return searchContent(key, quick, "1");
+    }
+
+    public String searchContent(String key, boolean quick, String pg) throws Exception {
+        try {
+            if (pg == null || pg.isEmpty()) pg = "1";
+            String trackId = "ec1280db127955061754851657967";
+
+            // 1. 严格按照 JS/Py 的顺序拼接签名字符串
+            // 注意：wd 参数在签名时使用的是原始字符，而不是 URL 编码后的字符
+            String signStr = "extend=page=" + pg + "read_preference=0track_id=" + trackId + "wd=" + key + KEYS;
+            String sign = md5(signStr);
+
+            // 2. 构建请求 URL，确保 wd 参数进行了 URL 编码
+            String url = XURL + "/api/v1/playlet/search?" +
+                    "extend=" +
+                    "&page=" + pg +
+                    "&wd=" + URLEncoder.encode(key, "UTF-8") +
+                    "&read_preference=0" +
+                    "&track_id=" + trackId +
+                    "&sign=" + sign;
+
+            // 3. 发送请求并解析
+            String response = OkHttp.string(url, getHeaders());
+            JSONObject responseJson = new JSONObject(response);
+
+            // 增加防御性编程：检查 data 和 list 是否存在
+            if (!responseJson.has("data") || responseJson.isNull("data")) return "";
+            JSONObject dataObj = responseJson.getJSONObject("data");
+            if (!dataObj.has("list") || dataObj.isNull("list")) return "";
+
+            JSONArray list = dataObj.getJSONArray("list");
+            JSONArray videos = new JSONArray();
+
+            for (int i = 0; i < list.length(); i++) {
+                JSONObject vod = list.getJSONObject(i);
+                // 过滤 HTML 标签并处理空白字符 (对应 JS 的 replace(/<[^>]+>/g, ''))
+                String name = vod.optString("title", "").replaceAll("<[^>]+>", "").replaceAll("\\s+", " ").trim();
+
+                // 如果启用了 search_match 逻辑 (可选，此处参照 JS 实现)
+                if (quick && !name.toLowerCase().contains(key.toLowerCase())) {
+                    continue;
+                }
+
+                JSONObject v = new JSONObject();
+                // 搜索接口返回的是 id 而非 playlet_id
+                v.put("vod_id", vod.optString("id", ""));
+                v.put("vod_name", name);
+                v.put("vod_pic", vod.optString("image_link", ""));
+                v.put("vod_remarks", "集多▶️" + vod.optString("total_num", "0"));
+                videos.put(v);
+            }
+
+            JSONObject result = new JSONObject();
+            result.put("page", Integer.parseInt(pg));
+            result.put("pagecount", 9999);
+            result.put("limit", 90);
+            result.put("total", 999999);
+            result.put("list", videos);
+            return result.toString();
+        } catch (Exception e) {
+            e.printStackTrace();
+            return "";
+        }
+    }
+
+    // Utility from Python
+    private String extractMiddleText(String text, String startStr, String endStr, int pl) {
+        // Simplified for pl=0,1,2,3 as in Python. Implement regex/pattern matching as needed.
+        // For brevity, handling basic cases; expand for pl=3 if complex.
+        if (pl == 0) {
+            int startIdx = text.indexOf(startStr);
+            if (startIdx == -1) return "";
+            int endIdx = text.indexOf(endStr, startIdx + startStr.length());
+            if (endIdx == -1) return "";
+            return text.substring(startIdx + startStr.length(), endIdx).replace("\\", "");
+        }
+        // Add other pl modes if needed (e.g., regex for pl=1,2,3).
+        return "";
     }
 }
