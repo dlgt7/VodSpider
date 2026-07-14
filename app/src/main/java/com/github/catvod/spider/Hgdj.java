@@ -79,9 +79,17 @@ public class Hgdj extends Spider {
 
                 // 从播放链接提取video_id（格式：/kpplay/dBBHPS-1-1/）
                 String[] parts = playUrl.split("/");
-                if (parts.length < 4) continue;
+                // 过滤空字符串，找到最后一个非空部分
+                String lastPart = "";
+                for (int i = parts.length - 1; i >= 0; i--) {
+                    if (!TextUtils.isEmpty(parts[i])) {
+                        lastPart = parts[i];
+                        break;
+                    }
+                }
 
-                String lastPart = parts[parts.length - 1]; // dBBHPS-1-1
+                if (TextUtils.isEmpty(lastPart)) continue;
+
                 String videoId = lastPart.split("-")[0]; // dBBHPS
 
                 // 构造详情链接
@@ -213,32 +221,10 @@ public class Hgdj extends Spider {
         int limit = 40;
 
         try {
-            // 构建分类URL（修正：分类ID直接拼接，没有分隔符）
-            // 格式：/kpshow/dBBBB{频道ID}-----------/
-            StringBuilder urlBuilder = new StringBuilder();
-            urlBuilder.append(siteUrl).append("/kpshow/dBBBB");
+            // 构建分类URL（修正：使用正确的URL格式）
+            // 格式：/kp/dBBBB{频道ID}/
+            String url = siteUrl + "/kp/dBBBB" + tid + "/";
 
-            // 频道筛选（直接拼接，无分隔符）
-            if (!TextUtils.isEmpty(tid)) {
-                urlBuilder.append(tid);
-            }
-
-            // 排序（从extend参数获取，默认为最新）
-            String sort = extend != null ? extend.get("sort") : null;
-            if (!TextUtils.isEmpty(sort)) {
-                urlBuilder.append("--").append(sort);
-            }
-
-            urlBuilder.append("---------");
-
-            // 页码（第1页不需要页码，第2页及以后需要页码）
-            if (page > 1) {
-                urlBuilder.append(page);
-            }
-
-            urlBuilder.append("/");
-
-            String url = urlBuilder.toString();
             Document doc = Jsoup.parse(OkHttp.string(url, headers));
 
             // 解析视频列表（修正：处理两种不同的链接格式）
