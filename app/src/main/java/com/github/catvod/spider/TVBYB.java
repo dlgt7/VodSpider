@@ -994,9 +994,9 @@ public class TVBYB extends Spider {
             apiHeaders.put("User-Agent", headers.get("User-Agent"));
             apiHeaders.put("Referer", SITE_URL + "/");
 
-            // 发送POST请求到外部验证服务（严格匹配JS的timeout: 8000）
+            // 发送POST请求到外部验证服务
             String apiUrl = ddddOcrApi + "/verify";
-            String response = OkHttp.post(apiUrl, requestBody.toString(), apiHeaders, 8000);
+            String response = OkHttp.post(apiUrl, requestBody.toString(), apiHeaders);
 
             if (TextUtils.isEmpty(response)) return false;
 
@@ -1069,25 +1069,34 @@ public class TVBYB extends Spider {
             String scriptPath = scriptMatcher.group(1);
             String scriptUrl = scriptPath.startsWith("http") ? scriptPath : SITE_URL + scriptPath;
 
-            // 获取脚本内容(需要响应头)
+            // 获取脚本内容(使用OkHttp.newCall获取完整响应)
             HashMap<String, String> jsHeaders = new HashMap<>(headers);
             if (!TextUtils.isEmpty(verifyCookie)) {
                 jsHeaders.put("Cookie", verifyCookie);
             }
             jsHeaders.put("Referer", SITE_URL + "/");
 
-            com.github.catvod.net.OkResult jsResult = new com.github.catvod.net.OkRequest(
-                    com.github.catvod.net.OkHttp.GET, scriptUrl, null, jsHeaders
-            ).execute(com.github.catvod.net.OkHttp.client());
-
-            String jsContent = jsResult.getBody();
-            if (TextUtils.isEmpty(jsContent)) return false;
-
-            // 更新cookie(从响应头)
-            String setCookie = jsResult.getSetCookie();
-            if (!TextUtils.isEmpty(setCookie)) {
-                verifyCookie = mergeCookie(verifyCookie, setCookie);
+            String jsContent;
+            try {
+                okhttp3.Request.Builder requestBuilder = new okhttp3.Request.Builder().url(scriptUrl);
+                for (String key : jsHeaders.keySet()) {
+                    requestBuilder.addHeader(key, jsHeaders.get(key));
+                }
+                okhttp3.Response jsResponse = OkHttp.client().newCall(requestBuilder.build()).execute();
+                jsContent = jsResponse.body().string();
+                
+                // 提取响应头中的Set-Cookie
+                String setCookie = jsResponse.header("Set-Cookie");
+                if (!TextUtils.isEmpty(setCookie)) {
+                    verifyCookie = mergeCookie(verifyCookie, setCookie);
+                }
+                jsResponse.close();
+            } catch (Exception e) {
+                SpiderDebug.log(e);
+                return false;
             }
+
+            if (TextUtils.isEmpty(jsContent)) return false;
 
             // 提取key、value、verifyPath
             Pattern keyPattern = Pattern.compile("key\\s*=\\s*[\"']([^\"']+)[\"']");
@@ -1124,25 +1133,35 @@ public class TVBYB extends Spider {
                 verifyUrl = SITE_URL + verifyPath + "&key=" + URLEncoder.encode(key, "UTF-8") + "&value=" + md5(stringtoHex(value));
             }
 
-            // 执行验证(需要响应头)
+            // 执行验证(使用OkHttp.newCall获取完整响应)
             HashMap<String, String> verifyHeaders = new HashMap<>(headers);
             if (!TextUtils.isEmpty(verifyCookie)) {
                 verifyHeaders.put("Cookie", verifyCookie);
             }
             verifyHeaders.put("Referer", SITE_URL + "/");
 
-            com.github.catvod.net.OkResult verifyResult = new com.github.catvod.net.OkRequest(
-                    com.github.catvod.net.OkHttp.GET, verifyUrl, null, verifyHeaders
-            ).execute(com.github.catvod.net.OkHttp.client());
+            try {
+                okhttp3.Request.Builder verifyRequestBuilder = new okhttp3.Request.Builder().url(verifyUrl);
+                for (String key2 : verifyHeaders.keySet()) {
+                    verifyRequestBuilder.addHeader(key2, verifyHeaders.get(key2));
+                }
+                okhttp3.Response verifyResponse = OkHttp.client().newCall(verifyRequestBuilder.build()).execute();
+                
+                // 提取响应头中的Set-Cookie
+                String verifySetCookie = verifyResponse.header("Set-Cookie");
+                if (!TextUtils.isEmpty(verifySetCookie)) {
+                    verifyCookie = mergeCookie(verifyCookie, verifySetCookie);
+                }
+                
+                boolean success = verifyResponse.isSuccessful();
+                verifyResponse.close();
 
-            // 验证成功后会返回新的cookie(通常在响应头中)
-            String verifySetCookie = verifyResult.getSetCookie();
-            if (!TextUtils.isEmpty(verifySetCookie)) {
-                verifyCookie = mergeCookie(verifyCookie, verifySetCookie);
+                SpiderDebug.log("滑块验证完成: " + verifyUrl);
+                return success;
+            } catch (Exception e) {
+                SpiderDebug.log(e);
+                return false;
             }
-
-            SpiderDebug.log("滑块验证完成: " + verifyUrl);
-            return verifyResult.isSuccess();
 
         } catch (Exception e) {
             SpiderDebug.log(e);
