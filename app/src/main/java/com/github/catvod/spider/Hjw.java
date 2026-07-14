@@ -96,8 +96,10 @@ public class Hjw extends Spider {
                     if (TextUtils.isEmpty(pic)) {
                         pic = img.attr("src");
                     }
+                    pic = fixUrl(pic);
                 }
 
+                // 分类列表页不提供图片，允许pic为空
                 if (TextUtils.isEmpty(title)) continue;
 
                 // 从详情页URL提取ID（格式：/detail/3504.html）
@@ -178,8 +180,10 @@ public class Hjw extends Spider {
                     if (TextUtils.isEmpty(pic)) {
                         pic = img.attr("src");
                     }
+                    pic = fixUrl(pic);
                 }
 
+                // 分类列表页不提供图片，允许pic为空
                 if (TextUtils.isEmpty(title)) continue;
 
                 String vid = href;
@@ -227,7 +231,7 @@ public class Hjw extends Spider {
                     name = titleElem.text();
                 }
 
-                // 提取图片（多级选择器兜底）
+                // 提取图片（优先使用懒加载属性）
                 String pic = "";
                 Element img = doc.selectFirst("img");
                 if (img != null) {
@@ -249,28 +253,22 @@ public class Hjw extends Spider {
                 Elements sourceTabs = doc.select(".module-tab-item, .module-blocklist a[data-toggle]");
 
                 if (sourceTabs.isEmpty()) {
-                    // 如果没有找到播放源标签，查找所有剧集链接
-                    // 网站使用锚点跳转，实际播放链接在详情页
-                    Elements playLinks = doc.select("a[href*=/detail/]");
-                    if (playLinks.isEmpty()) {
-                        playLinks = doc.select("a");
-                    }
-
+                    // 网站使用锚点跳转，选集链接格式：/detail/{ID}.html#m
+                    Elements playLinks = doc.select("a[href*='#m']");
                     if (!playLinks.isEmpty()) {
                         sources.add("默認");
 
                         List<String> eps = new ArrayList<>();
-                        int epCount = 1;
                         for (Element link : playLinks) {
                             String epName = link.text();
                             String epUrl = link.attr("href");
+
                             // 过滤掉非剧集链接
                             if (TextUtils.isEmpty(epName) || TextUtils.isEmpty(epUrl)) continue;
-                            if (!epUrl.contains("/detail/")) continue;
 
-                            // 构造播放链接（格式：第01集$/detail/3599.html#m）
+                            // 只提取包含"第"和"集"的剧集名称
                             if (epName.contains("第") && epName.contains("集")) {
-                                // 使用详情页URL + 播放锚点
+                                // 构造播放链接（格式：第01集$/detail/3599.html#m）
                                 String playId = id + ".html#m";
                                 eps.add(epName + "$" + playId);
                             }
@@ -312,9 +310,10 @@ public class Hjw extends Spider {
 
                         if (playList != null) {
                             List<String> eps = new ArrayList<>();
-                            for (Element link : playList.select("a")) {
+                            for (Element link : playList.select("a[href*='#m']")) {
                                 String epName = link.text();
                                 String epUrl = link.attr("href");
+
                                 if (!TextUtils.isEmpty(epName) && !TextUtils.isEmpty(epUrl)) {
                                     // 构造播放链接（格式：第01集$/detail/3599.html#m）
                                     String playId = id + ".html#m";
@@ -326,14 +325,12 @@ public class Hjw extends Spider {
                                 episodes.add(join(eps, "#"));
                             }
                         } else {
-                            // 如果找不到对应的剧集列表，使用全局搜索
-                            Elements playLinks = doc.select("a");
+                            // 如果找不到播放列表，从全局查找锚点链接
+                            Elements playLinks = doc.select("a[href*='#m']");
                             List<String> eps = new ArrayList<>();
                             for (Element link : playLinks) {
                                 String epName = link.text();
-                                String epUrl = link.attr("href");
-                                if (!TextUtils.isEmpty(epName) && !TextUtils.isEmpty(epUrl)) {
-                                    // 构造播放链接
+                                if (!TextUtils.isEmpty(epName) && epName.contains("第") && epName.contains("集")) {
                                     String playId = id + ".html#m";
                                     eps.add(epName + "$" + playId);
                                 }
@@ -404,8 +401,10 @@ public class Hjw extends Spider {
                     if (TextUtils.isEmpty(pic)) {
                         pic = img.attr("src");
                     }
+                    pic = fixUrl(pic);
                 }
 
+                // 分类列表页不提供图片，允许pic为空
                 if (TextUtils.isEmpty(title)) continue;
 
                 String vid = href;

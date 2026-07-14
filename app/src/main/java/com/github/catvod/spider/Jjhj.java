@@ -57,11 +57,12 @@ public class Jjhj extends Spider {
         List<Class> classes = new ArrayList<>();
 
         // 分类列表（根据网站实际分类）
-        classes.add(new Class("1", "同步剧场"));
-        classes.add(new Class("3", "日剧"));
-        classes.add(new Class("4", "泰剧"));
-        classes.add(new Class("5", "韩国电影"));
-        classes.add(new Class("6", "综艺"));
+        // URL格式：/frim/list{分类ID}.html（分类页）
+        classes.add(new Class("1", "韩剧"));
+        classes.add(new Class("2", "日剧"));
+        classes.add(new Class("3", "泰剧"));
+        classes.add(new Class("4", "韩国电影"));
+        classes.add(new Class("5", "综艺"));
 
         List<Vod> list = new ArrayList<>();
 
@@ -197,16 +198,21 @@ public class Jjhj extends Spider {
                     name = titleElem.text();
                 }
 
-                // 提取图片
+                // 提取图片（网站图片可能通过懒加载）
                 String pic = "";
-                Element img = doc.selectFirst(".content img, .detail img, .hl-content img");
+                Element img = doc.selectFirst("img");
                 if (img != null) {
+                    // 尝试多个可能的图片属性
                     pic = img.attr("data-original");
-                    if (TextUtils.isEmpty(pic)) {
+                    if (TextUtils.isEmpty(pic) || pic.equals("data:image")) {
                         pic = img.attr("data-src");
                     }
-                    if (TextUtils.isEmpty(pic)) {
+                    if (TextUtils.isEmpty(pic) || pic.equals("data:image")) {
                         pic = img.attr("src");
+                    }
+                    // 过滤掉base64占位符
+                    if (!TextUtils.isEmpty(pic) && pic.startsWith("data:image")) {
+                        pic = "";
                     }
                     pic = fixUrl(pic);
                 }
@@ -215,12 +221,13 @@ public class Jjhj extends Spider {
                 List<String> sources = new ArrayList<>();
                 List<String> episodes = new ArrayList<>();
 
-                // 查找所有播放源
-                Elements sourceTabs = doc.select("div.hl-play-source a[data-toggle], div.hl-tabs a[data-toggle]");
+                // 网站有多个播放源（高清云、韩剧云、量子云、百度云、超清4k）
+                // 播放源标签格式：<a href="...#">高清云</a>
+                Elements sourceTabs = doc.select("a[href*='/view/'][href*='#']");
 
                 if (sourceTabs.isEmpty()) {
-                    // 如果没有找到播放源标签，使用默认方式
-                    Elements playLinks = doc.select("div.hl-play-list a[href*=/play/]");
+                    // 如果没有找到播放源标签，提取所有播放链接作为默认
+                    Elements playLinks = doc.select("a[href*='/play/']");
                     if (!playLinks.isEmpty()) {
                         sources.add("默认");
 
@@ -238,39 +245,46 @@ public class Jjhj extends Spider {
                         }
                     }
                 } else {
+                    // 有播放源标签，提取播放源名称
                     for (Element sourceTab : sourceTabs) {
-                        String sourceName = sourceTab.attr("title");
-                        if (TextUtils.isEmpty(sourceName)) {
-                            sourceName = sourceTab.text();
-                        }
+                        String sourceName = sourceTab.text();
                         if (TextUtils.isEmpty(sourceName)) {
                             sourceName = "线路" + (sources.size() + 1);
                         }
-
                         sources.add(sourceName);
+                    }
 
-                        // 查找该播放源对应的剧集列表
-                        String dataToggle = sourceTab.attr("data-toggle");
-                        if (!TextUtils.isEmpty(dataToggle)) {
-                            Element playList = doc.selectFirst("div#" + dataToggle);
-                            if (playList == null) {
-                                playList = doc.selectFirst("ul#" + dataToggle);
-                            }
+                    // 提取所有播放链接并按线路ID分组
+                    // 播放链接格式：/play/{视频ID}-{线路ID}-{剧集ID}.html
+                    Elements playLinks = doc.select("a[href*='/play/']");
+                    Map<String, List<String>> routeEpisodes = new HashMap<>();
 
-                            if (playList != null) {
-                                List<String> eps = new ArrayList<>();
-                                for (Element link : playList.select("a[href*=/play/]")) {
-                                    String epName = link.text();
-                                    String epUrl = link.attr("href");
-                                    if (!TextUtils.isEmpty(epName) && !TextUtils.isEmpty(epUrl)) {
-                                        eps.add(epName + "$" + epUrl);
-                                    }
-                                }
+                    for (Element link : playLinks) {
+                        String epName = link.text();
+                        String epUrl = link.attr("href");
 
-                                if (!eps.isEmpty()) {
-                                    episodes.add(join(eps, "#"));
-                                }
-                            }
+                        if (TextUtils.isEmpty(epName) || TextUtils.isEmpty(epUrl)) continue;
+
+                        // 从URL提取线路ID：/play/11764-2-0.html -> 2
+                        String routeId = "";
+                        String[] urlParts = epUrl.split("-");
+                        if (urlParts.length >= 2) {
+                            routeId = urlParts[urlParts.length - 2]; // 倒数第二部分是线路ID
+                        }
+
+                        if (TextUtils.isEmpty(routeId)) routeId = "0";
+
+                        // 添加到对应线路的剧集列表
+                        if (!routeEpisodes.containsKey(routeId)) {
+                            routeEpisodes.put(routeId, new ArrayList<>());
+                        }
+                        routeEpisodes.get(routeId).add(epName + "$" + epUrl);
+                    }
+
+                    // 将每条线路的剧集添加到episodes
+                    for (List<String> eps : routeEpisodes.values()) {
+                        if (!eps.isEmpty()) {
+                            episodes.add(join(eps, "#"));
                         }
                     }
                 }
