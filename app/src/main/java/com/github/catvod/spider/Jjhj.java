@@ -33,6 +33,7 @@ import java.util.Map;
 public class Jjhj extends Spider {
 
     private static final String SITE_URL = "https://www.jjhj.cc";
+    private static final String ALT_SITE_URL = "http://www.99hanju.cc"; // 备用域名
     private String siteUrl = SITE_URL;
 
     private final Map<String, String> headers = new HashMap<String, String>() {{
@@ -97,17 +98,8 @@ public class Jjhj extends Spider {
 
                 if (TextUtils.isEmpty(href) || TextUtils.isEmpty(title)) continue;
 
-                // 从详情页URL提取ID（格式：/view/11789.html）
-                String vid = href;
-                if (href.contains("/view/")) {
-                    String[] parts = href.split("/");
-                    for (String part : parts) {
-                        if (part.contains(".html")) {
-                            vid = part.replace(".html", "");
-                            break;
-                        }
-                    }
-                }
+                // 标准化视频ID
+                String vid = normalizeVid(href);
 
                 if (seen.contains(vid)) continue;
                 seen.add(vid);
@@ -140,6 +132,7 @@ public class Jjhj extends Spider {
             for (Element item : doc.select("a[href*=/view/]")) {
                 String href = item.attr("href");
                 String title = "";
+                String pic = "";
 
                 // 提取剧名（优先使用title属性，否则使用链接文本）
                 title = item.attr("title");
@@ -147,27 +140,30 @@ public class Jjhj extends Spider {
                     title = item.text();
                 }
 
+                // 提取图片（如果存在）
+                Element img = item.selectFirst("img");
+                if (img != null) {
+                    pic = img.attr("data-original");
+                    if (TextUtils.isEmpty(pic)) {
+                        pic = img.attr("data-src");
+                    }
+                    if (TextUtils.isEmpty(pic)) {
+                        pic = img.attr("src");
+                    }
+                }
+
                 if (TextUtils.isEmpty(href) || TextUtils.isEmpty(title)) continue;
 
                 // 过滤掉非详情页链接
                 if (!href.contains("/view/")) continue;
 
-                String vid = href;
-                if (href.contains("/view/")) {
-                    String[] parts = href.split("/");
-                    for (String part : parts) {
-                        if (part.contains(".html")) {
-                            vid = part.replace(".html", "");
-                            break;
-                        }
-                    }
-                }
+                // 标准化视频ID
+                String vid = normalizeVid(href);
 
                 if (seen.contains(vid)) continue;
                 seen.add(vid);
 
-                // 分类页通常没有图片，使用空字符串
-                String pic = "";
+                pic = fixUrl(pic);
 
                 list.add(new Vod(vid, title, pic));
             }
@@ -200,9 +196,26 @@ public class Jjhj extends Spider {
 
                 // 提取图片（网站图片可能通过懒加载）
                 String pic = "";
-                Element img = doc.selectFirst("img");
+                Element img = doc.selectFirst(".detail-pic img, .video-cover img, .poster img");
+                if (img == null) {
+                    // 如果没有找到特定选择器，尝试查找第一个非演员表的图片
+                    Elements imgs = doc.select("img");
+                    for (Element imgElem : imgs) {
+                        String src = imgElem.attr("data-original");
+                        if (TextUtils.isEmpty(src)) {
+                            src = imgElem.attr("data-src");
+                        }
+                        if (TextUtils.isEmpty(src)) {
+                            src = imgElem.attr("src");
+                        }
+                        // 优先选择包含特定域名的图片（如 doubaocdn.com）
+                        if (!TextUtils.isEmpty(src) && (src.contains("doubaocdn") || src.contains("cover") || src.contains("poster"))) {
+                            img = imgElem;
+                            break;
+                        }
+                    }
+                }
                 if (img != null) {
-                    // 尝试多个可能的图片属性
                     pic = img.attr("data-original");
                     if (TextUtils.isEmpty(pic) || pic.equals("data:image")) {
                         pic = img.attr("data-src");
@@ -221,43 +234,30 @@ public class Jjhj extends Spider {
                 List<String> sources = new ArrayList<>();
                 List<String> episodes = new ArrayList<>();
 
-                // 网站有多个播放源（高清云、韩剧云、量子云、百度云、超清4k）
-                // 播放源标签格式：<a href="...#">高清云</a>
-                Elements sourceTabs = doc.select("a[href*='/view/'][href*='#']");
+                // 提取所有播放链接（/play/格式）
+                Elements playLinks = doc.select("a[href*='/play/']");
 
-                if (sourceTabs.isEmpty()) {
-                    // 如果没有找到播放源标签，提取所有播放链接作为默认
-                    Elements playLinks = doc.select("a[href*='/play/']");
-                    if (!playLinks.isEmpty()) {
-                        sources.add("默认");
+                if (!playLinks.isEmpty()) {
+                    // 提取播放源标签（用于获取线路名称）
+                    // 播放源标签格式：<a href="...#">量子云</a>
+                    Map<String, String> routeIdToName = new HashMap<>();
+                    Elements sourceTabs = doc.select("a[href*='/view/'][href*='#']");
 
-                        List<String> eps = new ArrayList<>();
-                        for (Element link : playLinks) {
-                            String epName = link.text();
-                            String epUrl = link.attr("href");
-                            if (!TextUtils.isEmpty(epName) && !TextUtils.isEmpty(epUrl)) {
-                                eps.add(epName + "$" + epUrl);
-                            }
-                        }
-
-                        if (!eps.isEmpty()) {
-                            episodes.add(join(eps, "#"));
-                        }
-                    }
-                } else {
-                    // 有播放源标签，提取播放源名称
+                    // 如果有播放源标签，建立线路ID到名称的映射
+                    int routeIndex = 1;
                     for (Element sourceTab : sourceTabs) {
                         String sourceName = sourceTab.text();
-                        if (TextUtils.isEmpty(sourceName)) {
-                            sourceName = "线路" + (sources.size() + 1);
+                        if (!TextUtils.isEmpty(sourceName) && !sourceName.equals("立即播放") && !sourceName.contains("www.")) {
+                            routeIdToName.put(String.valueOf(routeIndex), sourceName);
+                            routeIndex++;
                         }
-                        sources.add(sourceName);
                     }
 
-                    // 提取所有播放链接并按线路ID分组
+                    // 按线路ID分组播放链接
                     // 播放链接格式：/play/{视频ID}-{线路ID}-{剧集ID}.html
-                    Elements playLinks = doc.select("a[href*='/play/']");
                     Map<String, List<String>> routeEpisodes = new HashMap<>();
+                    Map<String, Integer> routeOrder = new HashMap<>(); // 记录线路顺序
+                    int order = 0;
 
                     for (Element link : playLinks) {
                         String epName = link.text();
@@ -265,25 +265,33 @@ public class Jjhj extends Spider {
 
                         if (TextUtils.isEmpty(epName) || TextUtils.isEmpty(epUrl)) continue;
 
-                        // 从URL提取线路ID：/play/11764-2-0.html -> 2
+                        // 过滤掉非选集链接（如"立即播放"、网址等）
+                        if (!epName.matches("第\\d+集")) continue;
+
+                        // 从URL提取线路ID：/play/8490-4-1.html -> 4
                         String routeId = "";
                         String[] urlParts = epUrl.split("-");
                         if (urlParts.length >= 2) {
                             routeId = urlParts[urlParts.length - 2]; // 倒数第二部分是线路ID
                         }
 
-                        if (TextUtils.isEmpty(routeId)) routeId = "0";
+                        if (TextUtils.isEmpty(routeId)) routeId = "1";
 
                         // 添加到对应线路的剧集列表
                         if (!routeEpisodes.containsKey(routeId)) {
                             routeEpisodes.put(routeId, new ArrayList<>());
+                            routeOrder.put(routeId, order++);
                         }
-                        routeEpisodes.get(routeId).add(epName + "$" + epUrl);
+                        routeEpisodes.get(routeId).add(epName + "$" + fixUrl(epUrl));
                     }
 
-                    // 将每条线路的剧集添加到episodes
-                    for (List<String> eps : routeEpisodes.values()) {
+                    // 按顺序将每条线路添加到结果
+                    for (String routeId : routeOrder.keySet()) {
+                        List<String> eps = routeEpisodes.get(routeId);
                         if (!eps.isEmpty()) {
+                            // 使用播放源名称映射，如果没有则使用"线路N"
+                            String sourceName = routeIdToName.getOrDefault(routeId, "线路" + (sources.size() + 1));
+                            sources.add(sourceName);
                             episodes.add(join(eps, "#"));
                         }
                     }
@@ -346,16 +354,8 @@ public class Jjhj extends Spider {
 
                 if (TextUtils.isEmpty(href) || TextUtils.isEmpty(title)) continue;
 
-                String vid = href;
-                if (href.contains("/view/")) {
-                    String[] parts = href.split("/");
-                    for (String part : parts) {
-                        if (part.contains(".html")) {
-                            vid = part.replace(".html", "");
-                            break;
-                        }
-                    }
-                }
+                // 标准化视频ID
+                String vid = normalizeVid(href);
 
                 if (seen.contains(vid)) continue;
                 seen.add(vid);
@@ -400,7 +400,7 @@ public class Jjhj extends Spider {
     }
 
     /**
-     * 修正URL（补全协议和域名）
+     * 修正URL（补全协议和域名，支持多域名）
      */
     private String fixUrl(String url) {
         if (TextUtils.isEmpty(url)) {
@@ -411,9 +411,41 @@ public class Jjhj extends Spider {
             return "https:" + url;
         } else if (url.startsWith("/")) {
             return siteUrl + url;
+        } else if (url.startsWith("http://www.99hanju.cc")) {
+            // 备用域名链接，统一转换为主域名
+            return url.replace("http://www.99hanju.cc", SITE_URL);
         }
 
         return url;
+    }
+
+    /**
+     * 标准化视频ID（从URL提取，统一处理多域名）
+     */
+    private String normalizeVid(String href) {
+        if (TextUtils.isEmpty(href)) {
+            return "";
+        }
+
+        // 处理两个域名的链接
+        String url = href;
+        if (url.startsWith("http://www.99hanju.cc")) {
+            url = url.replace("http://www.99hanju.cc", SITE_URL);
+        }
+
+        // 从详情页URL提取ID（格式：/view/11789.html 或 https://www.jjhj.cc/view/11789.html）
+        String vid = url;
+        if (url.contains("/view/")) {
+            String[] parts = url.split("/");
+            for (String part : parts) {
+                if (part.contains(".html")) {
+                    vid = part.replace(".html", "");
+                    break;
+                }
+            }
+        }
+
+        return vid;
     }
 
     /**

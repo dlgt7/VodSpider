@@ -170,20 +170,9 @@ public class Hjw extends Spider {
                     }
                 }
 
+                // 分类页不提供图片，图片将在详情页提取
                 String pic = "";
-                Element img = item.selectFirst("img");
-                if (img != null) {
-                    pic = img.attr("data-original");
-                    if (TextUtils.isEmpty(pic)) {
-                        pic = img.attr("data-src");
-                    }
-                    if (TextUtils.isEmpty(pic)) {
-                        pic = img.attr("src");
-                    }
-                    pic = fixUrl(pic);
-                }
 
-                // 分类列表页不提供图片，允许pic为空
                 if (TextUtils.isEmpty(title)) continue;
 
                 String vid = href;
@@ -199,8 +188,6 @@ public class Hjw extends Spider {
 
                 if (seen.contains(vid)) continue;
                 seen.add(vid);
-
-                pic = fixUrl(pic);
 
                 list.add(new Vod(vid, title, pic));
             }
@@ -231,36 +218,68 @@ public class Hjw extends Spider {
                     name = titleElem.text();
                 }
 
-                // 提取图片（使用精确选择器，避免提取演员表图片）
+                // 提取图片（尝试多种方式）
                 String pic = "";
-                Element img = doc.selectFirst(".detail-pic img, .video-cover img, .poster img");
+
+                // 优先尝试特定选择器
+                Element img = doc.selectFirst(".detail-pic img, .video-cover img, .poster img, .lazyload");
+
                 if (img == null) {
-                    // 如果没有找到，尝试查找第一个包含视频封面的图片（跳过演员表）
+                    // 尝试查找第一个图片（跳过演员表等）
                     Elements imgs = doc.select("img");
                     for (Element imgElem : imgs) {
+                        // 尝试多个可能的图片属性
                         String src = imgElem.attr("data-original");
-                        if (TextUtils.isEmpty(src)) {
+                        if (TextUtils.isEmpty(src) || src.startsWith("data:image")) {
                             src = imgElem.attr("data-src");
                         }
-                        if (TextUtils.isEmpty(src)) {
+                        if (TextUtils.isEmpty(src) || src.startsWith("data:image")) {
+                            src = imgElem.attr("data-lazy-src");
+                        }
+                        if (TextUtils.isEmpty(src) || src.startsWith("data:image")) {
                             src = imgElem.attr("src");
                         }
-                        // 优先选择包含特定域名的图片（如 doubaocdn.com）
-                        if (!TextUtils.isEmpty(src) && (src.contains("doubaocdn") || src.contains("cover") || src.contains("poster"))) {
-                            img = imgElem;
+
+                        // 过滤掉base64占位符和无效URL
+                        if (!TextUtils.isEmpty(src) && !src.startsWith("data:image") &&
+                            (src.contains("doubaocdn") || src.contains("cover") || src.contains("poster") || src.startsWith("http"))) {
+                            pic = fixUrl(src);
                             break;
                         }
                     }
-                }
-                if (img != null) {
+                } else {
+                    // 从找到的img元素提取
                     pic = img.attr("data-original");
-                    if (TextUtils.isEmpty(pic)) {
+                    if (TextUtils.isEmpty(pic) || pic.startsWith("data:image")) {
                         pic = img.attr("data-src");
                     }
-                    if (TextUtils.isEmpty(pic)) {
+                    if (TextUtils.isEmpty(pic) || pic.startsWith("data:image")) {
+                        pic = img.attr("data-lazy-src");
+                    }
+                    if (TextUtils.isEmpty(pic) || pic.startsWith("data:image")) {
                         pic = img.attr("src");
                     }
                     pic = fixUrl(pic);
+                }
+
+                // 如果仍然没有找到图片，尝试从HTML中提取（处理懒加载或特殊格式）
+                if (TextUtils.isEmpty(pic)) {
+                    String html = doc.html();
+                    // 匹配Markdown格式或img标签中的图片URL
+                    java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
+                        "(?:!\\[.*?\\]\\((https?://[^\\s)]+doubaocdn[^\\s)]*)\\))|(?:src=[\"'](https?://[^\"']+doubaocdn[^\"']*)[\"'])");
+                    java.util.regex.Matcher matcher = pattern.matcher(html);
+                    if (matcher.find()) {
+                        pic = matcher.group(1) != null ? matcher.group(1) : matcher.group(2);
+                        if (!TextUtils.isEmpty(pic)) {
+                            pic = fixUrl(pic);
+                        }
+                    }
+                }
+
+                // 过滤掉无效图片
+                if (!TextUtils.isEmpty(pic) && (pic.startsWith("data:image") || pic.length() < 10)) {
+                    pic = "";
                 }
 
                 // 提取播放源和剧集（MacCMS标准结构）
