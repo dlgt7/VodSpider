@@ -364,14 +364,14 @@ public class Hgdj extends Spider {
                     int start = titleText.indexOf("《");
                     int end = titleText.indexOf("》");
                     if (start >= 0 && end > start) {
-                        name = titleText.substring(start + 1, end);
+                        name = cleanName(titleText.substring(start + 1, end));
                     } else {
                         // 如果没有书名号，取第一个下划线前的内容
                         int underscoreIdx = titleText.indexOf("_");
                         if (underscoreIdx > 0) {
-                            name = titleText.substring(0, underscoreIdx).trim();
+                            name = cleanName(titleText.substring(0, underscoreIdx).trim());
                         } else {
-                            name = titleText;
+                            name = cleanName(titleText);
                         }
                     }
                 }
@@ -717,7 +717,7 @@ public class Hgdj extends Spider {
     }
 
     /**
-     * 清理剧名（移除书名号）
+     * 清理剧名（移除书名号和常见后缀）
      */
     private String cleanName(String name) {
         if (TextUtils.isEmpty(name)) return "";
@@ -725,8 +725,26 @@ public class Hgdj extends Spider {
         name = name.trim();
 
         // 移除书名号
-        if (name.startsWith("《") && name.endsWith("》")) {
-            name = name.substring(1, name.length() - 1);
+        if (name.contains("《") && name.contains("》")) {
+            int start = name.indexOf("《");
+            int end = name.indexOf("》");
+            if (end > start) {
+                name = name.substring(start + 1, end);
+            }
+        }
+
+        // 移除常见后缀（按长度排序，优先匹配长后缀）
+        String[] suffixes = {
+            "免费观看全集", "免费完整版观看", "手机免费观看", "在线免费观看",
+            "免费观看", "完整版观看", "剧情介绍", "免费在线观看",
+            "全集", "短剧", "免费", "在线"
+        };
+
+        for (String suffix : suffixes) {
+            if (name.endsWith(suffix)) {
+                name = name.substring(0, name.length() - suffix.length()).trim();
+                break; // 只移除一个后缀
+            }
         }
 
         return name.trim();
