@@ -19,6 +19,7 @@ import org.jsoup.select.Elements;
 import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -192,65 +193,49 @@ public class HbCfjx extends Spider {
                 pic = fixUrl(pic);
 
                 // 提取播放源和剧集
-                // MacCMS v8结构：线路标签和播放列表
-                // 线路如：河马短剧、红豆剧场等
+                // 网站结构：播放链接 /play/{id}-{source}-{episode}.html
+                // 从URL提取source值分组，source=0是河马短剧，source=1是红豆剧场等
                 List<String> sources = new ArrayList<>();
                 List<String> episodes = new ArrayList<>();
 
-                // 提取线路标签
-                Elements sourceTabs = doc.select("div.playlist:not(:has(div.playlist)) h3, .module-tab-item, .fed-drop-btns a");
-                List<String> sourceNames = new ArrayList<>();
-                for (Element tab : sourceTabs) {
-                    String sourceName = tab.text();
-                    if (!TextUtils.isEmpty(sourceName)) {
-                        sourceNames.add(sourceName);
+                // 线路名称映射（source值 → 线路名）
+                Map<String, String> sourceNames = new HashMap<>();
+                sourceNames.put("0", "河马短剧");
+                sourceNames.put("1", "红豆剧场");
+                sourceNames.put("2", "备用线路");
+
+                // 从所有播放链接提取，按source值分组
+                Elements allPlayLinks = doc.select("a[href*='/play/']");
+                Map<String, List<String>> sourceMap = new LinkedHashMap<>();
+                List<String> sourceOrder = new ArrayList<>();
+
+                for (Element link : allPlayLinks) {
+                    String epName = link.text().trim();
+                    String epUrl = link.attr("href");
+
+                    if (TextUtils.isEmpty(epName) || TextUtils.isEmpty(epUrl)) continue;
+                    if (!epUrl.contains("/play/")) continue;
+
+                    // 从URL提取source值：/play/2055-1-0.html → source=1
+                    String sourceKey = extractSourceKey(epUrl);
+                    if (TextUtils.isEmpty(sourceKey)) sourceKey = "0";
+
+                    if (!sourceMap.containsKey(sourceKey)) {
+                        sourceMap.put(sourceKey, new ArrayList<>());
+                        sourceOrder.add(sourceKey);
                     }
+
+                    sourceMap.get(sourceKey).add(epName + "$" + fixUrl(epUrl));
                 }
 
-                // 按playlist div分组提取选集
-                // 播放链接格式：/play/{id}-{source}-{episode}.html
-                int playlistIndex = 0;
-                for (Element playlist : doc.select("div.playlist, div.fed-play-item, .module-play-list")) {
-                    Elements playLinks = playlist.select("a[href*='/play/']");
-                    if (playLinks.isEmpty()) continue;
-
-                    List<String> eps = new ArrayList<>();
-                    for (Element link : playLinks) {
-                        String epName = link.text();
-                        String epUrl = link.attr("href");
-
-                        if (TextUtils.isEmpty(epName) || TextUtils.isEmpty(epUrl)) continue;
-
-                        eps.add(epName + "$" + fixUrl(epUrl));
-                    }
-
+                // 按顺序组装线路和选集
+                for (String sourceKey : sourceOrder) {
+                    List<String> eps = sourceMap.get(sourceKey);
                     if (!eps.isEmpty()) {
-                        // 使用线路名称，如果没有则用"线路N"
-                        String sourceName = playlistIndex < sourceNames.size() ?
-                                sourceNames.get(playlistIndex) : "线路" + (sources.size() + 1);
+                        String sourceName = sourceNames.containsKey(sourceKey) ?
+                                sourceNames.get(sourceKey) : "线路" + (sources.size() + 1);
                         sources.add(sourceName);
                         episodes.add(join(eps, "#"));
-                        playlistIndex++;
-                    }
-                }
-
-                // 兜底：如果上面没有提取到，尝试从所有播放链接中提取
-                if (sources.isEmpty()) {
-                    Elements allPlayLinks = doc.select("a[href*='/play/']");
-                    if (!allPlayLinks.isEmpty()) {
-                        List<String> eps = new ArrayList<>();
-                        for (Element link : allPlayLinks) {
-                            String epName = link.text();
-                            String epUrl = link.attr("href");
-
-                            if (TextUtils.isEmpty(epName) || TextUtils.isEmpty(epUrl)) continue;
-
-                            eps.add(epName + "$" + fixUrl(epUrl));
-                        }
-                        if (!eps.isEmpty()) {
-                            sources.add("默认");
-                            episodes.add(join(eps, "#"));
-                        }
                     }
                 }
 
@@ -320,39 +305,18 @@ public class HbCfjx extends Spider {
     @Override
     public String playerContent(String flag, String id, List<String> vipFlags) {
         try {
-            // 播放页JS中可能包含直链：var now="https://.../index.m3u8"
             // 播放链接格式：/play/{id}-{source}-{episode}.html
+            // 使用嗅探模式让客户端处理，避免直链域名超时问题
             String playUrl = id;
             if (!id.startsWith("http")) {
                 playUrl = siteUrl + id;
             }
 
-            // 请求播放页，从JS中提取m3u8/mp4直链
-            String html = OkHttp.string(playUrl, headers);
-
-            // 提取 var now="..." 中的URL
-            java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("var\\s+now\\s*=\\s*[\"'](https?://[^\"']+)[\"']");
-            java.util.regex.Matcher matcher = pattern.matcher(html);
-            if (matcher.find()) {
-                String m3u8Url = matcher.group(1);
-
-                Map<String, String> header = new HashMap<>();
-                header.put("User-Agent", Util.CHROME);
-                header.put("Referer", playUrl);
-
-                // parse=0 直接播放m3u8
-                return Result.get()
-                        .parse(0)
-                        .url(m3u8Url)
-                        .header(header)
-                        .string();
-            }
-
-            // 如果没有提取到直链，回退到嗅探模式
             Map<String, String> header = new HashMap<>();
             header.put("User-Agent", Util.CHROME);
             header.put("Referer", siteUrl);
 
+            // parse=1 嗅探模式，客户端会自动处理播放页和m3u8提取
             return Result.get()
                     .parse(1)
                     .url(playUrl)
@@ -421,5 +385,27 @@ public class HbCfjx extends Spider {
         }
 
         return sb.toString();
+    }
+
+    /**
+     * 从播放链接URL提取源标识
+     * 播放链接格式：/play/{id}-{source}-{episode}.html
+     * 例如：/play/2055-1-0.html → source=1
+     */
+    private String extractSourceKey(String epUrl) {
+        if (TextUtils.isEmpty(epUrl)) return "";
+
+        // 匹配 /play/id-source-episode.html
+        int playIdx = epUrl.indexOf("/play/");
+        if (playIdx < 0) return "";
+
+        String afterPlay = epUrl.substring(playIdx + 6); // /play/ 之后
+        String[] parts = afterPlay.split("-");
+        if (parts.length >= 2) {
+            // parts[0]=id, parts[1]=source
+            return parts[1];
+        }
+
+        return "";
     }
 }
