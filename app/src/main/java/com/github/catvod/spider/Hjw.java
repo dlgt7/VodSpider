@@ -264,8 +264,9 @@ public class Hjw extends Spider {
                 pic = fixUrl(pic);
 
                 // 提取播放源和剧集
-                // 真实HTML结构：<div class="play"><ul><li><a href="#m" onclick="bb_a('3707_1_1','第01集',event)">第01集</a></li>...
-                // href只是#m锚点，onclick中包含真实选集标识（视频ID_线路ID_集数）
+                // 真实HTML：<a href="#m" onclick="bb_a('3707_1_1','第01集',event)">第01集</a>
+                // 播放逻辑：fetch('/u/u1.php?ud=3707_1_1') → AES解密 → /m3/edit-down.php?url=解密后地址
+                // 所以播放URL应为：/u/u1.php?ud={视频ID}_{线路ID}_{集数ID}
                 List<String> sources = new ArrayList<>();
                 List<String> episodes = new ArrayList<>();
 
@@ -303,9 +304,12 @@ public class Hjw extends Spider {
                             }
                         }
 
-                        // 构造播放URL：使用详情页URL + #m（客户端嗅探）
-                        String playUrl = "/" + id + ".html#m";
+                        // 构造播放URL：使用API路径 /u/u1.php?ud={epId}
+                        // epId格式：视频ID_线路ID_集数ID（如 3707_1_1）
+                        String playUrl;
                         if (!TextUtils.isEmpty(epId)) {
+                            playUrl = "/u/u1.php?ud=" + epId;
+                        } else {
                             playUrl = "/" + id + ".html#m";
                         }
 
@@ -419,20 +423,34 @@ public class Hjw extends Spider {
     @Override
     public String playerContent(String flag, String id, List<String> vipFlags) {
         try {
-            // 如果是完整的播放链接，直接返回
+            // 播放URL格式：/u/u1.php?ud=3707_1_1
+            // 网站JS逻辑：fetch('/u/u1.php?ud=xxx') → AES-CBC解密 → /m3/edit-down.php?url=解密后m3u8
+            // 客户端嗅探：将详情页URL作为嗅探入口，让WebView加载并嗅探m3u8/mp4
+
             String playUrl = id;
             if (!id.startsWith("http")) {
                 playUrl = siteUrl + id;
             }
 
-            // MacCMS站点，返回parse=1让客户端解析器处理
+            // 构造详情页URL作为嗅探入口（客户端会加载此页面并嗅探视频流）
+            // 从播放标识提取详情页ID：/u/u1.php?ud=3707_1_1 → 3707
+            String sniffUrl = playUrl;
+            if (id.contains("/u/u1.php?ud=")) {
+                String udParam = id.replace("/u/u1.php?ud=", "");
+                String[] parts = udParam.split("_");
+                if (parts.length >= 1) {
+                    sniffUrl = siteUrl + "/detail/" + parts[0] + ".html";
+                }
+            }
+
             Map<String, String> header = new HashMap<>();
             header.put("User-Agent", Util.CHROME);
             header.put("Referer", siteUrl);
 
+            // parse=1: 客户端嗅探模式，加载详情页并嗅探视频流
             return Result.get()
                     .parse(1)
-                    .url(playUrl)
+                    .url(sniffUrl)
                     .header(header)
                     .string();
 
