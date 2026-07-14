@@ -102,35 +102,60 @@ public class Glod extends Spider {
     }
 
     /**
-     * 多域名自动切换请求（性能优化版）
-     * @param path 相对路径（如 "/"、"/vod/show/id/1"）
-     * @return [响应内容, 成功的域名]，失败返回 null
+     * 多域名自动切换请求（智能优化版）
+     * - 首次访问：快速测试所有域名，选择最快的作为主域名
+     * - 后续访问：直接使用主域名（极速）
+     * - 失败切换：主域名失败才切换到备用域名
      */
     private Object[] get(String path) {
         long startTime = System.currentTimeMillis();
 
-        // 优先使用缓存的成功域名（最快路径）
+        // 第一优先级：使用缓存的主域名（最快路径）
         if (!TextUtils.isEmpty(cachedDomain)) {
             try {
                 String url = path.startsWith("http") ? path : cachedDomain + path;
                 String content = OkHttp.string(url, getHeaders(cachedDomain));
 
-                // 检查响应有效性（降低阈值到 200，加快验证）
+                // 检查响应有效性（降低阈值到 200）
                 if (!TextUtils.isEmpty(content) && content.length() > 200) {
                     long duration = System.currentTimeMillis() - startTime;
-                    SpiderDebug.log("缓存域名成功: " + cachedDomain + " 耗时: " + duration + "ms");
+                    if (duration > 1000) {  // 超过1秒才记录
+                        SpiderDebug.log("缓存域名成功: " + cachedDomain + " 耗时: " + duration + "ms");
+                    }
                     return new Object[]{content, cachedDomain};
                 }
             } catch (Exception e) {
-                // 缓存域名失败，清除缓存
-                SpiderDebug.log("缓存域名失败: " + cachedDomain + " - " + e.getMessage());
+                // 缓存域名失败，清除缓存，尝试备用域名
+                SpiderDebug.log("主域名失败: " + cachedDomain + " - " + e.getMessage());
                 cachedDomain = null;
             }
         }
 
-        // 尝试所有域名（慢速路径）
+        // 第二优先级：智能测试所有域名，选择最快的（仅首次）
+        if (TextUtils.isEmpty(cachedDomain)) {
+            String fastestDomain = testDomainsSpeed();
+            if (!TextUtils.isEmpty(fastestDomain)) {
+                cachedDomain = fastestDomain;
+                SpiderDebug.log("智能选择最快域名: " + fastestDomain);
+
+                // 使用选出的最快域名
+                try {
+                    String url = path.startsWith("http") ? path : fastestDomain + path;
+                    String content = OkHttp.string(url, getHeaders(fastestDomain));
+
+                    if (!TextUtils.isEmpty(content) && content.length() > 200) {
+                        long duration = System.currentTimeMillis() - startTime;
+                        SpiderDebug.log("首次智能选择耗时: " + duration + "ms");
+                        return new Object[]{content, fastestDomain};
+                    }
+                } catch (Exception e) {
+                    SpiderDebug.log("最快域名也失败: " + e.getMessage());
+                }
+            }
+        }
+
+        // 第三优先级：遍历所有域名（兜底方案）
         for (String domain : domains) {
-            // 跳过已尝试的缓存域名
             if (domain.equals(cachedDomain)) continue;
 
             try {
@@ -138,14 +163,11 @@ public class Glod extends Spider {
                 String url = path.startsWith("http") ? path : domain + path;
                 String content = OkHttp.string(url, getHeaders(domain));
 
-                // 检查响应有效性（降低阈值到 200）
                 if (!TextUtils.isEmpty(content) && content.length() > 200) {
-                    // 更新当前域名和缓存
-                    host = domain;
                     cachedDomain = domain;
 
                     long duration = System.currentTimeMillis() - reqStart;
-                    SpiderDebug.log("切换域名成功: " + domain + " 耗时: " + duration + "ms");
+                    SpiderDebug.log("备用域名成功: " + domain + " 耗时: " + duration + "ms");
                     return new Object[]{content, domain};
                 }
             } catch (Exception e) {
@@ -153,8 +175,37 @@ public class Glod extends Spider {
             }
         }
 
-        SpiderDebug.log("所有域名尝试失败");
+        SpiderDebug.log("❌ 所有域名尝试失败");
         return null;
+    }
+
+    /**
+     * 智能测试所有域名的响应速度，返回最快的域名
+     */
+    private String testDomainsSpeed() {
+        String fastestDomain = null;
+        long fastestTime = Long.MAX_VALUE;
+
+        for (String domain : domains) {
+            try {
+                long start = System.currentTimeMillis();
+                String testUrl = domain + "/";
+                String content = OkHttp.string(testUrl, null, getHeaders(domain), 3000);  // params传null，超时3秒
+
+                if (!TextUtils.isEmpty(content) && content.length() > 200) {
+                    long duration = System.currentTimeMillis() - start;
+
+                    if (duration < fastestTime) {
+                        fastestTime = duration;
+                        fastestDomain = domain;
+                    }
+                }
+            } catch (Exception e) {
+                // 测试失败，跳过
+            }
+        }
+
+        return fastestDomain;
     }
 
     /**
@@ -220,7 +271,7 @@ public class Glod extends Spider {
                     if (seen.contains(vid)) continue;
                     seen.add(vid);
 
-                    // 提取图片（增强版：支持背景图、style属性等）
+                    // 提取图片（终极版：正则兜底提取）
                     String pic = "";
                     Elements imgs = item.select("img");
 
@@ -264,8 +315,22 @@ public class Glod extends Spider {
                         }
 
                         pic = fixImg(pic);
-                    } else {
-                        // 没有img标签，尝试从item本身提取背景图
+                    }
+
+                    // 终极兜底：从item HTML中正则提取图片URL（支持CDN域名）
+                    if (TextUtils.isEmpty(pic)) {
+                        String itemHtml = item.html();
+                        Matcher picMatcher = Pattern.compile("https://aka\\.doubaocdn\\.com/s/[A-Za-z0-9]+").matcher(itemHtml);
+                        if (picMatcher.find()) {
+                            pic = picMatcher.group(0);
+                            if (debugCount < 3) {
+                                SpiderDebug.log("  ✅ 终极兜底提取图片: " + pic);
+                            }
+                        }
+                    }
+
+                    // 再兜底：从item本身的style提取背景图
+                    if (TextUtils.isEmpty(pic)) {
                         String style = item.attr("style");
                         if (!TextUtils.isEmpty(style) && style.contains("url")) {
                             Matcher bgMatcher = Pattern.compile("url\\(['\"]?([^'\"\\)]+)['\"]?\\)").matcher(style);
@@ -277,10 +342,10 @@ public class Glod extends Spider {
                                 pic = fixImg(pic);
                             }
                         }
+                    }
 
-                        if (debugCount < 3 && TextUtils.isEmpty(pic)) {
-                            SpiderDebug.log("  ⚠️ 无img标签，item HTML: " + item.html().substring(0, Math.min(150, item.html().length())));
-                        }
+                    if (debugCount < 3 && TextUtils.isEmpty(pic)) {
+                        SpiderDebug.log("  ⚠️ 无img标签，item HTML: " + item.html().substring(0, Math.min(150, item.html().length())));
                     }
 
                     // 提取标题
