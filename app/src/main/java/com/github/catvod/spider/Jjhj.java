@@ -70,19 +70,19 @@ public class Jjhj extends Spider {
 
             List<String> seen = new ArrayList<>();
 
-            // 提取热播影片区域的视频
-            for (Element item : doc.select("div.hl-vod-list li a, div.hl-r-list li a")) {
+            // 提取首页视频列表（使用通用的详情链接选择器）
+            for (Element item : doc.select("a[href*=/view/]")) {
                 String href = item.attr("href");
-                String title = item.attr("title");
+                String title = "";
                 String pic = "";
 
+                // 提取剧名（优先使用title属性，否则使用链接文本）
+                title = item.attr("title");
                 if (TextUtils.isEmpty(title)) {
-                    Element titleElem = item.selectFirst("span, p");
-                    if (titleElem != null) {
-                        title = titleElem.text();
-                    }
+                    title = item.text();
                 }
 
+                // 提取图片（如果存在）
                 Element img = item.selectFirst("img");
                 if (img != null) {
                     pic = img.attr("data-original");
@@ -135,30 +135,21 @@ public class Jjhj extends Spider {
 
             List<String> seen = new ArrayList<>();
 
-            for (Element item : doc.select("div.hl-vod-list li a, div.hl-r-list li a, ul.hl-vod-list li a")) {
+            // 分类页使用简单的列表结构，提取所有详情链接
+            for (Element item : doc.select("a[href*=/view/]")) {
                 String href = item.attr("href");
-                String title = item.attr("title");
-                String pic = "";
+                String title = "";
 
+                // 提取剧名（优先使用title属性，否则使用链接文本）
+                title = item.attr("title");
                 if (TextUtils.isEmpty(title)) {
-                    Element titleElem = item.selectFirst("span, p");
-                    if (titleElem != null) {
-                        title = titleElem.text();
-                    }
-                }
-
-                Element img = item.selectFirst("img");
-                if (img != null) {
-                    pic = img.attr("data-original");
-                    if (TextUtils.isEmpty(pic)) {
-                        pic = img.attr("data-src");
-                    }
-                    if (TextUtils.isEmpty(pic)) {
-                        pic = img.attr("src");
-                    }
+                    title = item.text();
                 }
 
                 if (TextUtils.isEmpty(href) || TextUtils.isEmpty(title)) continue;
+
+                // 过滤掉非详情页链接
+                if (!href.contains("/view/")) continue;
 
                 String vid = href;
                 if (href.contains("/view/")) {
@@ -174,7 +165,8 @@ public class Jjhj extends Spider {
                 if (seen.contains(vid)) continue;
                 seen.add(vid);
 
-                pic = fixUrl(pic);
+                // 分类页通常没有图片，使用空字符串
+                String pic = "";
 
                 list.add(new Vod(vid, title, pic));
             }
@@ -314,18 +306,19 @@ public class Jjhj extends Spider {
 
             List<String> seen = new ArrayList<>();
 
-            for (Element item : doc.select("div.hl-vod-list li a, div.search-list li a, ul li a[href*=/view/]")) {
+            // 搜索结果页使用通用的详情链接选择器
+            for (Element item : doc.select("a[href*=/view/]")) {
                 String href = item.attr("href");
-                String title = item.attr("title");
+                String title = "";
                 String pic = "";
 
+                // 提取剧名（优先使用title属性，否则使用链接文本）
+                title = item.attr("title");
                 if (TextUtils.isEmpty(title)) {
-                    Element titleElem = item.selectFirst("span, p");
-                    if (titleElem != null) {
-                        title = titleElem.text();
-                    }
+                    title = item.text();
                 }
 
+                // 提取图片（如果存在）
                 Element img = item.selectFirst("img");
                 if (img != null) {
                     pic = img.attr("data-original");
