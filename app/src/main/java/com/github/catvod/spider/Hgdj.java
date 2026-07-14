@@ -40,7 +40,7 @@ public class Hgdj extends Spider {
     }};
 
     @Override
-    public void init(Context context, String extend) {
+    public void init(Context context, String extend) throws Exception {
         super.init(context);
 
         if (!TextUtils.isEmpty(extend)) {
