@@ -121,7 +121,6 @@ public class Hgdj extends Spider {
                 }
 
                 if (!TextUtils.isEmpty(name) && !TextUtils.isEmpty(videoId)) {
-                    // 热播榜无图片，留空
                     list.add(new Vod(vid, name, "", remark));
                 }
             }
@@ -147,36 +146,18 @@ public class Hgdj extends Spider {
                     name = link.text().trim();
                 }
 
-                // 提取图片（修正：使用outerHtml()提取完整的HTML，然后解析）
-                String linkHtml = link.outerHtml();
-                // 使用正则从HTML中提取图片URL
-                if (linkHtml.contains("img") && linkHtml.contains("src=")) {
-                    // 提取src属性的值
-                    int srcIdx = linkHtml.indexOf("src=\"");
-                    if (srcIdx > 0) {
-                        int start = srcIdx + 5;
-                        int end = linkHtml.indexOf("\"", start);
-                        if (end > start) {
-                            pic = linkHtml.substring(start, end);
-                        }
+                // 提取图片（优先懒加载属性）
+                Element img = link.selectFirst("img");
+                if (img != null) {
+                    pic = img.attr("data-original");
+                    if (TextUtils.isEmpty(pic)) {
+                        pic = img.attr("data-src");
                     }
-                }
-
-                // 如果没有找到图片，尝试从链接内部查找img标签
-                if (TextUtils.isEmpty(pic)) {
-                    Element img = link.selectFirst("img");
-                    if (img != null) {
+                    if (TextUtils.isEmpty(pic)) {
                         pic = img.attr("src");
-                        if (TextUtils.isEmpty(pic)) {
-                            pic = img.attr("data-original");
-                        }
-                        if (TextUtils.isEmpty(pic)) {
-                            pic = img.attr("data-src");
-                        }
                     }
+                    pic = fixUrl(pic);
                 }
-
-                pic = fixUrl(pic);
 
                 // 提取备注
                 String linkText = link.text().trim();
@@ -207,25 +188,35 @@ public class Hgdj extends Spider {
         int limit = 40;
 
         try {
-            // 构建分类URL
+            // 构建分类URL（修正：分类ID直接拼接，没有分隔符）
+            // 格式：/kpshow/dBBBB{频道ID}-----------/
             StringBuilder urlBuilder = new StringBuilder();
             urlBuilder.append(siteUrl).append("/kpshow/dBBBB");
+
+            // 频道筛选（直接拼接，无分隔符）
             if (!TextUtils.isEmpty(tid)) {
                 urlBuilder.append(tid);
             }
+
+            // 排序（从extend参数获取，默认为最新）
             String sort = extend != null ? extend.get("sort") : null;
             if (!TextUtils.isEmpty(sort)) {
                 urlBuilder.append("--").append(sort);
             }
+
             urlBuilder.append("---------");
+
+            // 页码（第1页不需要页码，第2页及以后需要页码）
             if (page > 1) {
                 urlBuilder.append(page);
             }
+
             urlBuilder.append("/");
 
             String url = urlBuilder.toString();
             Document doc = Jsoup.parse(OkHttp.string(url, headers));
 
+            // 解析视频列表（修正：处理两种不同的链接格式）
             List<String> seen = new ArrayList<>();
 
             for (Element link : doc.select("a[href*=/kpd/]")) {
@@ -233,6 +224,8 @@ public class Hgdj extends Spider {
                 if (TextUtils.isEmpty(vid) || !vid.contains("/kpd/")) continue;
 
                 String videoId = vid.replace("/kpd/", "").replace("/", "");
+
+                // 去重
                 if (seen.contains(videoId)) continue;
                 seen.add(videoId);
 
@@ -240,12 +233,14 @@ public class Hgdj extends Spider {
                 String pic = "";
                 String remark = "";
 
-                // 提取标题
+                // 提取标题（从链接文本或title属性）
                 name = link.attr("title");
                 if (TextUtils.isEmpty(name)) {
                     name = link.text().trim();
+                    // 如果文本包含评分和状态，提取备注
                     if (name.matches(".*\\d+\\.\\d+.*")) {
                         remark = name;
+                        // 尝试从父元素提取标题
                         Element parent = link.parent();
                         if (parent != null) {
                             Element titleLink = parent.selectFirst("a[title]");
@@ -256,34 +251,29 @@ public class Hgdj extends Spider {
                     }
                 }
 
-                // 提取图片（修正：使用outerHtml()提取HTML，然后解析src属性）
-                String linkHtml = link.outerHtml();
-                if (linkHtml.contains("img") && linkHtml.contains("src=")) {
-                    int srcIdx = linkHtml.indexOf("src=\"");
-                    if (srcIdx > 0) {
-                        int start = srcIdx + 5;
-                        int end = linkHtml.indexOf("\"", start);
-                        if (end > start) {
-                            pic = linkHtml.substring(start, end);
-                        }
+                // 提取图片（优先懒加载属性）
+                Element img = link.selectFirst("img");
+                if (img != null) {
+                    pic = img.attr("data-original");
+                    if (TextUtils.isEmpty(pic)) {
+                        pic = img.attr("data-src");
                     }
-                }
-
-                // 如果没有找到，尝试从img标签提取
-                if (TextUtils.isEmpty(pic)) {
-                    Element img = link.selectFirst("img");
-                    if (img != null) {
+                    if (TextUtils.isEmpty(pic)) {
                         pic = img.attr("src");
-                        if (TextUtils.isEmpty(pic)) {
-                            pic = img.attr("data-original");
-                        }
-                        if (TextUtils.isEmpty(pic)) {
-                            pic = img.attr("data-src");
+                    }
+                    pic = fixUrl(pic);
+                } else {
+                    // 如果没有img标签，尝试从链接文本提取图片URL（Markdown格式）
+                    String linkText = link.text();
+                    if (linkText.contains("http") && linkText.contains(".jpg")) {
+                        // 提取URL（格式：图片描述(图片URL)）
+                        int start = linkText.indexOf("http");
+                        int end = linkText.indexOf(".jpg") + 4;
+                        if (end > start) {
+                            pic = linkText.substring(start, end);
                         }
                     }
                 }
-
-                pic = fixUrl(pic);
 
                 if (!TextUtils.isEmpty(name) && !TextUtils.isEmpty(videoId)) {
                     list.add(new Vod(vid, name, pic, remark));
@@ -294,6 +284,7 @@ public class Hgdj extends Spider {
             String pageText = doc.text();
             if (pageText.contains("/") && pageText.contains("页")) {
                 try {
+                    // 提取总页数
                     int pageIdx = pageText.indexOf("/");
                     if (pageIdx > 0) {
                         String afterSlash = pageText.substring(pageIdx + 1);
@@ -345,16 +336,15 @@ public class Hgdj extends Spider {
                 }
             }
 
-            // 图片（修正：从页面中提取第一张图片）
-            Elements allImgs = doc.select("img[src*='upload'], img[src*='img'], img[data-original], img[data-src]");
-            if (allImgs.size() > 0) {
-                Element imgElem = allImgs.first();
-                pic = imgElem.attr("src");
-                if (TextUtils.isEmpty(pic) || pic.contains("loading")) {
-                    pic = imgElem.attr("data-original");
-                }
+            // 图片（优先懒加载属性）
+            Element imgElem = doc.selectFirst("img[data-original], img[data-src], img[src]");
+            if (imgElem != null) {
+                pic = imgElem.attr("data-original");
                 if (TextUtils.isEmpty(pic)) {
                     pic = imgElem.attr("data-src");
+                }
+                if (TextUtils.isEmpty(pic)) {
+                    pic = imgElem.attr("src");
                 }
                 pic = fixUrl(pic);
             }
@@ -427,7 +417,7 @@ public class Hgdj extends Spider {
                 }
             }
 
-            // 提取播放线路和剧集（修正：处理多线路）
+            // 提取播放线路和剧集（重写：简化逻辑）
             StringBuilder vodPlayFrom = new StringBuilder();
             StringBuilder vodPlayUrl = new StringBuilder();
 
@@ -435,53 +425,23 @@ public class Hgdj extends Spider {
             Elements playLinks = doc.select("a[href*=/kpplay/]");
 
             if (playLinks.size() > 0) {
-                // 分析播放URL，提取线路信息
-                // URL格式：/kpplay/{video_id}-{线路序号}-{集数序号}/
-                Map<String, List<String[]>> sourceMap = new HashMap<>();
+                // 简单模式：所有剧集放在一个线路中
+                vodPlayFrom.append("默认$$$");
 
-                for (Element link : playLinks) {
+                for (int i = 0; i < playLinks.size(); i++) {
+                    Element link = playLinks.get(i);
                     String playUrl = link.attr("href");
                     String epName = link.text().trim();
 
-                    // 从URL中提取线路序号
-                    String[] parts = playUrl.split("/");
-                    if (parts.length >= 4) {
-                        String lastPart = parts[parts.length - 1]; // dBByD4-2-1
-                        String[] ids_parts = lastPart.split("-");
-                        if (ids_parts.length >= 3) {
-                            String sourceId = ids_parts[1]; // 线路序号
-
-                            // 如果剧集名称为空或为"全集"，使用线路名称
-                            if (TextUtils.isEmpty(epName) || epName.equals("全集")) {
-                                epName = "线路" + sourceId;
-                            }
-
-                            if (!sourceMap.containsKey(sourceId)) {
-                                sourceMap.put(sourceId, new ArrayList<>());
-                            }
-
-                            sourceMap.get(sourceId).add(new String[]{epName, playUrl});
-                        }
+                    if (TextUtils.isEmpty(epName)) {
+                        epName = "全集";
                     }
-                }
 
-                // 构建vod_play_from和vod_play_url
-                int sourceIndex = 1;
-                for (Map.Entry<String, List<String[]>> entry : sourceMap.entrySet()) {
-                    String sourceName = "线路" + sourceIndex;
-                    vodPlayFrom.append(sourceName).append("$$$");
+                    vodPlayUrl.append(epName).append("$").append(playUrl);
 
-                    List<String[]> episodes = entry.getValue();
-                    for (int i = 0; i < episodes.size(); i++) {
-                        String[] ep = episodes.get(i);
-                        vodPlayUrl.append(ep[0]).append("$").append(ep[1]);
-                        if (i < episodes.size() - 1) {
-                            vodPlayUrl.append("#");
-                        }
+                    if (i < playLinks.size() - 1) {
+                        vodPlayUrl.append("#");
                     }
-                    vodPlayUrl.append("$$$");
-
-                    sourceIndex++;
                 }
             }
 
