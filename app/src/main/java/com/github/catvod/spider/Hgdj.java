@@ -146,16 +146,19 @@ public class Hgdj extends Spider {
                     name = link.text().trim();
                 }
 
-                // 提取图片（多种方式）
-                // 方式1：从img标签提取（优先懒加载属性）
+                // 提取图片（优先懒加载属性，精确选择器）
                 Element img = link.selectFirst("img");
                 if (img != null) {
-                    pic = img.attr("data-original");
+                    pic = img.attr("data-src");
                     if (TextUtils.isEmpty(pic)) {
-                        pic = img.attr("data-src");
+                        pic = img.attr("data-original");
                     }
                     if (TextUtils.isEmpty(pic)) {
                         pic = img.attr("src");
+                    }
+                    // 过滤base64占位符
+                    if (!TextUtils.isEmpty(pic) && pic.startsWith("data:image")) {
+                        pic = "";
                     }
                     pic = fixUrl(pic);
                 }
@@ -273,16 +276,19 @@ public class Hgdj extends Spider {
                     }
                 }
 
-                // 提取图片（多种方式）
-                // 方式1：从img标签提取（优先懒加载属性）
+                // 提取图片（优先懒加载属性，精确选择器）
                 Element img = link.selectFirst("img");
                 if (img != null) {
-                    pic = img.attr("data-original");
+                    pic = img.attr("data-src");
                     if (TextUtils.isEmpty(pic)) {
-                        pic = img.attr("data-src");
+                        pic = img.attr("data-original");
                     }
                     if (TextUtils.isEmpty(pic)) {
                         pic = img.attr("src");
+                    }
+                    // 过滤base64占位符
+                    if (!TextUtils.isEmpty(pic) && pic.startsWith("data:image")) {
+                        pic = "";
                     }
                     pic = fixUrl(pic);
                 }
@@ -369,15 +375,19 @@ public class Hgdj extends Spider {
                 }
             }
 
-            // 图片（优先懒加载属性）
-            Element imgElem = doc.selectFirst("img[data-original], img[data-src], img[src]");
+            // 图片（优先懒加载属性，精确选择器）
+            Element imgElem = doc.selectFirst("img.lazy, img.YGTbgHA, img[data-original], img[data-src], img[src]");
             if (imgElem != null) {
-                pic = imgElem.attr("data-original");
+                pic = imgElem.attr("data-src");
                 if (TextUtils.isEmpty(pic)) {
-                    pic = imgElem.attr("data-src");
+                    pic = imgElem.attr("data-original");
                 }
                 if (TextUtils.isEmpty(pic)) {
                     pic = imgElem.attr("src");
+                }
+                // 过滤base64占位符
+                if (!TextUtils.isEmpty(pic) && pic.startsWith("data:image")) {
+                    pic = "";
                 }
                 pic = fixUrl(pic);
             }
@@ -450,29 +460,17 @@ public class Hgdj extends Spider {
                 }
             }
 
-            // 提取播放线路和剧集（修正：识别多线路）
+            // 提取播放线路和剧集（修正：从HTML标签识别线路名称）
             StringBuilder vodPlayFrom = new StringBuilder();
             StringBuilder vodPlayUrl = new StringBuilder();
 
-            // 从页面文本识别线路名称（格式：短剧资源\n\n 河马剧场 顶好剧场）
+            // 从HTML标签识别线路名称（<a class="hbWLSR swiper-slide">线路名</a>）
             List<String> sourceNames = new ArrayList<>();
-            if (pageText.contains("短剧资源")) {
-                int idx = pageText.indexOf("短剧资源");
-                String after = pageText.substring(idx + "短剧资源".length());
-                // 查找线路名称区域（在"短剧资源"和第一个播放链接之间）
-                if (after.contains("全集")) {
-                    String section = after.split("全集")[0];
-                    // 提取线路名称（按空格分割，过滤空字符串）
-                    String[] parts = section.split("\\s+");
-                    for (String part : parts) {
-                        String routeName = part.trim();
-                        // 排除空字符串、纯数字、特殊字符
-                        if (!TextUtils.isEmpty(routeName) &&
-                            !routeName.matches("\\d+\\.?\\d*") &&  // 排除纯数字
-                            !routeName.matches("[\\s\\-]+")) {      // 排除特殊字符
-                            sourceNames.add(routeName);
-                        }
-                    }
+            Elements routeElements = doc.select("a.hbWLSR.swiper-slide");
+            for (Element routeElem : routeElements) {
+                String routeName = routeElem.text().trim();
+                if (!TextUtils.isEmpty(routeName)) {
+                    sourceNames.add(routeName);
                 }
             }
 
@@ -589,16 +587,19 @@ public class Hgdj extends Spider {
                 // 提取标题
                 name = item.text().trim();
 
-                // 提取图片（多种方式）
-                // 方式1：从img标签提取（优先懒加载属性）
+                // 提取图片（优先懒加载属性，精确选择器）
                 Element img = item.selectFirst("img");
                 if (img != null) {
-                    pic = img.attr("data-original");
+                    pic = img.attr("data-src");
                     if (TextUtils.isEmpty(pic)) {
-                        pic = img.attr("data-src");
+                        pic = img.attr("data-original");
                     }
                     if (TextUtils.isEmpty(pic)) {
                         pic = img.attr("src");
+                    }
+                    // 过滤base64占位符
+                    if (!TextUtils.isEmpty(pic) && pic.startsWith("data:image")) {
+                        pic = "";
                     }
                     pic = fixUrl(pic);
                 }
