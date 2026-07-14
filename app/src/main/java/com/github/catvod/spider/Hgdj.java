@@ -592,8 +592,8 @@ public class Hgdj extends Spider {
         List<Vod> list = new ArrayList<>();
 
         try {
-            // 搜索URL格式：/kpsearch/-------------关键词-/（13个短横线）
-            String searchUrl = siteUrl + "/kpsearch/-------------" + Uri.encode(key) + "-/";
+            // 搜索URL格式（从HTML源码提取）：/kpsearch/-------------/?wd=关键词
+            String searchUrl = siteUrl + "/kpsearch/-------------/?wd=" + Uri.encode(key);
             Document doc = Jsoup.parse(OkHttp.string(searchUrl, headers));
 
             // 解析搜索结果
@@ -608,7 +608,7 @@ public class Hgdj extends Spider {
                 // 提取标题
                 name = cleanName(item.text().trim());
 
-                // 提取图片（优先懒加载属性，精确选择器）
+                // 提取图片（搜索页图片在img标签的data-src属性）
                 Element img = item.selectFirst("img");
                 if (img != null) {
                     pic = img.attr("data-src");
