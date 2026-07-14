@@ -1,359 +1,373 @@
 package com.github.catvod.spider;
 
 import android.content.Context;
+import android.text.TextUtils;
 
 import com.github.catvod.bean.Class;
 import com.github.catvod.bean.Result;
 import com.github.catvod.bean.Vod;
 import com.github.catvod.crawler.Spider;
+import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.net.OkHttp;
+import com.github.catvod.utils.Util;
 
-import org.json.JSONArray;
-import org.json.JSONObject;
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
+import org.jsoup.select.Elements;
 
-import java.math.BigInteger;
 import java.net.URLEncoder;
-import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
- * Glod 视频源爬虫。
- * 基于 m.sdzhgt.com API，提供搜索、分类列表、详情页解析、播放源获取及弹幕支持。
+ * 金牌影视爬虫（Glod）
+ * 基于 HTML 解析 + 多域名自动切换
+ * 支持自定义 ext 域名列表（逗号分隔）
  */
 public class Glod extends Spider {
 
-    private static final String TOKEN = "cb808529bae6b6be45ecfab29a4889bc";
+    /** 默认域名列表 */
+    private static final List<String> DEFAULT_DOMAINS = Arrays.asList(
+        "https://y2s52n7.com",
+        "https://www.sdzhgt.com",
+        "https://m.hkybqufgh.com",
+        "https://m.sizhengxt.com",
+        "https://m.9zhoukj.com",
+        "https://m.jiabaide.cn"
+    );
 
-    /** 弹幕缓存，key=缓存键（vodId/nid），value=[danmuUrl, nid] */
-    private static final Map<String, String[]> danmuCache = new ConcurrentHashMap<>();
+    /** 图片 CDN */
+    private static final String IMG_CDN = "https://aka.doubaocdn.com";
 
-    /** User-Agent 请求头值 */
-    private String userAgent;
-    /** 签名令牌 */
-    private String token;
-    /** 备用视频 URL */
-    private String fallbackUrl;
-    /** 站点根 URL */
-    private String hostUrl;
-
-    public Glod() {
-        this.token = TOKEN;
-    }
-
-    /** 构建基础请求头（User-Agent + referer） */
-    private Map<String, String> buildBaseHeaders() {
-        Map<String, String> headers = new HashMap<>();
-        headers.put("User-Agent", this.userAgent);
-        headers.put("referer", this.hostUrl);
-        return headers;
-    }
-
-    /** 构建签名请求头，包含 User-Agent、referer、t（时间戳）、sign（签名） */
-    private Map<String, String> buildHeaders(String p1) {
-        String timestamp = String.valueOf(System.currentTimeMillis() / 1000);
-        String tParam = "&t=";
-
-        String signStr;
-        if (p1 == null || p1.isEmpty()) {
-            signStr = "key=" + this.token + tParam + timestamp;
-        } else {
-            signStr = p1 + "&key=" + this.token + tParam + timestamp;
-        }
-        String sign = sha1(signStr);
-
-        Map<String, String> headers = new HashMap<>();
-        headers.put("User-Agent", this.userAgent);
-        headers.put("referer", this.hostUrl);
-        headers.put("t", timestamp);
-        headers.put("sign", sign);
-        return headers;
-    }
-
-    /** SHA-1 哈希，返回 40 字符十六进制字符串 */
-    private static String sha1(String input) {
-        try {
-            MessageDigest md = MessageDigest.getInstance("SHA-1");
-            byte[] digest = md.digest(input.getBytes("UTF-8"));
-            String hex = new BigInteger(1, digest).toString(16);
-            while (hex.length() < 40) hex = "0" + hex;
-            return hex;
-        } catch (Exception e) {
-            return "";
-        }
-    }
-
-    /** MD5 哈希，返回 32 字符十六进制字符串 */
-    private static String md5(String input) {
-        try {
-            MessageDigest md = MessageDigest.getInstance("MD5");
-            byte[] digest = md.digest(input.getBytes("UTF-8"));
-            String hex = new BigInteger(1, digest).toString(16);
-            while (hex.length() < 32) hex = "0" + hex;
-            return hex;
-        } catch (Exception e) {
-            return "";
-        }
-    }
+    /** 当前站点 URL */
+    private String host;
+    /** 域名列表 */
+    private List<String> domains;
 
     @Override
     public void init(Context context, String extend) throws Exception {
-        this.hostUrl = "https://m.sdzhgt.com/";
-        this.userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
-        this.fallbackUrl = "https://sf1-cdn-tos.huoshanstatic.com/obj/media-fe/xgplayer_doc_video/mp4/xgplayer-demo-720p.mp4";
+        super.init(context);
+
+        // 初始化域名列表
+        domains = new ArrayList<>(DEFAULT_DOMAINS);
+
+        // 处理 ext 配置（支持自定义域名）
+        if (!TextUtils.isEmpty(extend)) {
+            extend = extend.trim();
+            // 如果 ext 是域名列表（逗号分隔）
+            if (!extend.startsWith("{") && extend.contains(",")) {
+                String[] customDomains = extend.split(",");
+                domains.clear();  // 清空默认域名
+                for (String domain : customDomains) {
+                    domain = domain.trim();
+                    if (!TextUtils.isEmpty(domain)) {
+                        // 确保域名以 https:// 开头
+                        if (!domain.startsWith("http")) {
+                            domain = "https://" + domain;
+                        }
+                        domains.add(domain);
+                    }
+                }
+            } else if (extend.startsWith("http")) {
+                // 单个域名
+                domains.clear();
+                domains.add(extend);
+            }
+        }
+
+        // 设置第一个域名为默认
+        host = domains.get(0);
+    }
+
+    /**
+     * 构建请求头
+     * @param domain 域名（用于 Referer）
+     * @return 请求头 Map
+     */
+    private Map<String, String> getHeaders(String domain) {
+        Map<String, String> headers = new HashMap<>();
+        headers.put("User-Agent", Util.CHROME);
+        headers.put("Referer", domain + "/");
+        return headers;
+    }
+
+    /**
+     * 多域名自动切换请求
+     * @param path 相对路径（如 "/"、"/vod/show/id/1"）
+     * @return [响应内容, 成功的域名]，失败返回 null
+     */
+    private Object[] get(String path) {
+        // 尝试每个域名
+        for (String domain : domains) {
+            try {
+                String url = path.startsWith("http") ? path : domain + path;
+                String content = OkHttp.string(url, getHeaders(domain));
+
+                // 检查响应有效性（长度 > 1000）
+                if (!TextUtils.isEmpty(content) && content.length() > 1000) {
+                    // 更新当前域名
+                    host = domain;
+                    return new Object[]{content, domain};
+                }
+            } catch (Exception e) {
+                SpiderDebug.log("域名访问失败: " + domain + " - " + e.getMessage());
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 修复图片 URL
+     */
+    private String fixImg(String url) {
+        if (TextUtils.isEmpty(url)) return "";
+        if (url.startsWith("//")) return "https:" + url;
+        if (url.startsWith("/")) return IMG_CDN + url;
+        return url;
+    }
+
+    /**
+     * 清理标题（去除质量标签、评分、集数等）
+     */
+    private String cleanTitle(String title) {
+        if (TextUtils.isEmpty(title)) return "";
+        // 去除开头的质量标签
+        title = title.replaceAll("^(蓝光|高清|超清|正片|预告)\\s*", "");
+        // 去除评分
+        title = title.replaceAll("\\s*\\d+\\.\\d+.*$", "");
+        // 去除括号内容
+        title = title.replaceAll("\\s*\\(.*?\\)\\s*$", "");
+        return title.trim();
+    }
+
+    /**
+     * 解析视频列表（从 HTML 中提取）
+     */
+    private List<Vod> parseList(String html) {
+        List<Vod> list = new ArrayList<>();
+        if (TextUtils.isEmpty(html)) return list;
+
+        try {
+            Document doc = Jsoup.parse(html);
+            // 提取视频列表项（包含 /detail/ 的链接）
+            Elements items = doc.select("a[href*=/detail/]");
+
+            Set<String> seen = new HashSet<>();
+            for (Element item : items) {
+                try {
+                    String href = item.attr("href");
+
+                    // 提取视频 ID
+                    Matcher m = Pattern.compile("/detail/(\\d+)").matcher(href);
+                    if (!m.find()) continue;
+                    String vid = m.group(1);
+
+                    // 去重
+                    if (seen.contains(vid)) continue;
+                    seen.add(vid);
+
+                    // 提取图片
+                    String pic = "";
+                    Elements imgs = item.select("img");
+                    if (!imgs.isEmpty()) {
+                        Element img = imgs.first();
+                        pic = img.attr("data-original");
+                        if (TextUtils.isEmpty(pic)) {
+                            pic = img.attr("data-src");
+                        }
+                        if (TextUtils.isEmpty(pic)) {
+                            pic = img.attr("src");
+                        }
+                        pic = fixImg(pic);
+                    }
+
+                    // 提取标题
+                    String title = item.attr("title");
+                    if (TextUtils.isEmpty(title)) {
+                        title = item.text().trim();
+                    }
+                    title = cleanTitle(title);
+
+                    if (!TextUtils.isEmpty(title) && !TextUtils.isEmpty(vid)) {
+                        list.add(new Vod(vid, title, pic));
+                    }
+                } catch (Exception e) {
+                    SpiderDebug.log(e);
+                }
+            }
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+        }
+
+        return list;
     }
 
     @Override
     public String homeContent(boolean filter) throws Exception {
-        ArrayList<Class> classes = new ArrayList<>();
-        classes.add(new Class("1", "电影"));
+        List<Class> classes = new ArrayList<>();
+        classes.add(new Class("1", "最新电影"));
         classes.add(new Class("2", "电视剧"));
         classes.add(new Class("3", "综艺"));
         classes.add(new Class("4", "动漫"));
 
-        ArrayList<Vod> vodList = new ArrayList<>();
-        JSONObject extObj = new JSONObject();
-        try {
-            String url = this.hostUrl + "/api/mw-movie/anonymous/home/hotSearch";
-            String json = OkHttp.string(url, buildBaseHeaders());
-            JSONObject response = new JSONObject(json);
-            JSONObject data = response.optJSONObject("data");
-            if (data != null) {
-                JSONArray hotList = data.optJSONArray("typeId1");
-                if (hotList == null) hotList = data.optJSONArray("hotSearch");
-                if (hotList != null) {
-                    for (int i = 0; i < hotList.length(); i++) {
-                        JSONObject item = hotList.optJSONObject(i);
-                        if (item == null) continue;
-                        int typeId = item.optInt("typeId1", 0);
-                        String vodNameKey = (typeId == 1) ? "vodName" : "vodVersion";
-                        String vodPicKey = (typeId == 1) ? "vodPic" : "vodRemarks";
-                        String name = item.optString("vodName");
-                        String pic = item.optString("vodPic");
-                        String remarks = item.optString("vodRemarks", "");
-                        String vodId = item.optString("vodId", "");
-                        if (name.isEmpty()) name = item.optString("vodVersion", "");
-                        if (pic.isEmpty()) pic = item.optString("vodRemarks", "");
-                        vodList.add(new Vod(vodId, name, pic, remarks));
-                    }
-                }
-            }
-        } catch (Exception e) {
-            // 首页列表获取失败时忽略，仅返回分类
+        List<Vod> videos = new ArrayList<>();
+        Object[] result = get("/");
+        if (result != null) {
+            videos = parseList((String) result[0]);
         }
-        return Result.string(classes, vodList, extObj);
+
+        return Result.string(classes, videos);
     }
 
     @Override
     public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
-        // 提取筛选参数
-        String type = extend != null && extend.containsKey("type") ? extend.get("type") : "";
-        String cls = extend != null && extend.containsKey("class") ? extend.get("class") : "";
-        String area = extend != null && extend.containsKey("area") ? extend.get("area") : "";
-        String year = extend != null && extend.containsKey("year") ? extend.get("year") : "";
-        String lang = extend != null && extend.containsKey("lang") ? extend.get("lang") : "";
-        String by = extend != null && extend.containsKey("by") ? extend.get("by") : "";
-
-        // 构建请求 URL
+        // 构建分类 URL
         StringBuilder urlBuilder = new StringBuilder();
-        urlBuilder.append(this.hostUrl);
-        urlBuilder.append("/vod/show/id/");
-        urlBuilder.append(tid);
-        urlBuilder.append(type);
-        urlBuilder.append(cls);
-        urlBuilder.append(area);
-        urlBuilder.append(year);
-        urlBuilder.append(lang);
-        urlBuilder.append(by);
-        urlBuilder.append("/page/");
-        urlBuilder.append(pg);
+        urlBuilder.append("/vod/show/id/").append(tid);
 
-        ArrayList<Vod> vodList = new ArrayList<>();
-        try {
-            String url = urlBuilder.toString();
-            String json = OkHttp.string(url, buildBaseHeaders());
-
-            // 处理 JSON 响应：替换 \" 为 " 并解析
-            String cleaned = json.replace("\\\"", "\"").replace("\\\\", "\\");
-            int listStart = cleaned.indexOf("\"list\":[");
-            if (listStart != -1) {
-                // 通过方括号深度追踪提取 list 数组
-                int start = listStart + 8; // skip "list":[
-                int depth = 0;
-                int arrayStart = -1;
-                for (int i = start; i < cleaned.length(); i++) {
-                    char c = cleaned.charAt(i);
-                    if (c == '[') {
-                        if (depth == 0) arrayStart = i;
-                        depth++;
-                    } else if (c == ']') {
-                        depth--;
-                        if (depth == 0) {
-                            String listJson = cleaned.substring(arrayStart, i + 1);
-                            JSONArray listArray = new JSONArray(listJson);
-                            for (int j = 0; j < listArray.length(); j++) {
-                                JSONObject item = listArray.optJSONObject(j);
-                                if (item == null) continue;
-                                int typeId = item.optInt("typeId1", 0);
-                                String nameKey = (typeId == 1) ? "vodName" : "vodVersion";
-                                String picKey = (typeId == 1) ? "vodPic" : "vodRemarks";
-                                String name = item.optString(nameKey);
-                                String pic = item.optString(picKey);
-                                String remarks = item.optString("vodRemarks", "");
-                                String vodId = item.optString("vodId", "");
-                                if (name.isEmpty()) name = item.optString("vodVersion", "");
-                                if (pic.isEmpty()) pic = item.optString("vodRemarks", "");
-                                vodList.add(new Vod(vodId, name, pic, remarks));
-                            }
-                            break;
-                        }
-                    }
+        // 处理筛选参数
+        if (extend != null) {
+            for (Map.Entry<String, String> entry : extend.entrySet()) {
+                String key = entry.getKey();
+                String value = entry.getValue();
+                if (!TextUtils.isEmpty(value)) {
+                    urlBuilder.append("/").append(key).append("/").append(value);
                 }
             }
-        } catch (Exception e) {
-            // 解析异常时返回空列表
         }
-        return Result.string(vodList);
+
+        // 分页
+        if (!TextUtils.isEmpty(pg) && !"1".equals(pg)) {
+            urlBuilder.append("/page/").append(pg);
+        }
+
+        List<Vod> list = new ArrayList<>();
+        Object[] result = get(urlBuilder.toString());
+        if (result != null) {
+            list = parseList((String) result[0]);
+        }
+
+        // 分页信息（简化处理）
+        int page = Util.toInt(pg, 1);
+        int pageCount = 99;
+        int limit = 24;
+        int total = 999;
+
+        return Result.get().page(page, pageCount, limit, total).vod(list).string();
     }
 
     @Override
     public String detailContent(List<String> ids) throws Exception {
-        danmuCache.clear();
-        String vodId = ids.get(0);
+        List<Vod> list = new ArrayList<>();
 
-        try {
-            // 请求详情 API
-            String url = this.hostUrl + "/api/mw-movie/anonymous/video/detail?id=" + vodId;
-            String signParams = "id=" + vodId;
-            String json = OkHttp.string(url, buildHeaders(signParams));
+        for (String vid : ids) {
+            try {
+                Object[] result = get("/detail/" + vid);
+                if (result == null) continue;
 
-            JSONObject response = new JSONObject(json);
-            JSONObject data = response.optJSONObject("data");
+                String html = (String) result[0];
+                Document doc = Jsoup.parse(html);
 
-            Vod vod = new Vod();
-            vod.setTypeName(data != null ? data.optString("typeName", "") : "");
-            vod.setVodId(vodId);
-            vod.setVodName(data != null ? data.optString("vodName", "") : "");
-            vod.setVodRemarks(data != null ? data.optString("vodRemarks", "") : "");
-            vod.setVodYear(data != null ? data.optString("vodYear", "") : "");
-            vod.setVodArea(data != null ? data.optString("vodArea", "") : "");
-            vod.setVodActor(data != null ? data.optString("vodActor", "") : "");
-            vod.setVodDirector(data != null ? data.optString("vodDirector", "") : "");
-            vod.setVodContent(data != null ? data.optString("vodContent", "") : "");
-
-            // 处理剧集列表和弹幕缓存
-            if (data != null) {
-                JSONArray episodeList = data.optJSONArray("episodeList");
-                if (episodeList != null && episodeList.length() > 0) {
-                    StringBuilder playUrl = new StringBuilder();
-                    StringBuilder danmuStr = new StringBuilder();
-                    for (int i = 0; i < episodeList.length(); i++) {
-                        JSONObject ep = episodeList.optJSONObject(i);
-                        if (ep == null) continue;
-                        String epName = ep.optString("name", "");
-                        String nid = ep.optString("nid", "");
-                        String cacheKey = vodId + "/" + nid;
-                        String danmuUrl = epName;
-                        // 拼接剧集：epName$nid#epName$nid#...
-                        if (playUrl.length() > 0) {
-                            playUrl.append("#");
-                            danmuStr.append("#");
-                        }
-                        playUrl.append(epName).append("$").append(nid);
-                        danmuStr.append(epName).append("$").append(nid);
-                        danmuCache.put(cacheKey, new String[]{danmuUrl, nid});
+                // 提取标题
+                String name = "";
+                Elements h1s = doc.select("h1");
+                if (!h1s.isEmpty()) {
+                    name = h1s.first().text().trim();
+                }
+                if (TextUtils.isEmpty(name)) {
+                    Elements h2s = doc.select("h2");
+                    if (!h2s.isEmpty()) {
+                        name = h2s.first().text().trim();
                     }
-                    vod.setVodPlayFrom("默认");
-                    vod.setVodPlayUrl(playUrl.toString());
                 }
-            }
-            return Result.string(vod);
-        } catch (Exception e) {
-            return Result.string(new Vod());
-        }
-    }
-
-    @Override
-    public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
-        try {
-            // 从弹幕缓存获取数据
-            String[] danmuData = danmuCache.get(id);
-            String danmuUrl = "";
-            String nid = "";
-
-            if (danmuData != null && danmuData.length == 2) {
-                danmuUrl = danmuData[0];
-                nid = danmuData[1];
-            }
-
-            // 按 "/" 分隔 id，提取 vodId 和 epId
-            String[] parts = id.split("/");
-            if (parts.length < 2) {
-                return Result.get().url(this.fallbackUrl).string();
-            }
-            String vodId = parts[0];
-            String epId = parts[1];
-
-            // 构建播放 URL
-            String playUrl = "id=" + vodId + "&nid=" + epId;
-            String fullUrl = this.hostUrl + "/api/mw-movie/anonymous/v2/video/episode/url?" + playUrl;
-            String json = OkHttp.string(fullUrl, buildHeaders(playUrl));
-
-            JSONObject response = new JSONObject(json);
-            JSONObject dataObj = response.optJSONObject("data");
-            JSONArray listArray = null;
-            String videoUrl = "";
-            if (dataObj != null) {
-                listArray = dataObj.optJSONArray("list");
-                if (listArray != null && listArray.length() > 0) {
-                    JSONObject firstItem = listArray.optJSONObject(0);
-                    videoUrl = firstItem != null ? firstItem.optString("url", "") : "";
+                if (TextUtils.isEmpty(name)) {
+                    Elements titles = doc.select("title");
+                    if (!titles.isEmpty()) {
+                        name = titles.first().text().trim();
+                        // 清理标题（去除站点名称）
+                        name = name.split("-")[0].trim();
+                    }
                 }
-            }
 
-            // 构建返回结果
-            Map<String, String> headers = new HashMap<>();
-            headers.put("User-Agent", this.userAgent);
-
-            String finalUrl;
-            if (videoUrl.isEmpty() && (danmuUrl == null || danmuUrl.isEmpty())) {
-                finalUrl = "";
-            } else {
-                try {
-                    finalUrl = OkHttp.string(videoUrl.isEmpty() ? danmuUrl : videoUrl, headers);
-                } catch (Exception e) {
-                    finalUrl = videoUrl.isEmpty() ? danmuUrl : videoUrl;
+                // 提取图片（多种选择器尝试）
+                String pic = "";
+                String[] imgSelectors = {
+                    "img[class*=poster]",
+                    "img[class*=cover]",
+                    "div[class*=poster] img",
+                    "div[class*=cover] img",
+                    "div[class*=detail] img",
+                    "img"
+                };
+                for (String selector : imgSelectors) {
+                    Elements imgs = doc.select(selector);
+                    if (!imgs.isEmpty()) {
+                        pic = imgs.first().attr("data-original");
+                        if (TextUtils.isEmpty(pic)) {
+                            pic = imgs.first().attr("data-src");
+                        }
+                        if (TextUtils.isEmpty(pic)) {
+                            pic = imgs.first().attr("src");
+                        }
+                        if (!TextUtils.isEmpty(pic)) {
+                            pic = fixImg(pic);
+                            break;
+                        }
+                    }
                 }
-            }
 
-            JSONObject result = new JSONObject();
-            result.put("parse", 0);
-            result.put("header", new JSONObject(headers));
-            result.put("danmaku", danmuUrl);
-            result.put("url", finalUrl);
-            return result.toString();
-        } catch (Exception e) {
-            return Result.get().url(this.fallbackUrl).string();
-        }
-    }
-
-    @Override
-    public Object[] proxy(Map<String, String> params) throws Exception {
-        if (params != null) {
-            String doValue = params.get("do");
-            String danmuValue = params.get("danmu");
-            if (doValue != null && doValue.equals(danmuValue)) {
-                try {
-                    return new Object[]{params};
-                } catch (Exception e) {
-                    // ignored
+                // 提取剧集列表（多种选择器尝试）
+                List<String> episodes = new ArrayList<>();
+                String[] epSelectors = {
+                    "a[href*=/vod/play/]",
+                    "div[class*=playlist] a",
+                    "ul[class*=episode] a"
+                };
+                for (String selector : epSelectors) {
+                    Elements epLinks = doc.select(selector);
+                    if (!epLinks.isEmpty()) {
+                        int i = 1;
+                        for (Element a : epLinks) {
+                            String epName = a.text().trim();
+                            if (TextUtils.isEmpty(epName)) {
+                                epName = "第" + i + "集";
+                            }
+                            String epUrl = a.attr("href");
+                            if (!TextUtils.isEmpty(epUrl) && epUrl.contains("/vod/play/")) {
+                                episodes.add(epName + "$" + epUrl);
+                                i++;
+                            }
+                        }
+                        if (!episodes.isEmpty()) break;
+                    }
                 }
+
+                // 播放线路（只有一个）
+                String playFrom = "爱电影播放器";
+                String playUrl = TextUtils.join("#", episodes);
+
+                Vod vod = new Vod();
+                vod.setVodId(vid);
+                vod.setVodName(name);
+                vod.setVodPic(pic);
+                vod.setVodPlayFrom(playFrom);
+                vod.setVodPlayUrl(playUrl);
+
+                list.add(vod);
+            } catch (Exception e) {
+                SpiderDebug.log(e);
             }
         }
-        return null;
+
+        return Result.string(list);
     }
 
     @Override
@@ -363,46 +377,27 @@ public class Glod extends Spider {
 
     @Override
     public String searchContent(String key, boolean quick, String pg) throws Exception {
-        if (pg == null || pg.isEmpty()) pg = "1";
+        // 构建搜索 URL
+        String searchPath = "/vod/search/" + URLEncoder.encode(key, "UTF-8");
 
-        ArrayList<Vod> vodList = new ArrayList<>();
-        try {
-            // 构建搜索 URL
-            String searchUrl = this.hostUrl + "/api/mw-movie/anonymous/video/searchByWord?"
-                    + "keyword=" + URLEncoder.encode(key, "UTF-8")
-                    + "&pageNum=" + pg
-                    + "&pageSize=12";
-
-            String signUrl = this.hostUrl + "/api/mw-movie/anonymous/video/searchByWord?"
-                    + "keyword=" + key + "&pageNum=" + pg + "&pageSize=12";
-
-            String json = OkHttp.string(searchUrl, buildHeaders(signUrl));
-
-            JSONObject response = new JSONObject(json);
-            JSONObject data = response.optJSONObject("data");
-            if (data != null) {
-                JSONArray list = data.optJSONArray("list");
-                if (list == null) list = data.optJSONArray("result");
-                if (list != null) {
-                    for (int i = 0; i < list.length(); i++) {
-                        JSONObject item = list.optJSONObject(i);
-                        if (item == null) continue;
-                        int typeId = item.optInt("typeId1", 0);
-                        String nameKey = (typeId == 1) ? "vodName" : "vodVersion";
-                        String picKey = (typeId == 1) ? "vodPic" : "vodRemarks";
-                        String name = item.optString(nameKey);
-                        String pic = item.optString(picKey);
-                        String remarks = item.optString("vodRemarks", "");
-                        String vodId = item.optString("vodId", "");
-                        if (name.isEmpty()) name = item.optString("vodVersion", "");
-                        if (pic.isEmpty()) pic = item.optString("vodRemarks", "");
-                        vodList.add(new Vod(vodId, name, pic, remarks));
-                    }
-                }
-            }
-        } catch (Exception e) {
-            // 搜索异常时返回空列表
+        List<Vod> list = new ArrayList<>();
+        Object[] result = get(searchPath);
+        if (result != null) {
+            list = parseList((String) result[0]);
         }
-        return Result.string(vodList);
+
+        return Result.string(list);
+    }
+
+    @Override
+    public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
+        // 播放 URL 是网页路径，使用 parse=1 让客户端解析器处理
+        String url = id.startsWith("http") ? id : host + id;
+
+        return Result.get()
+            .parse(1)
+            .url(url)
+            .header(getHeaders(host))
+            .string();
     }
 }
