@@ -104,7 +104,7 @@ public class Hgdj extends Spider {
                     // 查找标题元素（h1, h2, h3等）
                     Element titleElem = parent.selectFirst("h1, h2, h3, strong, b");
                     if (titleElem != null) {
-                        name = titleElem.text().trim();
+                        name = cleanName(titleElem.text().trim());
                     }
                 }
 
@@ -114,7 +114,7 @@ public class Hgdj extends Spider {
                     for (Element elem : doc.select("h1, h2, h3")) {
                         String text = elem.text();
                         if (!TextUtils.isEmpty(text) && !text.contains("TOP")) {
-                            name = text;
+                            name = cleanName(text);
                             break;
                         }
                     }
@@ -141,9 +141,9 @@ public class Hgdj extends Spider {
                 String remark = "";
 
                 // 提取标题（优先从title属性）
-                name = link.attr("title");
+                name = cleanName(link.attr("title"));
                 if (TextUtils.isEmpty(name)) {
-                    name = link.text().trim();
+                    name = cleanName(link.text().trim());
                 }
 
                 // 提取图片（优先懒加载属性，精确选择器）
@@ -259,9 +259,9 @@ public class Hgdj extends Spider {
                 String remark = "";
 
                 // 提取标题（从链接文本或title属性）
-                name = link.attr("title");
+                name = cleanName(link.attr("title"));
                 if (TextUtils.isEmpty(name)) {
-                    name = link.text().trim();
+                    name = cleanName(link.text().trim());
                     // 如果文本包含评分和状态，提取备注
                     if (name.matches(".*\\d+\\.\\d+.*")) {
                         remark = name;
@@ -270,7 +270,7 @@ public class Hgdj extends Spider {
                         if (parent != null) {
                             Element titleLink = parent.selectFirst("a[title]");
                             if (titleLink != null) {
-                                name = titleLink.attr("title");
+                                name = cleanName(titleLink.attr("title"));
                             }
                         }
                     }
@@ -368,11 +368,7 @@ public class Hgdj extends Spider {
             // 标题（优先从特定class提取，再用正则从title提取）
             Element descTitleElem = doc.selectFirst(".YsTCjmH, [class*='desc-title']");
             if (descTitleElem != null) {
-                name = descTitleElem.text().trim();
-                // 移除书名号
-                if (name.startsWith("《") && name.endsWith("》")) {
-                    name = name.substring(1, name.length() - 1);
-                }
+                name = cleanName(descTitleElem.text().trim());
             } else {
                 // 从title标签提取（用正则提取书名号内的内容）
                 Element titleElem = doc.selectFirst("title");
@@ -624,7 +620,7 @@ public class Hgdj extends Spider {
                 String remark = "";
 
                 // 提取标题
-                name = item.text().trim();
+                name = cleanName(item.text().trim());
 
                 // 提取图片（优先懒加载属性，精确选择器）
                 Element img = item.selectFirst("img");
@@ -732,5 +728,21 @@ public class Hgdj extends Spider {
 
         // 其他情况（相对路径）
         return siteUrl + "/" + url;
+    }
+
+    /**
+     * 清理剧名（移除书名号）
+     */
+    private String cleanName(String name) {
+        if (TextUtils.isEmpty(name)) return "";
+
+        name = name.trim();
+
+        // 移除书名号
+        if (name.startsWith("《") && name.endsWith("》")) {
+            name = name.substring(1, name.length() - 1);
+        }
+
+        return name.trim();
     }
 }
