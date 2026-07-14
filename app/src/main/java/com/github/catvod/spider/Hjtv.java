@@ -449,77 +449,15 @@ public class Hjtv extends Spider {
 
     @Override
     public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
-        try {
-            String playUrl = fixUrl(id);
-            String html = OkHttp.string(playUrl, headers);
+        // ⭐ MacCMS站点黄金法则：直接返回parse=1，让客户端解析器处理
+        // 不需要自己解密encrypt，客户端会自动处理
+        String playUrl = fixUrl(id);
 
-            // 提取player_aaaa变量（根据实际网站调试结果）
-            // 格式：var player_aaaa={"flag":"play","encrypt":1,"url":"..."}
-            Pattern pattern = Pattern.compile("var\\s+player_aaaa\\s*=\\s*(\\{.*?\\});");
-            Matcher matcher = pattern.matcher(html);
-
-            String videoUrl = "";
-            int encrypt = 0;
-
-            if (matcher.find()) {
-                try {
-                    org.json.JSONObject playerJson = new org.json.JSONObject(matcher.group(1));
-                    videoUrl = playerJson.optString("url", "");
-                    encrypt = playerJson.optInt("encrypt", 0);
-                } catch (Exception e) {
-                    SpiderDebug.log(e);
-                }
-            }
-
-            // 如果没有找到player_aaaa，尝试其他播放器变量
-            if (TextUtils.isEmpty(videoUrl)) {
-                String[] patterns = {
-                    "var\\s+url\\s*=\\s*['\"]([^'\"]+)['\"]",
-                    "\"url\"\\s*:\\s*\"([^\"]+)\"",
-                    "url:\\s*['\"]([^'\"]+)['\"]"
-                };
-
-                for (String p : patterns) {
-                    Matcher m = Pattern.compile(p).matcher(html);
-                    if (m.find()) {
-                        videoUrl = m.group(1);
-                        break;
-                    }
-                }
-            }
-
-            if (!TextUtils.isEmpty(videoUrl)) {
-                // 处理转义字符
-                videoUrl = videoUrl.replace("\\/", "/");
-
-                // 判断是否为直链
-                if (videoUrl.contains(".m3u8") || videoUrl.contains(".mp4")) {
-                    // 直链，parse=0
-                    return Result.get()
-                        .url(fixUrl(videoUrl))
-                        .string();
-                } else {
-                    // 非直链，parse=1（让客户端处理）
-                    // MacCMS站点标准做法，让外部解析器处理encrypt加密
-                    return Result.get()
-                        .url(fixUrl(videoUrl))
-                        .parse(1)
-                        .header(headers)
-                        .string();
-                }
-            }
-
-            // 如果无法提取到播放链接，返回原始播放页URL，让客户端处理
-            return Result.get()
-                .url(playUrl)
-                .parse(1)
-                .header(headers)
-                .string();
-
-        } catch (Exception e) {
-            SpiderDebug.log(e);
-            return Result.error(e.getMessage());
-        }
+        return Result.get()
+            .url(playUrl)
+            .parse(1)
+            .header(headers)
+            .string();
     }
 
     /**
