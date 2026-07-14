@@ -365,13 +365,33 @@ public class Hgdj extends Spider {
             String remarks = "";
             String brief = "";
 
-            // 标题（提取书名号内的内容）
-            Element titleElem = doc.selectFirst("h1, h2, title");
-            if (titleElem != null) {
-                name = titleElem.text().trim();
+            // 标题（优先从特定class提取，再用正则从title提取）
+            Element descTitleElem = doc.selectFirst(".YsTCjmH, [class*='desc-title']");
+            if (descTitleElem != null) {
+                name = descTitleElem.text().trim();
                 // 移除书名号
                 if (name.startsWith("《") && name.endsWith("》")) {
                     name = name.substring(1, name.length() - 1);
+                }
+            } else {
+                // 从title标签提取（用正则提取书名号内的内容）
+                Element titleElem = doc.selectFirst("title");
+                if (titleElem != null) {
+                    String titleText = titleElem.text().trim();
+                    // 提取书名号内的内容
+                    int start = titleText.indexOf("《");
+                    int end = titleText.indexOf("》");
+                    if (start >= 0 && end > start) {
+                        name = titleText.substring(start + 1, end);
+                    } else {
+                        // 如果没有书名号，取第一个下划线前的内容
+                        int underscoreIdx = titleText.indexOf("_");
+                        if (underscoreIdx > 0) {
+                            name = titleText.substring(0, underscoreIdx).trim();
+                        } else {
+                            name = titleText;
+                        }
+                    }
                 }
             }
 
