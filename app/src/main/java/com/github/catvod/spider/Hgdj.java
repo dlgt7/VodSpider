@@ -395,22 +395,41 @@ public class Hgdj extends Spider {
                 }
             }
 
-            // 图片（优先懒加载属性，精确选择器）
-            Element imgElem = doc.selectFirst("img.lazy, img.YGTbgHA, img[data-original], img[data-src], img[src]");
-            if (imgElem != null) {
-                pic = imgElem.attr("data-src");
-                if (TextUtils.isEmpty(pic)) {
-                    pic = imgElem.attr("data-original");
+            // 图片（优先从背景图片提取，这是详情页图片的真实位置）
+            Element bgDiv = doc.selectFirst("div[class*='this-pic-bj']");
+            if (bgDiv != null) {
+                String style = bgDiv.attr("style");
+                if (!TextUtils.isEmpty(style)) {
+                    // 从style中提取background-image url
+                    int start = style.indexOf("url(");
+                    int end = style.indexOf(")", start);
+                    if (start >= 0 && end > start) {
+                        String urlPart = style.substring(start + 4, end);
+                        // 移除引号
+                        pic = urlPart.replace("'", "").replace("\"", "").trim();
+                    }
                 }
-                if (TextUtils.isEmpty(pic)) {
-                    pic = imgElem.attr("src");
-                }
-                // 过滤base64占位符
-                if (!TextUtils.isEmpty(pic) && pic.startsWith("data:image")) {
-                    pic = "";
-                }
-                pic = fixUrl(pic);
             }
+
+            // 如果背景图片提取失败，再尝试从img标签提取
+            if (TextUtils.isEmpty(pic)) {
+                Element imgElem = doc.selectFirst("img.lazy, img.YGTbgHA, img[data-original], img[data-src], img[src]");
+                if (imgElem != null) {
+                    pic = imgElem.attr("data-src");
+                    if (TextUtils.isEmpty(pic)) {
+                        pic = imgElem.attr("data-original");
+                    }
+                    if (TextUtils.isEmpty(pic)) {
+                        pic = imgElem.attr("src");
+                    }
+                    // 过滤base64占位符
+                    if (!TextUtils.isEmpty(pic) && pic.startsWith("data:image")) {
+                        pic = "";
+                    }
+                }
+            }
+
+            pic = fixUrl(pic);
 
             // 从页面文本中提取参数信息
             String pageText = doc.text();
