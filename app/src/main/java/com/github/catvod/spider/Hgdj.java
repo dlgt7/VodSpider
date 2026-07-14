@@ -594,10 +594,31 @@ public class Hgdj extends Spider {
         try {
             // 搜索URL格式（从HTML源码提取）：/kpsearch/-------------/?wd=关键词
             String searchUrl = siteUrl + "/kpsearch/-------------/?wd=" + Uri.encode(key);
-            Document doc = Jsoup.parse(OkHttp.string(searchUrl, headers));
+            String html = OkHttp.string(searchUrl, headers);
+            Document doc = Jsoup.parse(html);
 
-            // 解析搜索结果
-            for (Element item : doc.select("a[href*=/kpd/]")) {
+            // 检测验证码（关键修复：网站要求验证码时返回提示）
+            if (html.contains("ds-verify") || html.contains("验证码") || html.contains("verify")) {
+                // 检查是否有验证码输入框
+                Element verifyInput = doc.selectFirst("input[name=verify], input.ds-verify, img.ds-verify-img");
+                if (verifyInput != null) {
+                    return Result.get().msg("本站搜索需验证码，JAR 版暂未接入 OCR，请换源或稍后再试").string();
+                }
+            }
+
+            // 解析搜索结果（修复：检查页面是否包含搜索结果）
+            Elements items = doc.select("a[href*=/kpd/]");
+            if (items.isEmpty()) {
+                // 如果没有找到搜索结果，检查是否需要验证码（双重检测）
+                String pageText = doc.text();
+                if (pageText.contains("验证码") || pageText.contains("请输入验证码")) {
+                    return Result.get().msg("本站搜索需验证码，JAR 版暂未接入 OCR，请换源或稍后再试").string();
+                }
+                // 无结果且无验证码，返回空列表
+                return Result.string(list);
+            }
+
+            for (Element item : items) {
                 String vid = item.attr("href");
                 if (TextUtils.isEmpty(vid) || !vid.contains("/kpd/")) continue;
 
@@ -605,15 +626,29 @@ public class Hgdj extends Spider {
                 String pic = "";
                 String remark = "";
 
-                // 提取标题
-                name = cleanName(item.text().trim());
+                // 提取标题（修复：优先从 title 属性提取，避免 Markdown 图片 URL）
+                name = cleanName(item.attr("title"));
+                if (TextUtils.isEmpty(name)) {
+                    // 提取文本内容，并过滤 Markdown 图片语法
+                    String text = item.text().trim();
+                    // 移除 Markdown 图片语法：![alt](url)
+                    text = text.replaceAll("!\\[[^\\]]*\\]\\([^)]+\\)", "").trim();
+                    name = cleanName(text);
+                }
 
                 // 提取图片（搜索页图片在img标签的data-src属性）
                 Element img = item.selectFirst("img");
                 if (img != null) {
+                    // 修复：按优先级检查懒加载属性
                     pic = img.attr("data-src");
                     if (TextUtils.isEmpty(pic)) {
                         pic = img.attr("data-original");
+                    }
+                    if (TextUtils.isEmpty(pic)) {
+                        pic = img.attr("data-lazyload");
+                    }
+                    if (TextUtils.isEmpty(pic)) {
+                        pic = img.attr("data-lazy-src");
                     }
                     if (TextUtils.isEmpty(pic)) {
                         pic = img.attr("src");
@@ -625,15 +660,15 @@ public class Hgdj extends Spider {
                     pic = fixUrl(pic);
                 }
 
-                // 方式2：从链接文本中提取Markdown图片URL
+                // 方式2：从链接文本中提取Markdown图片URL（仅作为备选）
                 if (TextUtils.isEmpty(pic)) {
                     String linkText = item.text();
-                    if (linkText.contains("http") && (linkText.contains(".jpg") || linkText.contains(".png") || linkText.contains(".jpeg"))) {
+                    if (linkText.contains("http") && (linkText.contains(".jpg") || linkText.contains(".png") || linkText.contains(".jpeg") || linkText.contains(".webp"))) {
                         // 提取URL（格式：![alt](图片URL)）
                         int start = linkText.indexOf("http");
                         int end = linkText.length();
                         // 找到图片URL的结束位置
-                        for (String ext : new String[]{".jpg", ".png", ".jpeg"}) {
+                        for (String ext : new String[]{".jpg", ".png", ".jpeg", ".webp"}) {
                             int extIdx = linkText.indexOf(ext, start);
                             if (extIdx > 0) {
                                 end = extIdx + ext.length();
@@ -646,13 +681,23 @@ public class Hgdj extends Spider {
                     }
                 }
 
-                // 提取备注
+                // 提取备注（修复：从多个位置尝试提取）
                 Element remarkElem = item.parent().selectFirst("span");
-                if (remarkElem != null) {
+                if (remarkElem != null && !TextUtils.isEmpty(remarkElem.text())) {
                     remark = remarkElem.text().trim();
+                } else {
+                    // 尝试从链接的同级元素提取评分等信息
+                    Element parent = item.parent();
+                    if (parent != null) {
+                        Element scoreElem = parent.selectFirst(".score, .rating, .remarks");
+                        if (scoreElem != null) {
+                            remark = scoreElem.text().trim();
+                        }
+                    }
                 }
 
-                if (!TextUtils.isEmpty(name) && vid.length() > 5) {
+                // 验证数据完整性
+                if (!TextUtils.isEmpty(name) && !TextUtils.isEmpty(vid) && vid.length() > 5) {
                     list.add(new Vod(vid, name, pic, remark));
                 }
             }
