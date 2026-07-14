@@ -220,7 +220,7 @@ public class Glod extends Spider {
                     if (seen.contains(vid)) continue;
                     seen.add(vid);
 
-                    // 提取图片（尝试多种属性）
+                    // 提取图片（增强版：支持背景图、style属性等）
                     String pic = "";
                     Elements imgs = item.select("img");
 
@@ -234,7 +234,8 @@ public class Glod extends Spider {
                         // 尝试所有可能的图片属性（按优先级）
                         String[] imgAttrs = {
                             "data-original", "data-src", "data-lazy-src",
-                            "data-lazyload", "data-url", "src"
+                            "data-lazyload", "data-url", "src",
+                            "data-cover", "data-thumb", "data-image"
                         };
 
                         for (String attr : imgAttrs) {
@@ -248,9 +249,38 @@ public class Glod extends Spider {
                             }
                         }
 
+                        // 如果所有属性都为空，尝试从style的background-image提取
+                        if (TextUtils.isEmpty(pic)) {
+                            String style = img.attr("style");
+                            if (!TextUtils.isEmpty(style) && style.contains("url")) {
+                                Matcher m = Pattern.compile("url\\(['\"]?([^'\"\\)]+)['\"]?\\)").matcher(style);
+                                if (m.find()) {
+                                    pic = m.group(1);
+                                    if (debugCount < 3) {
+                                        SpiderDebug.log("  ✅ 从style提取图片: " + pic.substring(0, Math.min(50, pic.length())));
+                                    }
+                                }
+                            }
+                        }
+
                         pic = fixImg(pic);
-                    } else if (debugCount < 3) {
-                        SpiderDebug.log("  ⚠️ 无img标签，item HTML: " + item.html().substring(0, Math.min(100, item.html().length())));
+                    } else {
+                        // 没有img标签，尝试从item本身提取背景图
+                        String style = item.attr("style");
+                        if (!TextUtils.isEmpty(style) && style.contains("url")) {
+                            Matcher m = Pattern.compile("url\\(['\"]?([^'\"\\)]+)['\"]?\\)").matcher(style);
+                            if (m.find()) {
+                                pic = m.group(1);
+                                if (debugCount < 3) {
+                                    SpiderDebug.log("  ✅ 从item style提取图片: " + pic.substring(0, Math.min(50, pic.length())));
+                                }
+                                pic = fixImg(pic);
+                            }
+                        }
+
+                        if (debugCount < 3 && TextUtils.isEmpty(pic)) {
+                            SpiderDebug.log("  ⚠️ 无img标签，item HTML: " + item.html().substring(0, Math.min(150, item.html().length())));
+                        }
                     }
 
                     // 提取标题
@@ -399,7 +429,7 @@ public class Glod extends Spider {
                     }
                 }
 
-                // 提取剧集列表（增强版：调试+容错+名称修正）
+                // 提取剧集列表（增强版：过滤"立即播放"等干扰项）
                 List<String> episodes = new ArrayList<>();
                 String[] epSelectors = {
                     "a[href*=/vod/play/]",      // 标准选择器
@@ -417,8 +447,16 @@ public class Glod extends Spider {
                     if (!epLinks.isEmpty()) {
                         for (Element a : epLinks) {
                             try {
-                                // 提取选集名称（优先使用链接文本，即数字"1", "2"等）
+                                // 提取选集名称（优先使用链接文本）
                                 String epName = a.text().trim();
+
+                                // 过滤干扰项："立即播放"、"播放"、"立即"等非数字名称
+                                if (TextUtils.isEmpty(epName) ||
+                                    epName.contains("立即") ||
+                                    epName.contains("播放") ||
+                                    epName.equals("播放")) {
+                                    continue;  // 跳过干扰项
+                                }
 
                                 // 如果链接文本为空，使用title或自动编号
                                 if (TextUtils.isEmpty(epName)) {
