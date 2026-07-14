@@ -51,6 +51,8 @@ public class Glod extends Spider {
     private String host;
     /** 域名列表 */
     private List<String> domains;
+    /** 缓存的成功域名（加速访问） */
+    private String cachedDomain;
 
     @Override
     public void init(Context context, String extend) throws Exception {
@@ -100,21 +102,42 @@ public class Glod extends Spider {
     }
 
     /**
-     * 多域名自动切换请求
+     * 多域名自动切换请求（性能优化版）
      * @param path 相对路径（如 "/"、"/vod/show/id/1"）
      * @return [响应内容, 成功的域名]，失败返回 null
      */
     private Object[] get(String path) {
-        // 尝试每个域名
+        // 优先使用缓存的成功域名
+        if (!TextUtils.isEmpty(cachedDomain)) {
+            try {
+                String url = path.startsWith("http") ? path : cachedDomain + path;
+                String content = OkHttp.string(url, getHeaders(cachedDomain));
+
+                // 检查响应有效性（降低阈值到 500）
+                if (!TextUtils.isEmpty(content) && content.length() > 500) {
+                    return new Object[]{content, cachedDomain};
+                }
+            } catch (Exception e) {
+                // 缓存域名失败，清除缓存
+                SpiderDebug.log("缓存域名失败: " + cachedDomain + " - " + e.getMessage());
+                cachedDomain = null;
+            }
+        }
+
+        // 尝试所有域名
         for (String domain : domains) {
+            // 跳过已尝试的缓存域名
+            if (domain.equals(cachedDomain)) continue;
+
             try {
                 String url = path.startsWith("http") ? path : domain + path;
                 String content = OkHttp.string(url, getHeaders(domain));
 
-                // 检查响应有效性（长度 > 1000）
-                if (!TextUtils.isEmpty(content) && content.length() > 1000) {
-                    // 更新当前域名
+                // 检查响应有效性（降低阈值到 500）
+                if (!TextUtils.isEmpty(content) && content.length() > 500) {
+                    // 更新当前域名和缓存
                     host = domain;
+                    cachedDomain = domain;
                     return new Object[]{content, domain};
                 }
             } catch (Exception e) {
@@ -161,6 +184,8 @@ public class Glod extends Spider {
             Elements items = doc.select("a[href*=/detail/]");
 
             Set<String> seen = new HashSet<>();
+            int debugCount = 0;  // 调试计数器（只记录前几个）
+
             for (Element item : items) {
                 try {
                     String href = item.attr("href");
@@ -174,11 +199,13 @@ public class Glod extends Spider {
                     if (seen.contains(vid)) continue;
                     seen.add(vid);
 
-                    // 提取图片
+                    // 提取图片（尝试多种属性）
                     String pic = "";
                     Elements imgs = item.select("img");
                     if (!imgs.isEmpty()) {
                         Element img = imgs.first();
+
+                        // 尝试多种图片属性
                         pic = img.attr("data-original");
                         if (TextUtils.isEmpty(pic)) {
                             pic = img.attr("data-src");
@@ -186,7 +213,17 @@ public class Glod extends Spider {
                         if (TextUtils.isEmpty(pic)) {
                             pic = img.attr("src");
                         }
+                        if (TextUtils.isEmpty(pic)) {
+                            pic = img.attr("data-lazy-src");
+                        }
+
                         pic = fixImg(pic);
+
+                        // 调试：记录前3个图片 URL
+                        if (debugCount < 3 && !TextUtils.isEmpty(pic)) {
+                            SpiderDebug.log("图片URL提取成功: " + pic);
+                            debugCount++;
+                        }
                     }
 
                     // 提取标题
@@ -203,6 +240,8 @@ public class Glod extends Spider {
                     SpiderDebug.log(e);
                 }
             }
+
+            SpiderDebug.log("列表解析完成: 共 " + list.size() + " 个视频");
         } catch (Exception e) {
             SpiderDebug.log(e);
         }
