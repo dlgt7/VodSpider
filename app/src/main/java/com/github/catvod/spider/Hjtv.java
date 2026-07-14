@@ -324,33 +324,20 @@ public class Hjtv extends Spider {
                     desc = descElem.text().replace("简介：", "").trim();
                 }
 
-                // 解析线路和播放列表
+                // 解析线路和播放列表（根据实际网站结构）
                 List<String> playFromList = new ArrayList<>();
                 List<String> playUrlList = new ArrayList<>();
 
-                // 线路数组：alt=\"&&</a
-                // 播放数组：hl-sort-list&&</ul>
-                Elements playSources = doc.select(".hl-sort-list");
-                Elements routeElems = doc.select("a[href^=#playlist]");
-
-                // 如果没有明确的线路标签，使用默认线路
-                if (routeElems.isEmpty() && !playSources.isEmpty()) {
-                    routeElems = doc.select("ul.hl-sort-list");
-                }
+                // 线路选择器：ul.hl-sort-list（每个ul是一个线路）
+                Elements playSources = doc.select("ul.hl-sort-list");
 
                 for (int i = 0; i < playSources.size(); i++) {
                     Element source = playSources.get(i);
 
-                    // 线路标题
+                    // 线路标题（按顺序编号）
                     String routeName = "线路" + (i + 1);
-                    if (i < routeElems.size()) {
-                        routeName = routeElems.get(i).text();
-                        if (TextUtils.isEmpty(routeName)) {
-                            routeName = routeElems.get(i).attr("alt");
-                        }
-                    }
 
-                    // 播放列表：<a&&/a>[不包含:展开全部]
+                    // 播放列表：每个线路下的所有剧集链接
                     Elements episodes = source.select("a");
                     List<String> episodeList = new ArrayList<>();
 
@@ -360,8 +347,6 @@ public class Hjtv extends Spider {
 
                         // 排除"展开全部"
                         if (!TextUtils.isEmpty(epName) && !epName.contains("展开全部") && !TextUtils.isEmpty(epUrl)) {
-                            // 播放标题：>&&<
-                            // 播放链接：href=\"&&\"
                             episodeList.add(epName + "$" + fixUrl(epUrl));
                         }
                     }
@@ -468,24 +453,30 @@ public class Hjtv extends Spider {
             String playUrl = fixUrl(id);
             String html = OkHttp.string(playUrl, headers);
 
-            // 跳转播放链接：var player_*\"url\":\"&&\"
-            // 使用正则表达式提取播放URL
-            Pattern pattern = Pattern.compile("var\\s+player[^=]*=\\s*\\{[^}]*\"url\"\\s*:\\s*\"([^\"]+)\"");
+            // 提取player_aaaa变量（根据实际网站调试结果）
+            // 格式：var player_aaaa={"flag":"play","encrypt":1,"url":"..."}
+            Pattern pattern = Pattern.compile("var\\s+player_aaaa\\s*=\\s*(\\{.*?\\});");
             Matcher matcher = pattern.matcher(html);
 
             String videoUrl = "";
+            int encrypt = 0;
+
             if (matcher.find()) {
-                videoUrl = matcher.group(1);
-                // 处理可能的转义字符
-                videoUrl = videoUrl.replace("\\/", "/");
+                try {
+                    org.json.JSONObject playerJson = new org.json.JSONObject(matcher.group(1));
+                    videoUrl = playerJson.optString("url", "");
+                    encrypt = playerJson.optInt("encrypt", 0);
+                } catch (Exception e) {
+                    SpiderDebug.log(e);
+                }
             }
 
+            // 如果没有找到player_aaaa，尝试其他播放器变量
             if (TextUtils.isEmpty(videoUrl)) {
-                // 尝试其他常见的播放器变量
                 String[] patterns = {
                     "var\\s+url\\s*=\\s*['\"]([^'\"]+)['\"]",
-                    "url:\\s*['\"]([^'\"]+)['\"]",
-                    "\"url\"\\s*:\\s*\"([^\"]+)\""
+                    "\"url\"\\s*:\\s*\"([^\"]+)\"",
+                    "url:\\s*['\"]([^'\"]+)['\"]"
                 };
 
                 for (String p : patterns) {
@@ -498,6 +489,9 @@ public class Hjtv extends Spider {
             }
 
             if (!TextUtils.isEmpty(videoUrl)) {
+                // 处理转义字符
+                videoUrl = videoUrl.replace("\\/", "/");
+
                 // 判断是否为直链
                 if (videoUrl.contains(".m3u8") || videoUrl.contains(".mp4")) {
                     // 直链，parse=0
@@ -506,6 +500,7 @@ public class Hjtv extends Spider {
                         .string();
                 } else {
                     // 非直链，parse=1（让客户端处理）
+                    // MacCMS站点标准做法，让外部解析器处理encrypt加密
                     return Result.get()
                         .url(fixUrl(videoUrl))
                         .parse(1)
