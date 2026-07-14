@@ -51,8 +51,6 @@ public class Glod extends Spider {
     private String host;
     /** 域名列表 */
     private List<String> domains;
-    /** 缓存的成功域名（加速访问） */
-    private String cachedDomain;
 
     @Override
     public void init(Context context, String extend) throws Exception {
@@ -102,123 +100,59 @@ public class Glod extends Spider {
     }
 
     /**
-     * 多域名自动切换请求（智能优化版）
-     * - 首次访问：快速测试所有域名，选择最快的作为主域名
-     * - 后续访问：直接使用主域名（极速）
-     * - 失败切换：主域名失败才切换到备用域名
+     * 多域名自动切换请求
+     * @param path 相对路径（如 "/"、"/vod/show/id/1"）
+     * @return [响应内容, 成功的域名]，失败返回 null
      */
     private Object[] get(String path) {
-        long startTime = System.currentTimeMillis();
-
-        // 第一优先级：使用缓存的主域名（最快路径）
-        if (!TextUtils.isEmpty(cachedDomain)) {
-            try {
-                String url = path.startsWith("http") ? path : cachedDomain + path;
-                String content = OkHttp.string(url, getHeaders(cachedDomain));
-
-                // 检查响应有效性（降低阈值到 200）
-                if (!TextUtils.isEmpty(content) && content.length() > 200) {
-                    long duration = System.currentTimeMillis() - startTime;
-                    if (duration > 1000) {  // 超过1秒才记录
-                        SpiderDebug.log("缓存域名成功: " + cachedDomain + " 耗时: " + duration + "ms");
-                    }
-                    return new Object[]{content, cachedDomain};
-                }
-            } catch (Exception e) {
-                // 缓存域名失败，清除缓存，尝试备用域名
-                SpiderDebug.log("主域名失败: " + cachedDomain + " - " + e.getMessage());
-                cachedDomain = null;
-            }
-        }
-
-        // 第二优先级：智能测试所有域名，选择最快的（仅首次）
-        if (TextUtils.isEmpty(cachedDomain)) {
-            String fastestDomain = testDomainsSpeed();
-            if (!TextUtils.isEmpty(fastestDomain)) {
-                cachedDomain = fastestDomain;
-                SpiderDebug.log("智能选择最快域名: " + fastestDomain);
-
-                // 使用选出的最快域名
-                try {
-                    String url = path.startsWith("http") ? path : fastestDomain + path;
-                    String content = OkHttp.string(url, getHeaders(fastestDomain));
-
-                    if (!TextUtils.isEmpty(content) && content.length() > 200) {
-                        long duration = System.currentTimeMillis() - startTime;
-                        SpiderDebug.log("首次智能选择耗时: " + duration + "ms");
-                        return new Object[]{content, fastestDomain};
-                    }
-                } catch (Exception e) {
-                    SpiderDebug.log("最快域名也失败: " + e.getMessage());
-                }
-            }
-        }
-
-        // 第三优先级：遍历所有域名（兜底方案）
+        // 尝试每个域名
         for (String domain : domains) {
-            if (domain.equals(cachedDomain)) continue;
-
             try {
-                long reqStart = System.currentTimeMillis();
                 String url = path.startsWith("http") ? path : domain + path;
                 String content = OkHttp.string(url, getHeaders(domain));
 
-                if (!TextUtils.isEmpty(content) && content.length() > 200) {
-                    cachedDomain = domain;
-
-                    long duration = System.currentTimeMillis() - reqStart;
-                    SpiderDebug.log("备用域名成功: " + domain + " 耗时: " + duration + "ms");
+                // 检查响应有效性（长度 > 1000）
+                if (!TextUtils.isEmpty(content) && content.length() > 1000) {
+                    // 更新当前域名
+                    host = domain;
                     return new Object[]{content, domain};
                 }
             } catch (Exception e) {
                 SpiderDebug.log("域名访问失败: " + domain + " - " + e.getMessage());
             }
         }
-
-        SpiderDebug.log("❌ 所有域名尝试失败");
         return null;
     }
 
     /**
-     * 智能测试所有域名的响应速度，返回最快的域名
-     */
-    private String testDomainsSpeed() {
-        String fastestDomain = null;
-        long fastestTime = Long.MAX_VALUE;
-
-        for (String domain : domains) {
-            try {
-                long start = System.currentTimeMillis();
-                String testUrl = domain + "/";
-                String content = OkHttp.string(testUrl, null, getHeaders(domain), 3000);  // params传null，超时3秒
-
-                if (!TextUtils.isEmpty(content) && content.length() > 200) {
-                    long duration = System.currentTimeMillis() - start;
-
-                    if (duration < fastestTime) {
-                        fastestTime = duration;
-                        fastestDomain = domain;
-                    }
-                }
-            } catch (Exception e) {
-                // 测试失败，跳过
-            }
-        }
-
-        return fastestDomain;
-    }
-
-    /**
-     * 提取图片（尝试多种属性 + 调试日志）
+     * 修复图片 URL（增强版）
+     * 处理多种URL格式：相对路径、协议相对路径、完整URL
      */
     private String fixImg(String url) {
         if (TextUtils.isEmpty(url)) return "";
-        if (url.startsWith("//")) return "https:" + url;
-        if (url.startsWith("/")) return IMG_CDN + url;
-        // 调试：记录修复后的图片URL
-        if (!url.startsWith("http")) {
-            SpiderDebug.log("异常图片URL: " + url);
+        url = url.trim();
+
+        // 处理协议相对路径：//example.com/pic.jpg
+        if (url.startsWith("//")) {
+            return "https:" + url;
         }
+
+        // 处理相对路径：/uploads/pic.jpg
+        if (url.startsWith("/")) {
+            // 优先使用图片CDN（如果是CDN路径）
+            if (url.contains("/upload") || url.contains("/image") || url.contains("/pic")) {
+                return IMG_CDN + url;
+            }
+            // 否则使用当前域名
+            return host + url;
+        }
+
+        // 处理无协议URL：example.com/pic.jpg
+        if (!url.startsWith("http")) {
+            return "https://" + url;
+        }
+
+        // 完整URL直接返回
         return url;
     }
 
@@ -237,27 +171,18 @@ public class Glod extends Spider {
     }
 
     /**
-     * 解析视频列表（从 HTML 中提取）- 增强调试版
+     * 解析视频列表（从 HTML 中提取）
      */
     private List<Vod> parseList(String html) {
         List<Vod> list = new ArrayList<>();
-        if (TextUtils.isEmpty(html)) {
-            SpiderDebug.log("❌ HTML内容为空");
-            return list;
-        }
-
-        SpiderDebug.log("📊 HTML长度: " + html.length() + " 字符");
+        if (TextUtils.isEmpty(html)) return list;
 
         try {
             Document doc = Jsoup.parse(html);
             // 提取视频列表项（包含 /detail/ 的链接）
             Elements items = doc.select("a[href*=/detail/]");
 
-            SpiderDebug.log("🔍 找到链接数: " + items.size());
-
             Set<String> seen = new HashSet<>();
-            int debugCount = 0;  // 调试计数器
-
             for (Element item : items) {
                 try {
                     String href = item.attr("href");
@@ -271,81 +196,26 @@ public class Glod extends Spider {
                     if (seen.contains(vid)) continue;
                     seen.add(vid);
 
-                    // 提取图片（终极版：正则兜底提取）
+                    // 提取图片（多种属性尝试）
                     String pic = "";
                     Elements imgs = item.select("img");
-
-                    if (debugCount < 3) {
-                        SpiderDebug.log("🔗 视频" + debugCount + " ID: " + vid + ", 找到img数: " + imgs.size());
-                    }
-
                     if (!imgs.isEmpty()) {
                         Element img = imgs.first();
-
-                        // 尝试所有可能的图片属性（按优先级）
+                        // 尝试多种图片属性（按优先级）
                         String[] imgAttrs = {
-                            "data-original", "data-src", "data-lazy-src",
-                            "data-lazyload", "data-url", "src",
-                            "data-cover", "data-thumb", "data-image"
+                            "data-original",    // 懒加载原图
+                            "data-src",         // 懒加载src
+                            "data-lazy-src",    // 懒加载变体
+                            "data-img",         // 自定义属性
+                            "src"               // 默认src
                         };
-
                         for (String attr : imgAttrs) {
-                            String val = img.attr(attr);
-                            if (!TextUtils.isEmpty(val)) {
-                                pic = val;
-                                if (debugCount < 3) {
-                                    SpiderDebug.log("  ✅ 图片属性: " + attr + " = " + val.substring(0, Math.min(50, val.length())));
-                                }
+                            pic = img.attr(attr);
+                            if (!TextUtils.isEmpty(pic) && !pic.contains("loading.gif") && !pic.contains("loading.png")) {
                                 break;
                             }
                         }
-
-                        // 如果所有属性都为空，尝试从style的background-image提取
-                        if (TextUtils.isEmpty(pic)) {
-                            String style = img.attr("style");
-                            if (!TextUtils.isEmpty(style) && style.contains("url")) {
-                                Matcher styleMatcher = Pattern.compile("url\\(['\"]?([^'\"\\)]+)['\"]?\\)").matcher(style);
-                                if (styleMatcher.find()) {
-                                    pic = styleMatcher.group(1);
-                                    if (debugCount < 3) {
-                                        SpiderDebug.log("  ✅ 从style提取图片: " + pic.substring(0, Math.min(50, pic.length())));
-                                    }
-                                }
-                            }
-                        }
-
                         pic = fixImg(pic);
-                    }
-
-                    // 终极兜底：从item HTML中正则提取图片URL（支持CDN域名）
-                    if (TextUtils.isEmpty(pic)) {
-                        String itemHtml = item.html();
-                        Matcher picMatcher = Pattern.compile("https://aka\\.doubaocdn\\.com/s/[A-Za-z0-9]+").matcher(itemHtml);
-                        if (picMatcher.find()) {
-                            pic = picMatcher.group(0);
-                            if (debugCount < 3) {
-                                SpiderDebug.log("  ✅ 终极兜底提取图片: " + pic);
-                            }
-                        }
-                    }
-
-                    // 再兜底：从item本身的style提取背景图
-                    if (TextUtils.isEmpty(pic)) {
-                        String style = item.attr("style");
-                        if (!TextUtils.isEmpty(style) && style.contains("url")) {
-                            Matcher bgMatcher = Pattern.compile("url\\(['\"]?([^'\"\\)]+)['\"]?\\)").matcher(style);
-                            if (bgMatcher.find()) {
-                                pic = bgMatcher.group(1);
-                                if (debugCount < 3) {
-                                    SpiderDebug.log("  ✅ 从item style提取图片: " + pic.substring(0, Math.min(50, pic.length())));
-                                }
-                                pic = fixImg(pic);
-                            }
-                        }
-                    }
-
-                    if (debugCount < 3 && TextUtils.isEmpty(pic)) {
-                        SpiderDebug.log("  ⚠️ 无img标签，item HTML: " + item.html().substring(0, Math.min(150, item.html().length())));
                     }
 
                     // 提取标题
@@ -357,16 +227,13 @@ public class Glod extends Spider {
 
                     if (!TextUtils.isEmpty(title) && !TextUtils.isEmpty(vid)) {
                         list.add(new Vod(vid, title, pic));
-                        debugCount++;
                     }
                 } catch (Exception e) {
-                    SpiderDebug.log("解析异常: " + e.getMessage());
+                    SpiderDebug.log(e);
                 }
             }
-
-            SpiderDebug.log("✅ 列表解析完成: 共 " + list.size() + " 个视频");
         } catch (Exception e) {
-            SpiderDebug.log("❌ 解析失败: " + e.getMessage());
+            SpiderDebug.log(e);
         }
 
         return list;
@@ -459,7 +326,7 @@ public class Glod extends Spider {
                     }
                 }
 
-                // 提取图片（增强版：覆盖所有可能的属性）
+                // 提取图片（多种选择器尝试）
                 String pic = "";
                 String[] imgSelectors = {
                     "img[class*=poster]",
@@ -469,95 +336,62 @@ public class Glod extends Spider {
                     "div[class*=detail] img",
                     "img"
                 };
-                String[] imgAttrs = {
-                    "data-original", "data-src", "data-lazy-src",
-                    "data-lazyload", "data-url", "src"
-                };
-
                 for (String selector : imgSelectors) {
                     Elements imgs = doc.select(selector);
                     if (!imgs.isEmpty()) {
-                        Element img = imgs.first();
-                        // 尝试所有可能的属性
+                        // 尝试多种图片属性（按优先级）
+                        String[] imgAttrs = {
+                            "data-original",    // 懒加载原图
+                            "data-src",         // 懒加载src
+                            "data-lazy-src",    // 懒加载变体
+                            "data-img",         // 自定义属性
+                            "src"               // 默认src
+                        };
                         for (String attr : imgAttrs) {
-                            String val = img.attr(attr);
-                            if (!TextUtils.isEmpty(val)) {
-                                pic = val;
+                            pic = imgs.first().attr(attr);
+                            if (!TextUtils.isEmpty(pic) && !pic.contains("loading.gif") && !pic.contains("loading.png")) {
+                                pic = fixImg(pic);
                                 break;
                             }
                         }
                         if (!TextUtils.isEmpty(pic)) {
-                            pic = fixImg(pic);
-                            SpiderDebug.log("详情页图片提取成功: " + pic);
                             break;
                         }
                     }
                 }
 
-                // 提取剧集列表（增强版：过滤"立即播放"等干扰项）
+                // 提取剧集列表（多种选择器尝试）
                 List<String> episodes = new ArrayList<>();
                 String[] epSelectors = {
-                    "a[href*=/vod/play/]",      // 标准选择器
-                    "a[href*=sid]",              // sid参数匹配
+                    "a[href*=/vod/play/]",
                     "div[class*=playlist] a",
                     "ul[class*=episode] a"
                 };
-
-                int epIndex = 1;  // 选集序号（从1开始）
-
                 for (String selector : epSelectors) {
                     Elements epLinks = doc.select(selector);
-                    SpiderDebug.log("选集选择器 '" + selector + "' 找到 " + epLinks.size() + " 个元素");
-
                     if (!epLinks.isEmpty()) {
+                        int i = 1;
                         for (Element a : epLinks) {
-                            try {
-                                // 提取选集名称（优先使用链接文本）
-                                String epName = a.text().trim();
-
-                                // 过滤干扰项："立即播放"、"播放"、"立即"等非数字名称
-                                if (TextUtils.isEmpty(epName) ||
-                                    epName.contains("立即") ||
-                                    epName.contains("播放") ||
-                                    epName.equals("播放")) {
-                                    continue;  // 跳过干扰项
+                            String epName = a.text().trim();
+                            // 处理"立即播放"文本，改为数字编号
+                            if (TextUtils.isEmpty(epName) || "立即播放".equals(epName)) {
+                                epName = String.valueOf(i);
+                            } else {
+                                // 如果文本包含数字，直接使用；否则使用序号
+                                String numText = epName.replaceAll("[^0-9]", "");
+                                if (!TextUtils.isEmpty(numText)) {
+                                    epName = numText;
+                                } else {
+                                    epName = String.valueOf(i);
                                 }
-
-                                // 如果链接文本为空，使用title或自动编号
-                                if (TextUtils.isEmpty(epName)) {
-                                    epName = a.attr("title");
-                                }
-
-                                // 如果仍然为空，使用自动编号
-                                if (TextUtils.isEmpty(epName)) {
-                                    epName = String.valueOf(epIndex);
-                                }
-
-                                // 提取播放URL
-                                String epUrl = a.attr("href");
-                                if (!TextUtils.isEmpty(epUrl)) {
-                                    // 确保URL包含播放路径
-                                    if (epUrl.contains("/vod/play/") || epUrl.contains("sid")) {
-                                        episodes.add(epName + "$" + epUrl);
-
-                                        // 调试：记录前5个选集
-                                        if (episodes.size() <= 5) {
-                                            SpiderDebug.log("选集" + episodes.size() + ": '" + epName + "' -> " + epUrl);
-                                        }
-
-                                        epIndex++;  // 递增序号
-                                    }
-                                }
-                            } catch (Exception e) {
-                                SpiderDebug.log("选集解析异常: " + e.getMessage());
+                            }
+                            String epUrl = a.attr("href");
+                            if (!TextUtils.isEmpty(epUrl) && epUrl.contains("/vod/play/")) {
+                                episodes.add(epName + "$" + epUrl);
+                                i++;
                             }
                         }
-
-                        // 如果成功提取，退出循环
-                        if (!episodes.isEmpty()) {
-                            SpiderDebug.log("✅ 选集提取完成: 共 " + episodes.size() + " 集");
-                            break;
-                        }
+                        if (!episodes.isEmpty()) break;
                     }
                 }
 
