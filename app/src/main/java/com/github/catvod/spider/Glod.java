@@ -107,14 +107,18 @@ public class Glod extends Spider {
      * @return [响应内容, 成功的域名]，失败返回 null
      */
     private Object[] get(String path) {
-        // 优先使用缓存的成功域名
+        long startTime = System.currentTimeMillis();
+
+        // 优先使用缓存的成功域名（最快路径）
         if (!TextUtils.isEmpty(cachedDomain)) {
             try {
                 String url = path.startsWith("http") ? path : cachedDomain + path;
                 String content = OkHttp.string(url, getHeaders(cachedDomain));
 
-                // 检查响应有效性（降低阈值到 500）
-                if (!TextUtils.isEmpty(content) && content.length() > 500) {
+                // 检查响应有效性（降低阈值到 200，加快验证）
+                if (!TextUtils.isEmpty(content) && content.length() > 200) {
+                    long duration = System.currentTimeMillis() - startTime;
+                    SpiderDebug.log("缓存域名成功: " + cachedDomain + " 耗时: " + duration + "ms");
                     return new Object[]{content, cachedDomain};
                 }
             } catch (Exception e) {
@@ -124,26 +128,32 @@ public class Glod extends Spider {
             }
         }
 
-        // 尝试所有域名
+        // 尝试所有域名（慢速路径）
         for (String domain : domains) {
             // 跳过已尝试的缓存域名
             if (domain.equals(cachedDomain)) continue;
 
             try {
+                long reqStart = System.currentTimeMillis();
                 String url = path.startsWith("http") ? path : domain + path;
                 String content = OkHttp.string(url, getHeaders(domain));
 
-                // 检查响应有效性（降低阈值到 500）
-                if (!TextUtils.isEmpty(content) && content.length() > 500) {
+                // 检查响应有效性（降低阈值到 200）
+                if (!TextUtils.isEmpty(content) && content.length() > 200) {
                     // 更新当前域名和缓存
                     host = domain;
                     cachedDomain = domain;
+
+                    long duration = System.currentTimeMillis() - reqStart;
+                    SpiderDebug.log("切换域名成功: " + domain + " 耗时: " + duration + "ms");
                     return new Object[]{content, domain};
                 }
             } catch (Exception e) {
                 SpiderDebug.log("域名访问失败: " + domain + " - " + e.getMessage());
             }
         }
+
+        SpiderDebug.log("所有域名尝试失败");
         return null;
     }
 
@@ -176,19 +186,26 @@ public class Glod extends Spider {
     }
 
     /**
-     * 解析视频列表（从 HTML 中提取）
+     * 解析视频列表（从 HTML 中提取）- 增强调试版
      */
     private List<Vod> parseList(String html) {
         List<Vod> list = new ArrayList<>();
-        if (TextUtils.isEmpty(html)) return list;
+        if (TextUtils.isEmpty(html)) {
+            SpiderDebug.log("❌ HTML内容为空");
+            return list;
+        }
+
+        SpiderDebug.log("📊 HTML长度: " + html.length() + " 字符");
 
         try {
             Document doc = Jsoup.parse(html);
             // 提取视频列表项（包含 /detail/ 的链接）
             Elements items = doc.select("a[href*=/detail/]");
 
+            SpiderDebug.log("🔍 找到链接数: " + items.size());
+
             Set<String> seen = new HashSet<>();
-            int debugCount = 0;  // 调试计数器（只记录前几个）
+            int debugCount = 0;  // 调试计数器
 
             for (Element item : items) {
                 try {
@@ -206,6 +223,11 @@ public class Glod extends Spider {
                     // 提取图片（尝试多种属性）
                     String pic = "";
                     Elements imgs = item.select("img");
+
+                    if (debugCount < 3) {
+                        SpiderDebug.log("🔗 视频" + debugCount + " ID: " + vid + ", 找到img数: " + imgs.size());
+                    }
+
                     if (!imgs.isEmpty()) {
                         Element img = imgs.first();
 
@@ -219,18 +241,16 @@ public class Glod extends Spider {
                             String val = img.attr(attr);
                             if (!TextUtils.isEmpty(val)) {
                                 pic = val;
+                                if (debugCount < 3) {
+                                    SpiderDebug.log("  ✅ 图片属性: " + attr + " = " + val.substring(0, Math.min(50, val.length())));
+                                }
                                 break;
                             }
                         }
 
                         pic = fixImg(pic);
-
-                        // 调试：记录前5个图片提取情况
-                        if (debugCount < 5) {
-                            String attrsUsed = pic.isEmpty() ? "所有属性都为空" : pic;
-                            SpiderDebug.log("图片" + debugCount + ": " + attrsUsed);
-                            debugCount++;
-                        }
+                    } else if (debugCount < 3) {
+                        SpiderDebug.log("  ⚠️ 无img标签，item HTML: " + item.html().substring(0, Math.min(100, item.html().length())));
                     }
 
                     // 提取标题
@@ -242,15 +262,16 @@ public class Glod extends Spider {
 
                     if (!TextUtils.isEmpty(title) && !TextUtils.isEmpty(vid)) {
                         list.add(new Vod(vid, title, pic));
+                        debugCount++;
                     }
                 } catch (Exception e) {
-                    SpiderDebug.log(e);
+                    SpiderDebug.log("解析异常: " + e.getMessage());
                 }
             }
 
-            SpiderDebug.log("列表解析完成: 共 " + list.size() + " 个视频");
+            SpiderDebug.log("✅ 列表解析完成: 共 " + list.size() + " 个视频");
         } catch (Exception e) {
-            SpiderDebug.log(e);
+            SpiderDebug.log("❌ 解析失败: " + e.getMessage());
         }
 
         return list;
@@ -378,7 +399,7 @@ public class Glod extends Spider {
                     }
                 }
 
-                // 提取剧集列表（增强版：调试+容错）
+                // 提取剧集列表（增强版：调试+容错+名称修正）
                 List<String> episodes = new ArrayList<>();
                 String[] epSelectors = {
                     "a[href*=/vod/play/]",      // 标准选择器
@@ -387,28 +408,26 @@ public class Glod extends Spider {
                     "ul[class*=episode] a"
                 };
 
+                int epIndex = 1;  // 选集序号（从1开始）
+
                 for (String selector : epSelectors) {
                     Elements epLinks = doc.select(selector);
                     SpiderDebug.log("选集选择器 '" + selector + "' 找到 " + epLinks.size() + " 个元素");
 
                     if (!epLinks.isEmpty()) {
-                        int i = 1;
                         for (Element a : epLinks) {
                             try {
-                                // 提取选集名称（多级fallback）
+                                // 提取选集名称（优先使用链接文本，即数字"1", "2"等）
                                 String epName = a.text().trim();
+
+                                // 如果链接文本为空，使用title或自动编号
                                 if (TextUtils.isEmpty(epName)) {
                                     epName = a.attr("title");
                                 }
+
+                                // 如果仍然为空，使用自动编号
                                 if (TextUtils.isEmpty(epName)) {
-                                    // 尝试从href中提取集数
-                                    String href = a.attr("href");
-                                    if (href.contains("/sid/")) {
-                                        // 格式：/vod/play/145218/sid/1294819
-                                        epName = "第" + i + "集";
-                                    } else {
-                                        epName = "第" + i + "集";
-                                    }
+                                    epName = String.valueOf(epIndex);
                                 }
 
                                 // 提取播放URL
@@ -420,12 +439,12 @@ public class Glod extends Spider {
 
                                         // 调试：记录前5个选集
                                         if (episodes.size() <= 5) {
-                                            SpiderDebug.log("选集" + episodes.size() + ": " + epName + " -> " + epUrl);
+                                            SpiderDebug.log("选集" + episodes.size() + ": '" + epName + "' -> " + epUrl);
                                         }
+
+                                        epIndex++;  // 递增序号
                                     }
                                 }
-
-                                i++;
                             } catch (Exception e) {
                                 SpiderDebug.log("选集解析异常: " + e.getMessage());
                             }
@@ -433,7 +452,7 @@ public class Glod extends Spider {
 
                         // 如果成功提取，退出循环
                         if (!episodes.isEmpty()) {
-                            SpiderDebug.log("选集提取完成: 共 " + episodes.size() + " 集");
+                            SpiderDebug.log("✅ 选集提取完成: 共 " + episodes.size() + " 集");
                             break;
                         }
                     }
