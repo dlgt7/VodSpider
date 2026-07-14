@@ -218,166 +218,74 @@ public class Hjw extends Spider {
                     name = titleElem.text();
                 }
 
-                // 提取图片（尝试多种方式）
+                // 提取图片（网站可能不提供详情页图片）
                 String pic = "";
 
-                // 优先尝试特定选择器
-                Element img = doc.selectFirst(".detail-pic img, .video-cover img, .poster img, .lazyload");
+                // 尝试从img标签提取
+                Elements imgs = doc.select("img");
+                for (Element imgElem : imgs) {
+                    String src = imgElem.attr("data-original");
+                    if (TextUtils.isEmpty(src) || src.startsWith("data:image")) {
+                        src = imgElem.attr("data-src");
+                    }
+                    if (TextUtils.isEmpty(src) || src.startsWith("data:image")) {
+                        src = imgElem.attr("src");
+                    }
 
-                if (img == null) {
-                    // 尝试查找第一个图片（跳过演员表等）
-                    Elements imgs = doc.select("img");
-                    for (Element imgElem : imgs) {
-                        // 尝试多个可能的图片属性
-                        String src = imgElem.attr("data-original");
-                        if (TextUtils.isEmpty(src) || src.startsWith("data:image")) {
-                            src = imgElem.attr("data-src");
-                        }
-                        if (TextUtils.isEmpty(src) || src.startsWith("data:image")) {
-                            src = imgElem.attr("data-lazy-src");
-                        }
-                        if (TextUtils.isEmpty(src) || src.startsWith("data:image")) {
-                            src = imgElem.attr("src");
-                        }
-
-                        // 过滤掉base64占位符和无效URL
-                        if (!TextUtils.isEmpty(src) && !src.startsWith("data:image") &&
-                            (src.contains("doubaocdn") || src.contains("cover") || src.contains("poster") || src.startsWith("http"))) {
-                            pic = fixUrl(src);
-                            break;
-                        }
+                    if (!TextUtils.isEmpty(src) && !src.startsWith("data:image") &&
+                        (src.contains("doubaocdn") || src.contains("http"))) {
+                        pic = fixUrl(src);
+                        break;
                     }
-                } else {
-                    // 从找到的img元素提取
-                    pic = img.attr("data-original");
-                    if (TextUtils.isEmpty(pic) || pic.startsWith("data:image")) {
-                        pic = img.attr("data-src");
-                    }
-                    if (TextUtils.isEmpty(pic) || pic.startsWith("data:image")) {
-                        pic = img.attr("data-lazy-src");
-                    }
-                    if (TextUtils.isEmpty(pic) || pic.startsWith("data:image")) {
-                        pic = img.attr("src");
-                    }
-                    pic = fixUrl(pic);
                 }
 
-                // 如果仍然没有找到图片，尝试从HTML中提取（处理懒加载或特殊格式）
+                // 如果没有找到图片，尝试从script中的JSON提取（未来可能添加）
                 if (TextUtils.isEmpty(pic)) {
-                    String html = doc.html();
-                    // 匹配Markdown格式或img标签中的图片URL
-                    java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
-                        "(?:!\\[.*?\\]\\((https?://[^\\s)]+doubaocdn[^\\s)]*)\\))|(?:src=[\"'](https?://[^\"']+doubaocdn[^\"']*)[\"'])");
-                    java.util.regex.Matcher matcher = pattern.matcher(html);
-                    if (matcher.find()) {
-                        pic = matcher.group(1) != null ? matcher.group(1) : matcher.group(2);
-                        if (!TextUtils.isEmpty(pic)) {
-                            pic = fixUrl(pic);
+                    Elements scripts = doc.select("script");
+                    for (Element script : scripts) {
+                        String content = script.html();
+                        if (content.contains("var korcms=")) {
+                            // 尝试从JSON中提取图片（如果存在）
+                            java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
+                                "\"pic\"\\s*:\\s*\"(https?://[^\"]+)\"");
+                            java.util.regex.Matcher matcher = pattern.matcher(content);
+                            if (matcher.find()) {
+                                pic = fixUrl(matcher.group(1));
+                                break;
+                            }
                         }
                     }
                 }
 
-                // 过滤掉无效图片
-                if (!TextUtils.isEmpty(pic) && (pic.startsWith("data:image") || pic.length() < 10)) {
-                    pic = "";
-                }
-
-                // 提取播放源和剧集（MacCMS标准结构）
+                // 提取播放源和剧集（网站使用单线路结构）
                 List<String> sources = new ArrayList<>();
                 List<String> episodes = new ArrayList<>();
 
-                // 查找播放源标签（MacCMS标准：.module-tab-item）
-                Elements sourceTabs = doc.select(".module-tab-item, .module-blocklist a[data-toggle]");
+                // 网站没有播放源标签，所有剧集使用单线路
+                Elements playLinks = doc.select("a[href*='#m']");
 
-                if (sourceTabs.isEmpty()) {
-                    // 网站使用锚点跳转，选集链接格式：/detail/{ID}.html#m
-                    Elements playLinks = doc.select("a[href*='#m']");
-                    if (!playLinks.isEmpty()) {
-                        sources.add("默認");
+                if (!playLinks.isEmpty()) {
+                    // 添加默认线路
+                    sources.add("默認");
 
-                        List<String> eps = new ArrayList<>();
-                        for (Element link : playLinks) {
-                            String epName = link.text();
-                            String epUrl = link.attr("href");
+                    List<String> eps = new ArrayList<>();
+                    for (Element link : playLinks) {
+                        String epName = link.text();
+                        String epUrl = link.attr("href");
 
-                            // 过滤掉非剧集链接
-                            if (TextUtils.isEmpty(epName) || TextUtils.isEmpty(epUrl)) continue;
-
-                            // 只提取包含"第"和"集"的剧集名称，格式为"第x集"
-                            if (epName.contains("第") && epName.contains("集")) {
-                                // 使用实际提取的播放链接（格式：第01集$/detail/3599.html#m）
-                                eps.add(epName + "$" + epUrl);
-                            }
-                        }
-
-                        if (!eps.isEmpty()) {
-                            episodes.add(join(eps, "#"));
+                        // 只提取包含"第"和"集"的剧集
+                        if (!TextUtils.isEmpty(epName) && !TextUtils.isEmpty(epUrl) &&
+                            epName.contains("第") && epName.contains("集")) {
+                            eps.add(epName + "$" + epUrl);
                         }
                     }
-                } else {
-                    for (Element sourceTab : sourceTabs) {
-                        String sourceName = sourceTab.attr("title");
-                        if (TextUtils.isEmpty(sourceName)) {
-                            sourceName = sourceTab.text();
-                        }
-                        if (TextUtils.isEmpty(sourceName)) {
-                            sourceName = "線路" + (sources.size() + 1);
-                        }
 
-                        sources.add(sourceName);
-
-                        // 查找该播放源对应的剧集列表
-                        String dataTab = sourceTab.attr("data-tab");
-                        String dataToggle = sourceTab.attr("data-toggle");
-
-                        Element playList = null;
-                        if (!TextUtils.isEmpty(dataTab)) {
-                            playList = doc.selectFirst("div[data-tab=" + dataTab + "]");
-                            if (playList == null) {
-                                playList = doc.selectFirst("ul[data-tab=" + dataTab + "]");
-                            }
-                        }
-                        if (playList == null && !TextUtils.isEmpty(dataToggle)) {
-                            playList = doc.selectFirst("div[data-toggle=" + dataToggle + "]");
-                            if (playList == null) {
-                                playList = doc.selectFirst("ul[data-toggle=" + dataToggle + "]");
-                            }
-                        }
-
-                        if (playList != null) {
-                            List<String> eps = new ArrayList<>();
-                            for (Element link : playList.select("a[href*='#m']")) {
-                                String epName = link.text();
-                                String epUrl = link.attr("href");
-
-                                if (!TextUtils.isEmpty(epName) && !TextUtils.isEmpty(epUrl)) {
-                                    // 使用实际提取的播放链接（格式：第01集$/detail/3599.html#m）
-                                    eps.add(epName + "$" + epUrl);
-                                }
-                            }
-
-                            if (!eps.isEmpty()) {
-                                episodes.add(join(eps, "#"));
-                            }
-                        } else {
-                            // 如果找不到播放列表，从全局查找锚点链接
-                            Elements playLinks = doc.select("a[href*='#m']");
-                            List<String> eps = new ArrayList<>();
-                            for (Element link : playLinks) {
-                                String epName = link.text();
-                                String epUrl = link.attr("href");
-                                if (!TextUtils.isEmpty(epName) && !TextUtils.isEmpty(epUrl) && epName.contains("第") && epName.contains("集")) {
-                                    eps.add(epName + "$" + epUrl);
-                                }
-                            }
-
-                            if (!eps.isEmpty() && episodes.isEmpty()) {
-                                episodes.add(join(eps, "#"));
-                            }
-                        }
+                    if (!eps.isEmpty()) {
+                        episodes.add(join(eps, "#"));
                     }
                 }
 
+                // 如果没有找到剧集，添加占位符
                 if (sources.isEmpty()) {
                     sources.add("默認");
                     episodes.add("暫無資源$");
