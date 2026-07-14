@@ -253,9 +253,9 @@ public class Glod extends Spider {
                         if (TextUtils.isEmpty(pic)) {
                             String style = img.attr("style");
                             if (!TextUtils.isEmpty(style) && style.contains("url")) {
-                                Matcher m = Pattern.compile("url\\(['\"]?([^'\"\\)]+)['\"]?\\)").matcher(style);
-                                if (m.find()) {
-                                    pic = m.group(1);
+                                Matcher styleMatcher = Pattern.compile("url\\(['\"]?([^'\"\\)]+)['\"]?\\)").matcher(style);
+                                if (styleMatcher.find()) {
+                                    pic = styleMatcher.group(1);
                                     if (debugCount < 3) {
                                         SpiderDebug.log("  ✅ 从style提取图片: " + pic.substring(0, Math.min(50, pic.length())));
                                     }
@@ -268,9 +268,9 @@ public class Glod extends Spider {
                         // 没有img标签，尝试从item本身提取背景图
                         String style = item.attr("style");
                         if (!TextUtils.isEmpty(style) && style.contains("url")) {
-                            Matcher m = Pattern.compile("url\\(['\"]?([^'\"\\)]+)['\"]?\\)").matcher(style);
-                            if (m.find()) {
-                                pic = m.group(1);
+                            Matcher bgMatcher = Pattern.compile("url\\(['\"]?([^'\"\\)]+)['\"]?\\)").matcher(style);
+                            if (bgMatcher.find()) {
+                                pic = bgMatcher.group(1);
                                 if (debugCount < 3) {
                                     SpiderDebug.log("  ✅ 从item style提取图片: " + pic.substring(0, Math.min(50, pic.length())));
                                 }
