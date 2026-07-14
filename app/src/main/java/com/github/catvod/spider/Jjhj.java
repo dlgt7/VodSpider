@@ -184,7 +184,7 @@ public class Jjhj extends Spider {
         }
 
         int page = Integer.parseInt(pg);
-        return Result.get().page(page, 72, 72, list).string();
+        return Result.get().vod(list).page(page, 72, 72, list.size()).string();
     }
 
     @Override
