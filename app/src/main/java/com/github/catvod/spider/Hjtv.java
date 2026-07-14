@@ -374,17 +374,17 @@ public class Hjtv extends Spider {
 
                 // 创建Vod对象
                 Vod vod = new Vod();
-                vod.setVod_id(vid);
-                vod.setVod_name(name);
-                vod.setVod_pic(fixUrl(pic));
-                vod.setVod_remarks(remarks);
-                vod.setVod_year(year);
-                vod.setVod_area(area);
-                vod.setVod_director(director);
-                vod.setVod_actor(actor);
-                vod.setVod_content(desc);
-                vod.setVod_play_from(join(playFromList, "$$$"));
-                vod.setVod_play_url(join(playUrlList, "$$$"));
+                vod.setVodId(vid);
+                vod.setVodName(name);
+                vod.setVodPic(fixUrl(pic));
+                vod.setVodRemarks(remarks);
+                vod.setVodYear(year);
+                vod.setVodArea(area);
+                vod.setVodDirector(director);
+                vod.setVodActor(actor);
+                vod.setVodContent(desc);
+                vod.setVodPlayFrom(join(playFromList, "$$$"));
+                vod.setVodPlayUrl(join(playUrlList, "$$$"));
 
                 result.add(vod);
 
@@ -551,7 +551,6 @@ public class Hjtv extends Spider {
         return sb.toString();
     }
 
-    @Override
     public String getName() {
         return "韩剧TV";
     }
