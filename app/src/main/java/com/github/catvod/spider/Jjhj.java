@@ -289,8 +289,8 @@ public class Jjhj extends Spider {
                 }
 
                 Vod vod = new Vod(id, name, pic);
-                vod.setVod_play_from(join(sources, "$$$"));
-                vod.setVod_play_url(join(episodes, "$$$"));
+                vod.setVodPlayFrom(join(sources, "$$$"));
+                vod.setVodPlayUrl(join(episodes, "$$$"));
 
                 list.add(vod);
             }
