@@ -148,12 +148,16 @@ public class Glod extends Spider {
     }
 
     /**
-     * 修复图片 URL
+     * 提取图片（尝试多种属性 + 调试日志）
      */
     private String fixImg(String url) {
         if (TextUtils.isEmpty(url)) return "";
         if (url.startsWith("//")) return "https:" + url;
         if (url.startsWith("/")) return IMG_CDN + url;
+        // 调试：记录修复后的图片URL
+        if (!url.startsWith("http")) {
+            SpiderDebug.log("异常图片URL: " + url);
+        }
         return url;
     }
 
@@ -205,23 +209,26 @@ public class Glod extends Spider {
                     if (!imgs.isEmpty()) {
                         Element img = imgs.first();
 
-                        // 尝试多种图片属性
-                        pic = img.attr("data-original");
-                        if (TextUtils.isEmpty(pic)) {
-                            pic = img.attr("data-src");
-                        }
-                        if (TextUtils.isEmpty(pic)) {
-                            pic = img.attr("src");
-                        }
-                        if (TextUtils.isEmpty(pic)) {
-                            pic = img.attr("data-lazy-src");
+                        // 尝试所有可能的图片属性（按优先级）
+                        String[] imgAttrs = {
+                            "data-original", "data-src", "data-lazy-src",
+                            "data-lazyload", "data-url", "src"
+                        };
+
+                        for (String attr : imgAttrs) {
+                            String val = img.attr(attr);
+                            if (!TextUtils.isEmpty(val)) {
+                                pic = val;
+                                break;
+                            }
                         }
 
                         pic = fixImg(pic);
 
-                        // 调试：记录前3个图片 URL
-                        if (debugCount < 3 && !TextUtils.isEmpty(pic)) {
-                            SpiderDebug.log("图片URL提取成功: " + pic);
+                        // 调试：记录前5个图片提取情况
+                        if (debugCount < 5) {
+                            String attrsUsed = pic.isEmpty() ? "所有属性都为空" : pic;
+                            SpiderDebug.log("图片" + debugCount + ": " + attrsUsed);
                             debugCount++;
                         }
                     }
@@ -336,7 +343,7 @@ public class Glod extends Spider {
                     }
                 }
 
-                // 提取图片（多种选择器尝试）
+                // 提取图片（增强版：覆盖所有可能的属性）
                 String pic = "";
                 String[] imgSelectors = {
                     "img[class*=poster]",
@@ -346,46 +353,89 @@ public class Glod extends Spider {
                     "div[class*=detail] img",
                     "img"
                 };
+                String[] imgAttrs = {
+                    "data-original", "data-src", "data-lazy-src",
+                    "data-lazyload", "data-url", "src"
+                };
+
                 for (String selector : imgSelectors) {
                     Elements imgs = doc.select(selector);
                     if (!imgs.isEmpty()) {
-                        pic = imgs.first().attr("data-original");
-                        if (TextUtils.isEmpty(pic)) {
-                            pic = imgs.first().attr("data-src");
-                        }
-                        if (TextUtils.isEmpty(pic)) {
-                            pic = imgs.first().attr("src");
+                        Element img = imgs.first();
+                        // 尝试所有可能的属性
+                        for (String attr : imgAttrs) {
+                            String val = img.attr(attr);
+                            if (!TextUtils.isEmpty(val)) {
+                                pic = val;
+                                break;
+                            }
                         }
                         if (!TextUtils.isEmpty(pic)) {
                             pic = fixImg(pic);
+                            SpiderDebug.log("详情页图片提取成功: " + pic);
                             break;
                         }
                     }
                 }
 
-                // 提取剧集列表（多种选择器尝试）
+                // 提取剧集列表（增强版：调试+容错）
                 List<String> episodes = new ArrayList<>();
                 String[] epSelectors = {
-                    "a[href*=/vod/play/]",
+                    "a[href*=/vod/play/]",      // 标准选择器
+                    "a[href*=sid]",              // sid参数匹配
                     "div[class*=playlist] a",
                     "ul[class*=episode] a"
                 };
+
                 for (String selector : epSelectors) {
                     Elements epLinks = doc.select(selector);
+                    SpiderDebug.log("选集选择器 '" + selector + "' 找到 " + epLinks.size() + " 个元素");
+
                     if (!epLinks.isEmpty()) {
                         int i = 1;
                         for (Element a : epLinks) {
-                            String epName = a.text().trim();
-                            if (TextUtils.isEmpty(epName)) {
-                                epName = "第" + i + "集";
-                            }
-                            String epUrl = a.attr("href");
-                            if (!TextUtils.isEmpty(epUrl) && epUrl.contains("/vod/play/")) {
-                                episodes.add(epName + "$" + epUrl);
+                            try {
+                                // 提取选集名称（多级fallback）
+                                String epName = a.text().trim();
+                                if (TextUtils.isEmpty(epName)) {
+                                    epName = a.attr("title");
+                                }
+                                if (TextUtils.isEmpty(epName)) {
+                                    // 尝试从href中提取集数
+                                    String href = a.attr("href");
+                                    if (href.contains("/sid/")) {
+                                        // 格式：/vod/play/145218/sid/1294819
+                                        epName = "第" + i + "集";
+                                    } else {
+                                        epName = "第" + i + "集";
+                                    }
+                                }
+
+                                // 提取播放URL
+                                String epUrl = a.attr("href");
+                                if (!TextUtils.isEmpty(epUrl)) {
+                                    // 确保URL包含播放路径
+                                    if (epUrl.contains("/vod/play/") || epUrl.contains("sid")) {
+                                        episodes.add(epName + "$" + epUrl);
+
+                                        // 调试：记录前5个选集
+                                        if (episodes.size() <= 5) {
+                                            SpiderDebug.log("选集" + episodes.size() + ": " + epName + " -> " + epUrl);
+                                        }
+                                    }
+                                }
+
                                 i++;
+                            } catch (Exception e) {
+                                SpiderDebug.log("选集解析异常: " + e.getMessage());
                             }
                         }
-                        if (!episodes.isEmpty()) break;
+
+                        // 如果成功提取，退出循环
+                        if (!episodes.isEmpty()) {
+                            SpiderDebug.log("选集提取完成: 共 " + episodes.size() + " 集");
+                            break;
+                        }
                     }
                 }
 
