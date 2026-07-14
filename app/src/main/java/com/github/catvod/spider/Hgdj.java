@@ -465,12 +465,12 @@ public class Hgdj extends Spider {
                     // 提取线路名称（按空格分割，过滤空字符串）
                     String[] parts = section.split("\\s+");
                     for (String part : parts) {
-                        String name = part.trim();
+                        String routeName = part.trim();
                         // 排除空字符串、纯数字、特殊字符
-                        if (!TextUtils.isEmpty(name) &&
-                            !name.matches("\\d+\\.?\\d*") &&  // 排除纯数字
-                            !name.matches("[\\s\\-]+")) {      // 排除特殊字符
-                            sourceNames.add(name);
+                        if (!TextUtils.isEmpty(routeName) &&
+                            !routeName.matches("\\d+\\.?\\d*") &&  // 排除纯数字
+                            !routeName.matches("[\\s\\-]+")) {      // 排除特殊字符
+                            sourceNames.add(routeName);
                         }
                     }
                 }
@@ -573,8 +573,8 @@ public class Hgdj extends Spider {
         List<Vod> list = new ArrayList<>();
 
         try {
-            // 搜索URL格式：/kpsearch/------------关键词-/
-            String searchUrl = siteUrl + "/kpsearch/------------" + Uri.encode(key) + "-/";
+            // 搜索URL格式：/kpsearch/-------------关键词-/（13个短横线）
+            String searchUrl = siteUrl + "/kpsearch/-------------" + Uri.encode(key) + "-/";
             Document doc = Jsoup.parse(OkHttp.string(searchUrl, headers));
 
             // 解析搜索结果
