@@ -22,6 +22,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import javax.crypto.Cipher;
+import javax.crypto.spec.IvParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+
 /**
  * 韩剧网爬虫
  * 网站地址：https://321tw.com（新地址：https://www.3kor.com）
@@ -284,7 +288,8 @@ public class Hjw extends Spider {
 
                     for (Element link : playLinks) {
                         String epName = link.text();
-                        if (TextUtils.isEmpty(epName) || !epName.contains("第") || !epName.contains("集")) continue;
+                        // 选集格式：韩剧"第01集"、电影"HD中字"、综艺"20220403期"
+                        if (TextUtils.isEmpty(epName)) continue;
 
                         // 从onclick提取选集标识，格式：bb_a('3707_1_1','第01集',event)
                         String onclick = link.attr("onclick");
@@ -423,34 +428,41 @@ public class Hjw extends Spider {
     @Override
     public String playerContent(String flag, String id, List<String> vipFlags) {
         try {
-            // 播放URL格式：/u/u1.php?ud=3707_1_1
-            // 网站JS逻辑：fetch('/u/u1.php?ud=xxx') → AES-CBC解密 → /m3/edit-down.php?url=解密后m3u8
-            // 客户端嗅探：将详情页URL作为嗅探入口，让WebView加载并嗅探m3u8/mp4
+            // 播放流程：fetch('/u/u1.php?ud=xxx') → base64解码 → AES-CBC解密 → m3u8直链
+            // AES key: "my-to-newhan-2025"（补零到32字节）
+            // AES mode: CBC, IV: 解密数据前16字节
 
-            String playUrl = id;
+            // 构造API URL
+            String apiUrl = id;
             if (!id.startsWith("http")) {
-                playUrl = siteUrl + id;
+                apiUrl = siteUrl + id;
             }
 
-            // 构造详情页URL作为嗅探入口（客户端会加载此页面并嗅探视频流）
-            // 从播放标识提取详情页ID：/u/u1.php?ud=3707_1_1 → 3707
-            String sniffUrl = playUrl;
-            if (id.contains("/u/u1.php?ud=")) {
-                String udParam = id.replace("/u/u1.php?ud=", "");
-                String[] parts = udParam.split("_");
-                if (parts.length >= 1) {
-                    sniffUrl = siteUrl + "/detail/" + parts[0] + ".html";
-                }
+            // 1. 请求加密的播放数据
+            Map<String, String> reqHeaders = new HashMap<>();
+            reqHeaders.put("User-Agent", Util.CHROME);
+            reqHeaders.put("Referer", siteUrl);
+            String encryptedB64 = OkHttp.string(apiUrl, reqHeaders);
+
+            if (TextUtils.isEmpty(encryptedB64) || encryptedB64.contains("maomaomao")) {
+                return Result.get().parse(0).url("").string();
             }
 
+            // 2. AES-CBC解密
+            String m3u8Url = aesDecrypt(encryptedB64.trim(), "my-to-newhan-2025");
+
+            if (TextUtils.isEmpty(m3u8Url)) {
+                return Result.get().parse(0).url("").string();
+            }
+
+            // 3. 返回m3u8直链（parse=0直接播放）
             Map<String, String> header = new HashMap<>();
             header.put("User-Agent", Util.CHROME);
             header.put("Referer", siteUrl);
 
-            // parse=1: 客户端嗅探模式，加载详情页并嗅探视频流
             return Result.get()
-                    .parse(1)
-                    .url(sniffUrl)
+                    .parse(0)
+                    .url(m3u8Url)
                     .header(header)
                     .string();
 
@@ -458,7 +470,44 @@ public class Hjw extends Spider {
             e.printStackTrace();
         }
 
-        return Result.get().parse(1).url("").string();
+        return Result.get().parse(0).url("").string();
+    }
+
+    /**
+     * AES-CBC解密（与网站home.js中的aesDecrypt一致）
+     * key: 截取前32字符，不足补\0到32字节
+     * base64解码后: 前16字节=IV, 剩余=密文
+     */
+    private String aesDecrypt(String encryptedB64, String keyStr) {
+        try {
+            // 构造32字节key（与JS: key.slice(0,32).padEnd(32,'\0') 一致）
+            byte[] rawKey = new byte[32];
+            byte[] keyBytes = keyStr.getBytes("UTF-8");
+            System.arraycopy(keyBytes, 0, rawKey, 0, Math.min(keyBytes.length, 32));
+
+            // Base64解码
+            byte[] encryptedBytes = android.util.Base64.decode(encryptedB64, android.util.Base64.DEFAULT);
+
+            if (encryptedBytes.length < 16) return "";
+
+            // 前16字节为IV，剩余为密文
+            byte[] iv = new byte[16];
+            System.arraycopy(encryptedBytes, 0, iv, 0, 16);
+            byte[] ciphertext = new byte[encryptedBytes.length - 16];
+            System.arraycopy(encryptedBytes, 16, ciphertext, 0, ciphertext.length);
+
+            // AES-CBC解密
+            SecretKeySpec secretKey = new SecretKeySpec(rawKey, "AES");
+            IvParameterSpec ivSpec = new IvParameterSpec(iv);
+            Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+            cipher.init(Cipher.DECRYPT_MODE, secretKey, ivSpec);
+            byte[] decrypted = cipher.doFinal(ciphertext);
+
+            return new String(decrypted, "UTF-8").trim();
+        } catch (Exception e) {
+            e.printStackTrace();
+            return "";
+        }
     }
 
     /**
