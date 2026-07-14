@@ -1,0 +1,430 @@
+package com.github.catvod.spider;
+
+import android.content.Context;
+import android.net.Uri;
+import android.text.TextUtils;
+
+import com.github.catvod.bean.Class;
+import com.github.catvod.bean.Result;
+import com.github.catvod.bean.Vod;
+import com.github.catvod.crawler.Spider;
+import com.github.catvod.net.OkHttp;
+import com.github.catvod.utils.Util;
+
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
+import org.jsoup.select.Elements;
+
+import java.net.URLEncoder;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * 久久韩剧爬虫
+ * 网站地址：https://www.jjhj.cc
+ * 类型：韩剧、日剧、泰剧、韩国电影、综艺
+ *
+ * @author Trae
+ * @date 2026-07-14
+ */
+public class Jjhj extends Spider {
+
+    private static final String SITE_URL = "https://www.jjhj.cc";
+    private String siteUrl = SITE_URL;
+
+    private final Map<String, String> headers = new HashMap<String, String>() {{
+        put("User-Agent", Util.CHROME);
+        put("Referer", SITE_URL);
+    }};
+
+    @Override
+    public void init(Context context, String extend) throws Exception {
+        super.init(context);
+
+        if (!TextUtils.isEmpty(extend)) {
+            extend = extend.trim();
+            if (extend.startsWith("http")) {
+                siteUrl = extend;
+            }
+        }
+    }
+
+    @Override
+    public String homeContent(boolean filter) {
+        List<Class> classes = new ArrayList<>();
+
+        // 分类列表（根据网站实际分类）
+        classes.add(new Class("1", "同步剧场"));
+        classes.add(new Class("3", "日剧"));
+        classes.add(new Class("4", "泰剧"));
+        classes.add(new Class("5", "韩国电影"));
+        classes.add(new Class("6", "综艺"));
+
+        List<Vod> list = new ArrayList<>();
+
+        try {
+            Document doc = Jsoup.parse(OkHttp.string(siteUrl, headers));
+
+            List<String> seen = new ArrayList<>();
+
+            // 提取热播影片区域的视频
+            for (Element item : doc.select("div.hl-vod-list li a, div.hl-r-list li a")) {
+                String href = item.attr("href");
+                String title = item.attr("title");
+                String pic = "";
+
+                if (TextUtils.isEmpty(title)) {
+                    Element titleElem = item.selectFirst("span, p");
+                    if (titleElem != null) {
+                        title = titleElem.text();
+                    }
+                }
+
+                Element img = item.selectFirst("img");
+                if (img != null) {
+                    pic = img.attr("data-original");
+                    if (TextUtils.isEmpty(pic)) {
+                        pic = img.attr("data-src");
+                    }
+                    if (TextUtils.isEmpty(pic)) {
+                        pic = img.attr("src");
+                    }
+                }
+
+                if (TextUtils.isEmpty(href) || TextUtils.isEmpty(title)) continue;
+
+                // 从详情页URL提取ID（格式：/view/11789.html）
+                String vid = href;
+                if (href.contains("/view/")) {
+                    String[] parts = href.split("/");
+                    for (String part : parts) {
+                        if (part.contains(".html")) {
+                            vid = part.replace(".html", "");
+                            break;
+                        }
+                    }
+                }
+
+                if (seen.contains(vid)) continue;
+                seen.add(vid);
+
+                pic = fixUrl(pic);
+
+                list.add(new Vod(vid, title, pic));
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        return Result.string(classes, list);
+    }
+
+    @Override
+    public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) {
+        List<Vod> list = new ArrayList<>();
+
+        try {
+            // 分类页URL：/frim/list{分类ID}-{页码}.html
+            String url = siteUrl + "/frim/list" + tid + "-" + pg + ".html";
+
+            Document doc = Jsoup.parse(OkHttp.string(url, headers));
+
+            List<String> seen = new ArrayList<>();
+
+            for (Element item : doc.select("div.hl-vod-list li a, div.hl-r-list li a, ul.hl-vod-list li a")) {
+                String href = item.attr("href");
+                String title = item.attr("title");
+                String pic = "";
+
+                if (TextUtils.isEmpty(title)) {
+                    Element titleElem = item.selectFirst("span, p");
+                    if (titleElem != null) {
+                        title = titleElem.text();
+                    }
+                }
+
+                Element img = item.selectFirst("img");
+                if (img != null) {
+                    pic = img.attr("data-original");
+                    if (TextUtils.isEmpty(pic)) {
+                        pic = img.attr("data-src");
+                    }
+                    if (TextUtils.isEmpty(pic)) {
+                        pic = img.attr("src");
+                    }
+                }
+
+                if (TextUtils.isEmpty(href) || TextUtils.isEmpty(title)) continue;
+
+                String vid = href;
+                if (href.contains("/view/")) {
+                    String[] parts = href.split("/");
+                    for (String part : parts) {
+                        if (part.contains(".html")) {
+                            vid = part.replace(".html", "");
+                            break;
+                        }
+                    }
+                }
+
+                if (seen.contains(vid)) continue;
+                seen.add(vid);
+
+                pic = fixUrl(pic);
+
+                list.add(new Vod(vid, title, pic));
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        int page = Integer.parseInt(pg);
+        return Result.get().page(page, 72, 72, list).string();
+    }
+
+    @Override
+    public String detailContent(List<String> ids) {
+        List<Vod> list = new ArrayList<>();
+
+        try {
+            for (String id : ids) {
+                // 详情页URL：/view/{ID}.html
+                String url = siteUrl + "/view/" + id + ".html";
+
+                Document doc = Jsoup.parse(OkHttp.string(url, headers));
+
+                // 提取剧名
+                String name = "";
+                Element titleElem = doc.selectFirst("h1, h2, .title");
+                if (titleElem != null) {
+                    name = titleElem.text();
+                }
+
+                // 提取图片
+                String pic = "";
+                Element img = doc.selectFirst(".content img, .detail img, .hl-content img");
+                if (img != null) {
+                    pic = img.attr("data-original");
+                    if (TextUtils.isEmpty(pic)) {
+                        pic = img.attr("data-src");
+                    }
+                    if (TextUtils.isEmpty(pic)) {
+                        pic = img.attr("src");
+                    }
+                    pic = fixUrl(pic);
+                }
+
+                // 提取播放源和剧集
+                List<String> sources = new ArrayList<>();
+                List<String> episodes = new ArrayList<>();
+
+                // 查找所有播放源
+                Elements sourceTabs = doc.select("div.hl-play-source a[data-toggle], div.hl-tabs a[data-toggle]");
+
+                if (sourceTabs.isEmpty()) {
+                    // 如果没有找到播放源标签，使用默认方式
+                    Elements playLinks = doc.select("div.hl-play-list a[href*=/play/]");
+                    if (!playLinks.isEmpty()) {
+                        sources.add("默认");
+
+                        List<String> eps = new ArrayList<>();
+                        for (Element link : playLinks) {
+                            String epName = link.text();
+                            String epUrl = link.attr("href");
+                            if (!TextUtils.isEmpty(epName) && !TextUtils.isEmpty(epUrl)) {
+                                eps.add(epName + "$" + epUrl);
+                            }
+                        }
+
+                        if (!eps.isEmpty()) {
+                            episodes.add(join(eps, "#"));
+                        }
+                    }
+                } else {
+                    for (Element sourceTab : sourceTabs) {
+                        String sourceName = sourceTab.attr("title");
+                        if (TextUtils.isEmpty(sourceName)) {
+                            sourceName = sourceTab.text();
+                        }
+                        if (TextUtils.isEmpty(sourceName)) {
+                            sourceName = "线路" + (sources.size() + 1);
+                        }
+
+                        sources.add(sourceName);
+
+                        // 查找该播放源对应的剧集列表
+                        String dataToggle = sourceTab.attr("data-toggle");
+                        if (!TextUtils.isEmpty(dataToggle)) {
+                            Element playList = doc.selectFirst("div#" + dataToggle);
+                            if (playList == null) {
+                                playList = doc.selectFirst("ul#" + dataToggle);
+                            }
+
+                            if (playList != null) {
+                                List<String> eps = new ArrayList<>();
+                                for (Element link : playList.select("a[href*=/play/]")) {
+                                    String epName = link.text();
+                                    String epUrl = link.attr("href");
+                                    if (!TextUtils.isEmpty(epName) && !TextUtils.isEmpty(epUrl)) {
+                                        eps.add(epName + "$" + epUrl);
+                                    }
+                                }
+
+                                if (!eps.isEmpty()) {
+                                    episodes.add(join(eps, "#"));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (sources.isEmpty()) {
+                    sources.add("默认");
+                    episodes.add("暂无资源$");
+                }
+
+                Vod vod = new Vod(id, name, pic);
+                vod.setVod_play_from(join(sources, "$$$"));
+                vod.setVod_play_url(join(episodes, "$$$"));
+
+                list.add(vod);
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        return Result.string(list);
+    }
+
+    @Override
+    public String searchContent(String key, boolean quick) {
+        List<Vod> list = new ArrayList<>();
+
+        try {
+            // 搜索URL：/search.php?searchword={关键词}
+            String url = siteUrl + "/search.php?searchword=" + URLEncoder.encode(key, "UTF-8");
+
+            Document doc = Jsoup.parse(OkHttp.string(url, headers));
+
+            List<String> seen = new ArrayList<>();
+
+            for (Element item : doc.select("div.hl-vod-list li a, div.search-list li a, ul li a[href*=/view/]")) {
+                String href = item.attr("href");
+                String title = item.attr("title");
+                String pic = "";
+
+                if (TextUtils.isEmpty(title)) {
+                    Element titleElem = item.selectFirst("span, p");
+                    if (titleElem != null) {
+                        title = titleElem.text();
+                    }
+                }
+
+                Element img = item.selectFirst("img");
+                if (img != null) {
+                    pic = img.attr("data-original");
+                    if (TextUtils.isEmpty(pic)) {
+                        pic = img.attr("data-src");
+                    }
+                    if (TextUtils.isEmpty(pic)) {
+                        pic = img.attr("src");
+                    }
+                }
+
+                if (TextUtils.isEmpty(href) || TextUtils.isEmpty(title)) continue;
+
+                String vid = href;
+                if (href.contains("/view/")) {
+                    String[] parts = href.split("/");
+                    for (String part : parts) {
+                        if (part.contains(".html")) {
+                            vid = part.replace(".html", "");
+                            break;
+                        }
+                    }
+                }
+
+                if (seen.contains(vid)) continue;
+                seen.add(vid);
+
+                pic = fixUrl(pic);
+
+                list.add(new Vod(vid, title, pic));
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        return Result.string(list);
+    }
+
+    @Override
+    public String playerContent(String flag, String id, List<String> vipFlags) {
+        try {
+            // 如果是完整的播放链接，直接返回
+            String playUrl = id;
+            if (!id.startsWith("http")) {
+                playUrl = siteUrl + id;
+            }
+
+            // MacCMS站点，返回parse=1让客户端解析器处理
+            Map<String, String> header = new HashMap<>();
+            header.put("User-Agent", Util.CHROME);
+            header.put("Referer", siteUrl);
+
+            return Result.get()
+                    .parse(1)
+                    .url(playUrl)
+                    .header(header)
+                    .string();
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        return Result.get().parse(1).url("").string();
+    }
+
+    /**
+     * 修正URL（补全协议和域名）
+     */
+    private String fixUrl(String url) {
+        if (TextUtils.isEmpty(url)) {
+            return "";
+        }
+
+        if (url.startsWith("//")) {
+            return "https:" + url;
+        } else if (url.startsWith("/")) {
+            return siteUrl + url;
+        }
+
+        return url;
+    }
+
+    /**
+     * 连接字符串列表
+     */
+    private String join(List<String> list, String separator) {
+        if (list == null || list.isEmpty()) {
+            return "";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < list.size(); i++) {
+            if (i > 0) {
+                sb.append(separator);
+            }
+            sb.append(list.get(i));
+        }
+
+        return sb.toString();
+    }
+}
