@@ -70,66 +70,106 @@ public class Hgdj extends Spider {
         try {
             Document doc = Jsoup.parse(OkHttp.string(siteUrl, headers));
 
-            // 解析首页推荐视频（修正：使用更精确的选择器）
             List<String> seen = new ArrayList<>();
 
+            // 1. 提取热播榜（TOP 1/2/3）- 使用播放链接（/kpplay/）
+            for (Element link : doc.select("a[href*=/kpplay/]")) {
+                String playUrl = link.attr("href");
+                if (TextUtils.isEmpty(playUrl) || !playUrl.contains("/kpplay/")) continue;
+
+                // 从播放链接提取video_id（格式：/kpplay/dBBHPS-1-1/）
+                String[] parts = playUrl.split("/");
+                if (parts.length < 4) continue;
+
+                String lastPart = parts[parts.length - 1]; // dBBHPS-1-1
+                String videoId = lastPart.split("-")[0]; // dBBHPS
+
+                // 构造详情链接
+                String vid = "/kpd/" + videoId + "/";
+
+                // 去重
+                if (seen.contains(videoId)) continue;
+                seen.add(videoId);
+
+                // 从链接文本提取备注（如"全集免费观看"）
+                String remark = link.text().trim();
+                if (TextUtils.isEmpty(remark) || remark.contains("立即播放")) {
+                    continue; // 跳过"立即播放"链接
+                }
+
+                // 尝试从父元素提取标题（格式：## 标题）
+                String name = "";
+                Element parent = link.parent();
+                if (parent != null) {
+                    // 查找标题元素（h1, h2, h3等）
+                    Element titleElem = parent.selectFirst("h1, h2, h3, strong, b");
+                    if (titleElem != null) {
+                        name = titleElem.text().trim();
+                    }
+                }
+
+                // 如果没有找到标题，尝试从页面其他位置提取
+                if (TextUtils.isEmpty(name)) {
+                    // 查找包含video_id的标题元素
+                    for (Element elem : doc.select("h1, h2, h3")) {
+                        String text = elem.text();
+                        if (!TextUtils.isEmpty(text) && !text.contains("TOP")) {
+                            name = text;
+                            break;
+                        }
+                    }
+                }
+
+                if (!TextUtils.isEmpty(name) && !TextUtils.isEmpty(videoId)) {
+                    list.add(new Vod(vid, name, "", remark));
+                }
+            }
+
+            // 2. 提取正在热播短剧推荐 - 使用详情链接（/kpd/）
             for (Element link : doc.select("a[href*=/kpd/]")) {
                 String vid = link.attr("href");
                 if (TextUtils.isEmpty(vid) || !vid.contains("/kpd/")) continue;
 
+                String videoId = vid.replace("/kpd/", "").replace("/", "");
+
                 // 去重
-                if (seen.contains(vid)) continue;
-                seen.add(vid);
+                if (seen.contains(videoId)) continue;
+                seen.add(videoId);
 
                 String name = "";
                 String pic = "";
                 String remark = "";
 
-                // 提取标题（优先从title属性，其次从链接文本）
+                // 提取标题（优先从title属性）
                 name = link.attr("title");
                 if (TextUtils.isEmpty(name)) {
                     name = link.text().trim();
-                    // 移除评分和状态信息
-                    if (name.contains("更新") || name.contains("全集")) {
-                        // 如果链接文本包含评分和状态，尝试从父元素提取标题
-                        Element parent = link.parent();
-                        if (parent != null) {
-                            Element titleLink = parent.selectFirst("a[title]");
-                            if (titleLink != null) {
-                                name = titleLink.attr("title");
-                            }
-                        }
-                    }
                 }
 
-                // 提取图片（懒加载）
+                // 提取图片
                 Element img = link.selectFirst("img");
                 if (img != null) {
-                    pic = img.attr("data-original");
+                    pic = img.attr("src");
                     if (TextUtils.isEmpty(pic)) {
-                        pic = img.attr("data-src");
+                        pic = img.attr("data-original");
                     }
                     if (TextUtils.isEmpty(pic)) {
-                        pic = img.attr("src");
+                        pic = img.attr("data-src");
                     }
                     pic = fixUrl(pic);
                 }
 
-                // 提取备注（评分和状态）
+                // 提取备注
                 String linkText = link.text().trim();
-                if (!TextUtils.isEmpty(linkText)) {
-                    // 提取评分和状态（如：7.0更新全集）
-                    if (linkText.matches(".*\\d+\\.\\d+.*")) {
-                        remark = linkText;
-                    }
+                if (!TextUtils.isEmpty(linkText) && linkText.matches(".*\\d+\\.\\d+.*")) {
+                    remark = linkText;
                 }
 
-                if (!TextUtils.isEmpty(name) && vid.length() > 5) {
+                if (!TextUtils.isEmpty(name) && !TextUtils.isEmpty(videoId)) {
                     list.add(new Vod(vid, name, pic, remark));
                 }
 
-                // 限制首页推荐数量
-                if (list.size() >= 20) break;
+                if (list.size() >= 30) break;
             }
 
         } catch (Exception e) {
@@ -176,56 +216,70 @@ public class Hgdj extends Spider {
             String url = urlBuilder.toString();
             Document doc = Jsoup.parse(OkHttp.string(url, headers));
 
-            // 解析视频列表（修正：使用更精确的选择器）
+            // 解析视频列表（修正：处理两种不同的链接格式）
+            List<String> seen = new ArrayList<>();
+
             for (Element link : doc.select("a[href*=/kpd/]")) {
                 String vid = link.attr("href");
                 if (TextUtils.isEmpty(vid) || !vid.contains("/kpd/")) continue;
+
+                String videoId = vid.replace("/kpd/", "").replace("/", "");
+
+                // 去重
+                if (seen.contains(videoId)) continue;
+                seen.add(videoId);
 
                 String name = "";
                 String pic = "";
                 String remark = "";
 
-                // 提取标题（从链接文本或title属性获取）
+                // 提取标题（从链接文本或title属性）
                 name = link.attr("title");
                 if (TextUtils.isEmpty(name)) {
                     name = link.text().trim();
+                    // 如果文本包含评分和状态，提取备注
+                    if (name.matches(".*\\d+\\.\\d+.*")) {
+                        remark = name;
+                        // 尝试从父元素提取标题
+                        Element parent = link.parent();
+                        if (parent != null) {
+                            Element titleLink = parent.selectFirst("a[title]");
+                            if (titleLink != null) {
+                                name = titleLink.attr("title");
+                            }
+                        }
+                    }
                 }
 
-                // 提取图片（懒加载）
+                // 提取图片（修正：处理Markdown格式的图片链接）
                 Element img = link.selectFirst("img");
                 if (img != null) {
-                    pic = img.attr("data-original");
+                    // 优先使用src属性（非懒加载）
+                    pic = img.attr("src");
+                    if (TextUtils.isEmpty(pic)) {
+                        pic = img.attr("data-original");
+                    }
                     if (TextUtils.isEmpty(pic)) {
                         pic = img.attr("data-src");
                     }
-                    if (TextUtils.isEmpty(pic)) {
-                        pic = img.attr("src");
-                    }
                     pic = fixUrl(pic);
+                } else {
+                    // 如果没有img标签，尝试从链接文本提取图片URL（Markdown格式）
+                    String linkText = link.text();
+                    if (linkText.contains("http") && linkText.contains(".jpg")) {
+                        // 提取URL（格式：图片描述(图片URL)）
+                        int start = linkText.indexOf("http");
+                        int end = linkText.indexOf(".jpg") + 4;
+                        if (end > start) {
+                            pic = linkText.substring(start, end);
+                        }
+                    }
                 }
 
-                // 提取备注（评分和状态）
-                // 从链接文本中提取（格式：评分状态）
-                String linkText = link.text().trim();
-                if (!TextUtils.isEmpty(linkText) && linkText.contains("集")) {
-                    remark = linkText;
-                }
-
-                if (!TextUtils.isEmpty(name) && vid.length() > 5) {
+                if (!TextUtils.isEmpty(name) && !TextUtils.isEmpty(videoId)) {
                     list.add(new Vod(vid, name, pic, remark));
                 }
             }
-
-            // 去重（同一视频可能被多次匹配）
-            List<Vod> uniqueList = new ArrayList<>();
-            List<String> seen = new ArrayList<>();
-            for (Vod vod : list) {
-                if (!seen.contains(vod.getVodId())) {
-                    seen.add(vod.getVodId());
-                    uniqueList.add(vod);
-                }
-            }
-            list = uniqueList;
 
             // 解析分页信息
             String pageText = doc.text();
@@ -273,7 +327,7 @@ public class Hgdj extends Spider {
             String remarks = "";
             String brief = "";
 
-            // 标题（修正：提取书名号内的内容）
+            // 标题（提取书名号内的内容）
             Element titleElem = doc.selectFirst("h1, h2, title");
             if (titleElem != null) {
                 name = titleElem.text().trim();
@@ -283,20 +337,20 @@ public class Hgdj extends Spider {
                 }
             }
 
-            // 图片（修正：使用更通用的选择器）
+            // 图片（使用更通用的选择器）
             Element imgElem = doc.selectFirst("img[src*='upload'], img[data-original], img[data-src], img[src]");
             if (imgElem != null) {
-                pic = imgElem.attr("data-original");
-                if (TextUtils.isEmpty(pic)) {
-                    pic = imgElem.attr("data-src");
+                pic = imgElem.attr("src");
+                if (TextUtils.isEmpty(pic) || pic.contains("loading")) {
+                    pic = imgElem.attr("data-original");
                 }
                 if (TextUtils.isEmpty(pic)) {
-                    pic = imgElem.attr("src");
+                    pic = imgElem.attr("data-src");
                 }
                 pic = fixUrl(pic);
             }
 
-            // 从页面文本中提取参数信息（修正：使用正则提取）
+            // 从页面文本中提取参数信息
             String pageText = doc.text();
 
             // 提取地区
@@ -364,7 +418,7 @@ public class Hgdj extends Spider {
                 }
             }
 
-            // 提取播放线路和剧集（修正：使用实际的选择器）
+            // 提取播放线路和剧集（重写：简化逻辑）
             StringBuilder vodPlayFrom = new StringBuilder();
             StringBuilder vodPlayUrl = new StringBuilder();
 
@@ -372,82 +426,23 @@ public class Hgdj extends Spider {
             Elements playLinks = doc.select("a[href*=/kpplay/]");
 
             if (playLinks.size() > 0) {
-                // 分析播放URL，提取线路信息
-                // URL格式：/kpplay/{video_id}-{线路序号}-{集数序号}/
-                Map<String, List<String[]>> sourceMap = new HashMap<>();
+                // 简单模式：所有剧集放在一个线路中
+                vodPlayFrom.append("默认$$$");
 
-                for (Element link : playLinks) {
+                for (int i = 0; i < playLinks.size(); i++) {
+                    Element link = playLinks.get(i);
                     String playUrl = link.attr("href");
                     String epName = link.text().trim();
+
                     if (TextUtils.isEmpty(epName)) {
                         epName = "全集";
                     }
 
-                    // 从URL中提取线路序号
-                    String[] parts = playUrl.split("/");
-                    if (parts.length >= 4) {
-                        String lastPart = parts[parts.length - 1]; // dBByD4-2-1
-                        String[] ids_parts = lastPart.split("-");
-                        if (ids_parts.length >= 3) {
-                            String sourceId = ids_parts[1]; // 线路序号
+                    vodPlayUrl.append(epName).append("$").append(playUrl);
 
-                            // 线路名称（从页面文本中提取，如果找不到就用默认名称）
-                            String sourceName = "线路" + sourceId;
-
-                            // 尝试从页面提取线路名称（如果有）
-                            if (!sourceMap.containsKey(sourceId)) {
-                                sourceMap.put(sourceId, new ArrayList<>());
-                            }
-
-                            sourceMap.get(sourceId).add(new String[]{epName, playUrl});
-                        }
+                    if (i < playLinks.size() - 1) {
+                        vodPlayUrl.append("#");
                     }
-                }
-
-                // 尝试从页面提取线路名称
-                Elements sourceElements = doc.select("div, span, p");
-                String pageContent = doc.text();
-                if (pageContent.contains("剧场")) {
-                    // 提取线路名称（如：河马剧场、顶好剧场）
-                    String[] lines = pageContent.split("\n");
-                    int sourceIndex = 1;
-                    for (String line : lines) {
-                        if (line.contains("剧场") && !line.contains("相关")) {
-                            String sourceName = line.trim();
-                            if (sourceMap.containsKey(String.valueOf(sourceIndex))) {
-                                // 更新线路名称
-                                sourceName = sourceName.split(" ")[0]; // 只取第一个词
-                            }
-                            sourceIndex++;
-                        }
-                    }
-                }
-
-                // 构建vod_play_from和vod_play_url
-                int sourceIndex = 1;
-                for (Map.Entry<String, List<String[]>> entry : sourceMap.entrySet()) {
-                    String sourceName = "线路" + sourceIndex;
-
-                    // 尝试从页面提取线路名称
-                    if (pageContent.contains("河马剧场") && sourceIndex == 2) {
-                        sourceName = "河马剧场";
-                    } else if (pageContent.contains("顶好剧场") && sourceIndex == 1) {
-                        sourceName = "顶好剧场";
-                    }
-
-                    vodPlayFrom.append(sourceName).append("$$$");
-
-                    List<String[]> episodes = entry.getValue();
-                    for (int i = 0; i < episodes.size(); i++) {
-                        String[] ep = episodes.get(i);
-                        vodPlayUrl.append(ep[0]).append("$").append(ep[1]);
-                        if (i < episodes.size() - 1) {
-                            vodPlayUrl.append("#");
-                        }
-                    }
-                    vodPlayUrl.append("$$$");
-
-                    sourceIndex++;
                 }
             }
 
