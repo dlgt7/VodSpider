@@ -231,9 +231,27 @@ public class Hjw extends Spider {
                     name = titleElem.text();
                 }
 
-                // 提取图片（优先使用懒加载属性）
+                // 提取图片（使用精确选择器，避免提取演员表图片）
                 String pic = "";
-                Element img = doc.selectFirst("img");
+                Element img = doc.selectFirst(".detail-pic img, .video-cover img, .poster img");
+                if (img == null) {
+                    // 如果没有找到，尝试查找第一个包含视频封面的图片（跳过演员表）
+                    Elements imgs = doc.select("img");
+                    for (Element imgElem : imgs) {
+                        String src = imgElem.attr("data-original");
+                        if (TextUtils.isEmpty(src)) {
+                            src = imgElem.attr("data-src");
+                        }
+                        if (TextUtils.isEmpty(src)) {
+                            src = imgElem.attr("src");
+                        }
+                        // 优先选择包含特定域名的图片（如 doubaocdn.com）
+                        if (!TextUtils.isEmpty(src) && (src.contains("doubaocdn") || src.contains("cover") || src.contains("poster"))) {
+                            img = imgElem;
+                            break;
+                        }
+                    }
+                }
                 if (img != null) {
                     pic = img.attr("data-original");
                     if (TextUtils.isEmpty(pic)) {
@@ -266,11 +284,10 @@ public class Hjw extends Spider {
                             // 过滤掉非剧集链接
                             if (TextUtils.isEmpty(epName) || TextUtils.isEmpty(epUrl)) continue;
 
-                            // 只提取包含"第"和"集"的剧集名称
+                            // 只提取包含"第"和"集"的剧集名称，格式为"第x集"
                             if (epName.contains("第") && epName.contains("集")) {
-                                // 构造播放链接（格式：第01集$/detail/3599.html#m）
-                                String playId = id + ".html#m";
-                                eps.add(epName + "$" + playId);
+                                // 使用实际提取的播放链接（格式：第01集$/detail/3599.html#m）
+                                eps.add(epName + "$" + epUrl);
                             }
                         }
 
@@ -315,9 +332,8 @@ public class Hjw extends Spider {
                                 String epUrl = link.attr("href");
 
                                 if (!TextUtils.isEmpty(epName) && !TextUtils.isEmpty(epUrl)) {
-                                    // 构造播放链接（格式：第01集$/detail/3599.html#m）
-                                    String playId = id + ".html#m";
-                                    eps.add(epName + "$" + playId);
+                                    // 使用实际提取的播放链接（格式：第01集$/detail/3599.html#m）
+                                    eps.add(epName + "$" + epUrl);
                                 }
                             }
 
@@ -330,9 +346,9 @@ public class Hjw extends Spider {
                             List<String> eps = new ArrayList<>();
                             for (Element link : playLinks) {
                                 String epName = link.text();
-                                if (!TextUtils.isEmpty(epName) && epName.contains("第") && epName.contains("集")) {
-                                    String playId = id + ".html#m";
-                                    eps.add(epName + "$" + playId);
+                                String epUrl = link.attr("href");
+                                if (!TextUtils.isEmpty(epName) && !TextUtils.isEmpty(epUrl) && epName.contains("第") && epName.contains("集")) {
+                                    eps.add(epName + "$" + epUrl);
                                 }
                             }
 
