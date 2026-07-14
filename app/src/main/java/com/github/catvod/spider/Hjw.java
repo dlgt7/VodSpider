@@ -68,10 +68,11 @@ public class Hjw extends Spider {
 
             List<String> seen = new ArrayList<>();
 
-            // 提取首页视频列表（多级选择器兜底）
-            Elements items = doc.select("a[href*=/detail/]");
+            // 提取首页视频列表
+            // 图片在a标签的data-original属性上（<a class="tu lazyload" data-original="//pic.3kor.com/pics/xxx.jpg">）
+            Elements items = doc.select("a.tu.lazyload[href*=/detail/]");
             if (items.isEmpty()) {
-                items = doc.select("div.module-items a, li a");
+                items = doc.select("a[href*=/detail/]");
             }
 
             for (Element item : items) {
@@ -86,21 +87,20 @@ public class Hjw extends Spider {
                     }
                 }
 
-                String pic = "";
-                Element img = item.selectFirst("img");
-                if (img != null) {
-                    pic = img.attr("data-original");
-                    if (TextUtils.isEmpty(pic)) {
-                        pic = img.attr("data-src");
-                    }
-                    if (TextUtils.isEmpty(pic)) {
-                        pic = img.attr("src");
-                    }
-                    pic = fixUrl(pic);
-                }
-
-                // 分类列表页不提供图片，允许pic为空
                 if (TextUtils.isEmpty(title)) continue;
+
+                // 图片优先从a标签的data-original提取
+                String pic = item.attr("data-original");
+                if (TextUtils.isEmpty(pic)) {
+                    Element img = item.selectFirst("img");
+                    if (img != null) {
+                        pic = img.attr("data-original");
+                        if (TextUtils.isEmpty(pic)) {
+                            pic = img.attr("src");
+                        }
+                    }
+                }
+                pic = fixUrl(pic);
 
                 // 从详情页URL提取ID（格式：/detail/3504.html）
                 String vid = href;
@@ -138,24 +138,17 @@ public class Hjw extends Spider {
 
         try {
             // 分类页URL：根据分类构造URL（格式：/list/{分类ID}---{页码}.html）
-            String url;
-            if ("1".equals(tid)) {
-                url = siteUrl + "/list/1---" + pg + ".html";
-            } else if ("3".equals(tid)) {
-                url = siteUrl + "/list/3---" + pg + ".html";
-            } else if ("4".equals(tid)) {
-                url = siteUrl + "/list/4---" + pg + ".html";
-            } else {
-                url = siteUrl + "/list/" + tid + "---" + pg + ".html";
-            }
+            String url = siteUrl + "/list/" + tid + "---" + pg + ".html";
 
             Document doc = Jsoup.parse(OkHttp.string(url, headers));
 
             List<String> seen = new ArrayList<>();
 
-            Elements items = doc.select("a[href*=/detail/]");
+            // 分类页HTML结构：<a class="tu lazyload" title="xxx" href="/detail/xxx.html" data-original="//pic.3kor.com/pics/xxx.jpg">
+            // 图片在a标签的data-original属性上，不是img标签
+            Elements items = doc.select("a.tu.lazyload[href*=/detail/]");
             if (items.isEmpty()) {
-                items = doc.select("div.module-items a, li a");
+                items = doc.select("a[href*=/detail/]");
             }
 
             for (Element item : items) {
@@ -170,10 +163,21 @@ public class Hjw extends Spider {
                     }
                 }
 
-                // 分类页不提供图片，图片将在详情页提取
-                String pic = "";
-
                 if (TextUtils.isEmpty(title)) continue;
+
+                // 图片在a标签的data-original属性上
+                String pic = item.attr("data-original");
+                if (TextUtils.isEmpty(pic)) {
+                    // 兜底：从子img标签提取
+                    Element img = item.selectFirst("img");
+                    if (img != null) {
+                        pic = img.attr("data-original");
+                        if (TextUtils.isEmpty(pic)) {
+                            pic = img.attr("src");
+                        }
+                    }
+                }
+                pic = fixUrl(pic);
 
                 String vid = href;
                 if (href.contains("/detail/")) {
@@ -218,70 +222,107 @@ public class Hjw extends Spider {
                     name = titleElem.text();
                 }
 
-                // 提取图片（网站可能不提供详情页图片）
+                // 提取图片
+                // 真实HTML结构：<div class="pic"><img class="lazyload" data-original="//pic.3kor.com/pics/3707.jpg" />
                 String pic = "";
 
-                // 尝试从img标签提取
-                Elements imgs = doc.select("img");
-                for (Element imgElem : imgs) {
-                    String src = imgElem.attr("data-original");
-                    if (TextUtils.isEmpty(src) || src.startsWith("data:image")) {
-                        src = imgElem.attr("data-src");
+                // 优先从 div.pic 下的 img.lazyload 提取
+                Element img = doc.selectFirst("div.pic img.lazyload");
+                if (img != null) {
+                    pic = img.attr("data-original");
+                    if (TextUtils.isEmpty(pic)) {
+                        pic = img.attr("data-src");
                     }
-                    if (TextUtils.isEmpty(src) || src.startsWith("data:image")) {
-                        src = imgElem.attr("src");
+                    if (TextUtils.isEmpty(pic)) {
+                        pic = img.attr("src");
                     }
+                }
 
-                    if (!TextUtils.isEmpty(src) && !src.startsWith("data:image") &&
-                        (src.contains("doubaocdn") || src.contains("http"))) {
-                        pic = fixUrl(src);
+                // 兜底：遍历所有img查找封面图
+                if (TextUtils.isEmpty(pic)) {
+                    Elements imgs = doc.select("img");
+                    for (Element imgElem : imgs) {
+                        // 跳过演员头像和评论头像
+                        String className = imgElem.className();
+                        if (className.contains("cast") || className.contains("comment") || className.contains("avatar")) continue;
+
+                        String src = imgElem.attr("data-original");
+                        if (TextUtils.isEmpty(src) || src.startsWith("data:image") || src.contains("loading.gif")) {
+                            src = imgElem.attr("data-src");
+                        }
+                        if (TextUtils.isEmpty(src) || src.startsWith("data:image")) {
+                            src = imgElem.attr("src");
+                        }
+                        // 跳过loading占位图和头像
+                        if (TextUtils.isEmpty(src) || src.startsWith("data:image") || src.contains("loading.gif") || src.contains("/images/")) continue;
+
+                        pic = src;
                         break;
                     }
                 }
 
-                // 如果没有找到图片，尝试从script中的JSON提取（未来可能添加）
-                if (TextUtils.isEmpty(pic)) {
-                    Elements scripts = doc.select("script");
-                    for (Element script : scripts) {
-                        String content = script.html();
-                        if (content.contains("var korcms=")) {
-                            // 尝试从JSON中提取图片（如果存在）
-                            java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
-                                "\"pic\"\\s*:\\s*\"(https?://[^\"]+)\"");
-                            java.util.regex.Matcher matcher = pattern.matcher(content);
-                            if (matcher.find()) {
-                                pic = fixUrl(matcher.group(1));
-                                break;
-                            }
-                        }
-                    }
-                }
+                pic = fixUrl(pic);
 
-                // 提取播放源和剧集（网站使用单线路结构）
+                // 提取播放源和剧集
+                // 真实HTML结构：<div class="play"><ul><li><a href="#m" onclick="bb_a('3707_1_1','第01集',event)">第01集</a></li>...
+                // href只是#m锚点，onclick中包含真实选集标识（视频ID_线路ID_集数）
                 List<String> sources = new ArrayList<>();
                 List<String> episodes = new ArrayList<>();
 
-                // 网站没有播放源标签，所有剧集使用单线路
-                Elements playLinks = doc.select("a[href*='#m']");
+                // 从 div.play 区域提取选集
+                Elements playLinks = doc.select("div.play a[href='#m']");
+                if (playLinks.isEmpty()) {
+                    playLinks = doc.select("a[href='#m']");
+                }
 
                 if (!playLinks.isEmpty()) {
-                    // 添加默认线路
-                    sources.add("默認");
+                    // 按线路分组：从onclick提取线路ID（格式：bb_a('视频ID_线路ID_集数','集名',event)）
+                    Map<String, List<String>> routeEpisodes = new HashMap<>();
+                    Map<String, Integer> routeOrder = new HashMap<>();
+                    int order = 0;
 
-                    List<String> eps = new ArrayList<>();
                     for (Element link : playLinks) {
                         String epName = link.text();
-                        String epUrl = link.attr("href");
+                        if (TextUtils.isEmpty(epName) || !epName.contains("第") || !epName.contains("集")) continue;
 
-                        // 只提取包含"第"和"集"的剧集
-                        if (!TextUtils.isEmpty(epName) && !TextUtils.isEmpty(epUrl) &&
-                            epName.contains("第") && epName.contains("集")) {
-                            eps.add(epName + "$" + epUrl);
+                        // 从onclick提取选集标识，格式：bb_a('3707_1_1','第01集',event)
+                        String onclick = link.attr("onclick");
+                        String routeId = "1"; // 默认线路1
+                        String epId = "";
+
+                        if (!TextUtils.isEmpty(onclick) && onclick.contains("bb_a(")) {
+                            // 提取onclick中的参数：'3707_1_1'
+                            java.util.regex.Pattern p = java.util.regex.Pattern.compile("bb_a\\('([^']+)'");
+                            java.util.regex.Matcher m = p.matcher(onclick);
+                            if (m.find()) {
+                                epId = m.group(1); // 如 "3707_1_1"
+                                String[] parts = epId.split("_");
+                                if (parts.length >= 2) {
+                                    routeId = parts[1]; // 线路ID
+                                }
+                            }
                         }
+
+                        // 构造播放URL：使用详情页URL + #m（客户端嗅探）
+                        String playUrl = "/" + id + ".html#m";
+                        if (!TextUtils.isEmpty(epId)) {
+                            playUrl = "/" + id + ".html#m";
+                        }
+
+                        if (!routeEpisodes.containsKey(routeId)) {
+                            routeEpisodes.put(routeId, new ArrayList<>());
+                            routeOrder.put(routeId, order++);
+                        }
+                        routeEpisodes.get(routeId).add(epName + "$" + playUrl);
                     }
 
-                    if (!eps.isEmpty()) {
-                        episodes.add(join(eps, "#"));
+                    // 按顺序添加线路
+                    for (String routeId : routeOrder.keySet()) {
+                        List<String> eps = routeEpisodes.get(routeId);
+                        if (!eps.isEmpty()) {
+                            sources.add("線路" + (sources.size() + 1));
+                            episodes.add(join(eps, "#"));
+                        }
                     }
                 }
 
@@ -317,9 +358,9 @@ public class Hjw extends Spider {
 
             List<String> seen = new ArrayList<>();
 
-            Elements items = doc.select("a[href*=/detail/]");
+            Elements items = doc.select("a.tu.lazyload[href*=/detail/]");
             if (items.isEmpty()) {
-                items = doc.select("div.module-items a, li a");
+                items = doc.select("a[href*=/detail/]");
             }
 
             for (Element item : items) {
@@ -334,21 +375,20 @@ public class Hjw extends Spider {
                     }
                 }
 
-                String pic = "";
-                Element img = item.selectFirst("img");
-                if (img != null) {
-                    pic = img.attr("data-original");
-                    if (TextUtils.isEmpty(pic)) {
-                        pic = img.attr("data-src");
-                    }
-                    if (TextUtils.isEmpty(pic)) {
-                        pic = img.attr("src");
-                    }
-                    pic = fixUrl(pic);
-                }
-
-                // 分类列表页不提供图片，允许pic为空
                 if (TextUtils.isEmpty(title)) continue;
+
+                // 图片优先从a标签的data-original提取
+                String pic = item.attr("data-original");
+                if (TextUtils.isEmpty(pic)) {
+                    Element img = item.selectFirst("img");
+                    if (img != null) {
+                        pic = img.attr("data-original");
+                        if (TextUtils.isEmpty(pic)) {
+                            pic = img.attr("src");
+                        }
+                    }
+                }
+                pic = fixUrl(pic);
 
                 String vid = href;
                 if (href.contains("/detail/")) {
