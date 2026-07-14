@@ -278,9 +278,9 @@ public class Jjhj extends Spider {
                 Elements sourceTabs = doc.select("li.fed-drop-btns a");
                 List<String> sourceNames = new ArrayList<>();
                 for (Element tab : sourceTabs) {
-                    String name = tab.text();
-                    if (!TextUtils.isEmpty(name)) {
-                        sourceNames.add(name);
+                    String sourceName = tab.text();
+                    if (!TextUtils.isEmpty(sourceName)) {
+                        sourceNames.add(sourceName);
                     }
                 }
 
