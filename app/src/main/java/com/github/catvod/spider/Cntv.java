@@ -100,6 +100,7 @@ public class Cntv extends Spider {
 
     /**
      * 解析列表数据 (静态方法 f)
+     * 提取vsetid用于后续API调用
      */
     private static ArrayList<Vod> parseVideoList(String json, String tid) {
         ArrayList<Vod> list = new ArrayList<>();
@@ -119,15 +120,17 @@ public class Cntv extends Spider {
 
                 String title = item.optString("title");
                 String image = item.optString("image");
-                String id = item.optString("id");
+                String id = item.optString("id"); // 视频GUID
+                String vsetid = item.optString("vsetid"); // 专辑ID(重要!)
                 String year = item.optString("year");
                 String actors = item.optString("actors");
                 String brief = item.optString("brief");
 
-                // 构建 vod_id: tid###title###url###image###id###year###actors###brief
+                // 构建 vod_id: tid###title###url###image###vsetid###year###actors###brief
+                // 使用vsetid而不是id,用于后续API调用
                 StringBuilder vodId = new StringBuilder();
                 vodId.append(tid).append("###").append(title).append("###").append(url)
-                        .append("###").append(image).append("###").append(id)
+                        .append("###").append(image).append("###").append(vsetid) // 使用vsetid
                         .append("###").append(year).append("###").append(actors)
                         .append("###").append(brief);
 
@@ -215,7 +218,7 @@ public class Cntv extends Spider {
 
     /**
      * 获取视频播放地址 (实例方法 d)
-     * 简化清晰度逻辑,避免花屏
+     * 解析master m3u8选择单个清晰度,避免花屏
      */
     private String getPlayUrl(String pid) {
         try {
@@ -226,8 +229,37 @@ public class Cntv extends Spider {
             String hlsUrl = obj.optString("hls_url").trim();
             if (TextUtils.isEmpty(hlsUrl)) return "";
 
-            // 直接返回原始hls_url,避免清晰度切换导致花屏
-            // 央视网的hls_url通常已经是最优清晰度
+            // 获取m3u8内容
+            String m3u8Content = OkHttp.string(hlsUrl, getHeaders());
+            
+            // 检查是否为master playlist(多清晰度)
+            if (m3u8Content.contains("#EXT-X-STREAM-INF")) {
+                // 解析master playlist,选择第一个清晰度
+                String[] lines = m3u8Content.split("\n");
+                for (int i = 0; i < lines.length; i++) {
+                    String line = lines[i].trim();
+                    if (line.startsWith("#EXT-X-STREAM-INF")) {
+                        // 下一行是实际的m3u8 URL
+                        if (i + 1 < lines.length) {
+                            String subPlaylist = lines[i + 1].trim();
+                            if (!TextUtils.isEmpty(subPlaylist)) {
+                                // 处理相对路径
+                                if (subPlaylist.startsWith("http")) {
+                                    return subPlaylist;
+                                } else {
+                                    // 拼接完整URL
+                                    int lastSlash = hlsUrl.lastIndexOf('/');
+                                    if (lastSlash > 0) {
+                                        return hlsUrl.substring(0, lastSlash + 1) + subPlaylist;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // 如果不是master playlist,直接返回原始URL
             return hlsUrl;
             
         } catch (Exception e) {
@@ -333,7 +365,7 @@ public class Cntv extends Spider {
         String name = parts.length > 1 ? parts[1] : "央视";
         String url = parts.length > 2 ? parts[2] : "";
         String pic = parts.length > 3 ? parts[3] : "";
-        String videoId = parts.length > 4 ? parts[4] : "";
+        String vsetid = parts.length > 4 ? parts[4] : ""; // 使用vsetid而不是videoId
         String year = parts.length > 5 ? parts[5] : "";
         String actor = parts.length > 6 ? parts[6] : "";
         String brief = parts.length > 7 ? parts[7] : "";
@@ -342,16 +374,15 @@ public class Cntv extends Spider {
 
         // 栏目大全特殊处理
         if ("栏目大全".equals(tid)) {
-            playUrls = getVideoList(videoId);
+            playUrls = getVideoList(vsetid);
         } else {
             // 其他分类：尝试多种方式获取播放列表
 
-            // 方式1: 通过 albumId 获取（电视剧、纪录片、特别节目、动画片）
-            // 注意：电视剧和动画片的API是 getVideoAlbumList，返回的item结构不同
-            if (!TextUtils.isEmpty(videoId)) {
+            // 方式1: 使用vsetid(专辑ID)获取剧集列表
+            if (!TextUtils.isEmpty(vsetid) && vsetid.startsWith("VSET")) {
                 try {
-                    // 尝试电视剧/动画片专用API
-                    String apiUrl = "https://api.cntv.cn/NewVideo/getVideoListByAlbumIdNew?id=" + videoId + "&serviceId=tvcctv&p=1&n=100&mode=0&pub=1";
+                    // 尝试专辑专用API
+                    String apiUrl = "https://api.cntv.cn/NewVideo/getVideoListById?id=" + vsetid + "&serviceId=tvcctv";
                     String resp = OkHttp.string(apiUrl, getHeaders());
                     JSONObject obj = new JSONObject(resp);
                     JSONObject data = obj.optJSONObject("data");
@@ -367,14 +398,12 @@ public class Cntv extends Spider {
                                 String title = item.optString("title");
                                 String itemUrl = item.optString("url"); // 获取完整URL
                                 
-                                // 必须使用完整URL,不能是bare GUID
+                                // 必须使用完整URL
                                 if (!TextUtils.isEmpty(itemUrl)) {
                                     playUrls.add(title + "$" + itemUrl);
                                 } else if (!TextUtils.isEmpty(guid)) {
-                                    // 如果没有URL,尝试从GUID构造视频页URL
-                                    // GUID格式: VIDE + 日期信息
+                                    // 构造视频页URL
                                     if (guid.startsWith("VIDE")) {
-                                        // 从GUID提取日期(简化处理,使用当天日期)
                                         String datePath = new java.text.SimpleDateFormat("yyyy/MM/dd").format(new java.util.Date());
                                         String constructedUrl = "https://tv.cctv.com/" + datePath + "/" + guid + ".shtml";
                                         playUrls.add(title + "$" + constructedUrl);
@@ -390,25 +419,46 @@ public class Cntv extends Spider {
                 }
             }
 
-            // 方式2: 如果方式1失败，尝试通过 url 页面获取 guid（动画片、电视剧详情页）
+            // 方式2: 从详情页提取剧集链接(电视剧/动画片)
             if (playUrls.isEmpty() && !TextUtils.isEmpty(url)) {
                 try {
                     String html = OkHttp.string(url, getHeaders());
                     
-                    // 尝试从详情页提取剧集列表
-                    // 方法1: 提取所有视频链接
-                    Pattern videoLinkPattern = Pattern.compile("href=\"(https?://tv\\.cctv\\.com/[^\"]+\\.shtml)\"");
-                    Matcher videoLinkMatcher = videoLinkPattern.matcher(html);
+                    // 精确匹配剧集列表区域的链接
+                    // 电视剧详情页通常有"选集列表"或"剧集列表"区域
+                    Pattern episodePattern = Pattern.compile(
+                        "(?:选集列表|剧集列表|episode)[\\s\\S]{0,200}?" +
+                        "href=\"(https?://tv\\.cctv\\.com/[^\"]+\\.shtml)\"[^>]*>([^<]+)</a>",
+                        Pattern.CASE_INSENSITIVE
+                    );
+                    Matcher episodeMatcher = episodePattern.matcher(html);
                     
-                    int episodeCount = 0;
-                    while (videoLinkMatcher.find() && episodeCount < 100) {
-                        String videoUrl = videoLinkMatcher.group(1);
-                        episodeCount++;
-                        String episodeTitle = "第" + episodeCount + "集";
-                        playUrls.add(episodeTitle + "$" + videoUrl);
+                    while (episodeMatcher.find()) {
+                        String videoUrl = episodeMatcher.group(1);
+                        String episodeTitle = episodeMatcher.group(2).trim();
+                        if (!TextUtils.isEmpty(videoUrl) && !TextUtils.isEmpty(episodeTitle)) {
+                            playUrls.add(episodeTitle + "$" + videoUrl);
+                        }
                     }
                     
-                    // 方法2: 如果没有提取到视频链接，尝试提取guid
+                    // 如果精确匹配失败,使用简化匹配
+                    if (playUrls.isEmpty()) {
+                        // 匹配页面中的剧集链接(限制在特定区域)
+                        Pattern simplePattern = Pattern.compile(
+                            "《[^》]+》\\s*第\\d+集.*?href=\"(https?://tv\\.cctv\\.com/[^\"]+\\.shtml)\"",
+                            Pattern.DOTALL
+                        );
+                        Matcher simpleMatcher = simplePattern.matcher(html);
+                        
+                        int episodeCount = 0;
+                        while (simpleMatcher.find() && episodeCount < 100) {
+                            String videoUrl = simpleMatcher.group(1);
+                            episodeCount++;
+                            playUrls.add("第" + episodeCount + "集$" + videoUrl);
+                        }
+                    }
+                    
+                    // 最后尝试:提取guid
                     if (playUrls.isEmpty()) {
                         Matcher matcher = GUID_PATTERN.matcher(html);
                         if (matcher.find()) {
@@ -421,10 +471,10 @@ public class Cntv extends Spider {
                 }
             }
 
-            // 方式3: 如果方式2失败，videoId 是 32位哈希值，尝试直接获取
-            if (playUrls.isEmpty() && !TextUtils.isEmpty(videoId)) {
-                if (videoId.matches("[0-9a-fA-F]{32}")) {
-                    playUrls = getVideoList(videoId);
+            // 方式3: 如果vsetid是32位哈希值,尝试直接获取
+            if (playUrls.isEmpty() && !TextUtils.isEmpty(vsetid)) {
+                if (vsetid.matches("[0-9a-fA-F]{32}")) {
+                    playUrls = getVideoList(vsetid);
                 }
             }
 
