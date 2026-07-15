@@ -218,49 +218,55 @@ public class Cntv extends Spider {
 
     /**
      * 获取视频播放地址 (实例方法 d)
-     * 解析master m3u8选择单个清晰度,避免花屏
+     * 参考原始smali逻辑:获取hls_url,提取域名,尝试修改清晰度参数
      */
     private String getPlayUrl(String pid) {
         try {
+            // 1. 构建API URL
             String url = "https://vdn.apps.cntv.cn/api/getHttpVideoInfo.do?pid=" + pid;
             String resp = OkHttp.string(url, getHeaders());
             JSONObject obj = new JSONObject(resp);
 
+            // 2. 提取HLS播放列表URL
             String hlsUrl = obj.optString("hls_url").trim();
             if (TextUtils.isEmpty(hlsUrl)) return "";
 
-            // 获取m3u8内容
+            // 3. 提取域名 (原始代码使用DOMAIN_PATTERN)
+            Matcher matcher = DOMAIN_PATTERN.matcher(hlsUrl);
+            if (!matcher.find()) return hlsUrl;
+            String domain = matcher.group(1);
+
+            // 4. 获取m3u8内容并按换行分割
             String m3u8Content = OkHttp.string(hlsUrl, getHeaders());
+            String[] lines = m3u8Content.split("\n");
             
-            // 检查是否为master playlist(多清晰度)
-            if (m3u8Content.contains("#EXT-X-STREAM-INF")) {
-                // 解析master playlist,选择第一个清晰度
-                String[] lines = m3u8Content.split("\n");
-                for (int i = 0; i < lines.length; i++) {
-                    String line = lines[i].trim();
-                    if (line.startsWith("#EXT-X-STREAM-INF")) {
-                        // 下一行是实际的m3u8 URL
-                        if (i + 1 < lines.length) {
-                            String subPlaylist = lines[i + 1].trim();
-                            if (!TextUtils.isEmpty(subPlaylist)) {
-                                // 处理相对路径
-                                if (subPlaylist.startsWith("http")) {
-                                    return subPlaylist;
-                                } else {
-                                    // 拼接完整URL
-                                    int lastSlash = hlsUrl.lastIndexOf('/');
-                                    if (lastSlash > 0) {
-                                        return hlsUrl.substring(0, lastSlash + 1) + subPlaylist;
-                                    }
-                                }
-                            }
-                        }
-                    }
+            if (lines.length < 1) return hlsUrl;
+            
+            // 5. 提取最后一行(通常是实际的播放地址)
+            String lastLine = lines[lines.length - 1];
+            
+            // 6. 按斜杠分割
+            String[] parts = lastLine.split("/");
+            if (parts.length > 3) {
+                // 7. 修改清晰度参数 (原始代码尝试1200高清)
+                parts[3] = "1200"; // 清晰度代码
+                parts[parts.length - 1] = "1200.m3u8"; // 文件名
+                
+                // 8. 重新构造URL
+                StringBuilder newUrl = new StringBuilder(domain);
+                newUrl.append(TextUtils.join("/", parts));
+                
+                // 9. 测试新URL是否可用
+                try {
+                    OkHttp.string(newUrl.toString(), getHeaders());
+                    return newUrl.toString();
+                } catch (Exception e) {
+                    // 失败则使用原始URL
                 }
             }
             
-            // 如果不是master playlist,直接返回原始URL
-            return hlsUrl;
+            // 10. 返回域名+最后一行(原始逻辑)
+            return domain + lastLine;
             
         } catch (Exception e) {
             return "";
