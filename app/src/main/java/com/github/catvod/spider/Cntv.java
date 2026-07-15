@@ -207,11 +207,11 @@ public class Cntv extends Spider {
     }
 
     /**
-     * 获取 HTTP headers (实例方法 c)
+     * 获取 HTTP 请求头 (实例方法 c)
      */
     private Map<String, String> getHeaders() {
-        HashMap<String, String> headers = new HashMap<>();
-        headers.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/94.0.4606.54 Safari/537.36");
+        Map<String, String> headers = new HashMap<>();
+        headers.put("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 9_1 like Mac OS X) AppleWebKit/601.1.46 Mobile/13B143 Safari/601.1");
         headers.put("Referer", "https://tv.cctv.com/");
         return headers;
     }
@@ -504,46 +504,35 @@ public class Cntv extends Spider {
 
     @Override
     public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
-        // id必须是完整URL(视频页或m3u8)
+        // 参考原始smali逻辑
+        String playUrl;
         
-        Map<String, String> headers = new HashMap<>();
-        headers.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
-        headers.put("Referer", "https://tv.cctv.com/");
-        
-        // 如果是视频页面URL,尝试从HTML提取真实播放地址
-        if (id.startsWith("http") && id.contains(".shtml")) {
+        // 如果是CCTV标识或id不是以http开头,尝试获取播放地址
+        if ("CCTV".equals(flag) || !id.startsWith("http")) {
+            playUrl = getPlayUrl(id);
+        } else {
+            // 否则先从HTML提取guid
             try {
-                String html = OkHttp.string(id, headers);
-                
-                // 尝试提取videoCenterGuid
-                Pattern guidPattern = Pattern.compile("var\\s+videoCenterGuid\\s*=\\s*['\"]([^'\"]+)['\"]");
-                Matcher guidMatcher = guidPattern.matcher(html);
-                if (guidMatcher.find()) {
-                    String guid = guidMatcher.group(1);
-                    // 使用GUID调用API获取m3u8
-                    String m3u8Url = getPlayUrl(guid);
-                    if (!TextUtils.isEmpty(m3u8Url)) {
-                        return Result.get().url(m3u8Url).parse(0).header(headers).string();
-                    }
-                }
-                
-                // 尝试提取其他常见视频配置变量
-                Pattern urlPattern = Pattern.compile("(?:videoUrl|playUrl|src)\\s*[=:]\\s*['\"]([^'\"]*(?:\\.m3u8|\\.mp4)[^'\"]*)['\"]");
-                Matcher urlMatcher = urlPattern.matcher(html);
-                if (urlMatcher.find()) {
-                    String videoUrl = urlMatcher.group(1);
-                    if (videoUrl.startsWith("http")) {
-                        return Result.get().url(videoUrl).parse(0).header(headers).string();
-                    }
-                }
-                
+                String html = OkHttp.string(id, getHeaders());
+                Matcher matcher = GUID_PATTERN.matcher(html);
+                playUrl = matcher.find() ? getPlayUrl(matcher.group(1)) : id;
             } catch (Exception e) {
-                // 提取失败,继续使用parse(1)嗅探
+                playUrl = id;
             }
         }
         
-        // 回退:返回视频页URL,让播放器嗅探
-        return Result.get().url(id).parse(1).header(headers).string();
+        // 空值回退
+        if (TextUtils.isEmpty(playUrl)) {
+            playUrl = id;
+        }
+        
+        // 设置 iPhone User-Agent (参考原始代码)
+        Map<String, String> headers = new HashMap<>();
+        headers.put("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 9_1 like Mac OS X) AppleWebKit/601.1.46 Mobile/13B143 Safari/601.1");
+        headers.put("Referer", "https://tv.cctv.com/");
+        
+        // 直接返回播放地址(原始代码没有parse参数)
+        return Result.get().url(playUrl).header(headers).string();
     }
 
     @Override
