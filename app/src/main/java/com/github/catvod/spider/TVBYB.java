@@ -475,7 +475,36 @@ public class TVBYB extends Spider {
         if (TextUtils.isEmpty(id)) {
             return Result.error("播放地址错误");
         }
-        return Result.get().parse(1).url(id).header(headers).string();
+
+        String playUrl = fixUrl(id);
+
+        try {
+            // 获取播放页内容(带滑块验证处理)，避免客户端webview因无验证cookie而卡在验证页
+            String content = requestWithVerify(playUrl);
+
+            if (!TextUtils.isEmpty(content)) {
+                // 从player_data中提取直链m3u8(本站所有线路encrypt均为0，url为直链)
+                Pattern pattern = Pattern.compile("player_data\\s*=\\s*(\\{.*?\\})\\s*<\\/script>", Pattern.DOTALL);
+                Matcher matcher = pattern.matcher(content);
+                if (matcher.find()) {
+                    JSONObject playerData = new JSONObject(matcher.group(1));
+                    int encrypt = playerData.optInt("encrypt", 0);
+                    String url = playerData.optString("url", "");
+
+                    if (!TextUtils.isEmpty(url) && encrypt == 0) {
+                        // 直链m3u8: parse=0，附带Referer(m3u8服务器强制校验Referer)
+                        HashMap<String, String> playHeaders = new HashMap<>(headers);
+                        playHeaders.put("Referer", SITE_URL + "/");
+                        return Result.get().parse(0).url(url).header(playHeaders).string();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+        }
+
+        // 降级: 无法提取直链时返回parse=1让客户端解析
+        return Result.get().parse(1).url(playUrl).header(headers).string();
     }
 
     private List<Filter> getFilterData(String tid) {
