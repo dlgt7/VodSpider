@@ -174,7 +174,13 @@ public class Cntv extends Spider {
 
                             String itemGuid = item.optString("guid");
                             String title = item.optString("title");
-                            if (!TextUtils.isEmpty(itemGuid)) {
+                            String itemUrl = item.optString("url"); // 获取完整URL
+                            
+                            if (!TextUtils.isEmpty(itemUrl)) {
+                                // 优先使用完整URL
+                                list.add(title + "$" + itemUrl);
+                            } else if (!TextUtils.isEmpty(itemGuid)) {
+                                // 回退使用GUID
                                 list.add(title + "$" + itemGuid);
                             }
                         }
@@ -185,7 +191,12 @@ public class Cntv extends Spider {
 
             // 回退：返回单个视频
             String title = obj1.optString("title", "正片");
-            list.add(title + "$" + guid);
+            String fallbackUrl = obj1.optString("url");
+            if (!TextUtils.isEmpty(fallbackUrl)) {
+                list.add(title + "$" + fallbackUrl);
+            } else {
+                list.add(title + "$" + guid);
+            }
         } catch (Exception e) {
             // skip
         }
@@ -445,41 +456,30 @@ public class Cntv extends Spider {
 
     @Override
     public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
-        String playUrl;
-
-        if ("CCTV".equals(flag)) {
-            playUrl = getPlayUrl(id);
-        } else {
-            // 非 CCTV flag
-            if (id.startsWith("http")) {
-                try {
-                    String html = OkHttp.string(id, getHeaders());
-                    Matcher matcher = GUID_PATTERN.matcher(html);
-                    if (matcher.find()) {
-                        playUrl = getPlayUrl(matcher.group(1));
-                    } else {
-                        playUrl = id;
-                    }
-                } catch (Exception e) {
-                    playUrl = id;
+        // id格式: 可能是完整URL或GUID
+        
+        String playUrl = id;
+        
+        // 如果是GUID,尝试获取播放地址
+        if (id != null && id.startsWith("VIDE") && !id.startsWith("http")) {
+            // 尝试通过API获取m3u8地址
+            try {
+                String m3u8Url = getPlayUrl(id);
+                if (!TextUtils.isEmpty(m3u8Url)) {
+                    playUrl = m3u8Url;
                 }
-            } else {
-                playUrl = getPlayUrl(id);
+            } catch (Exception e) {
+                // API失败,继续使用原始值
             }
         }
-
-        // 空值回退 - 如果API失败,直接使用原始URL让播放器嗅探
-        if (TextUtils.isEmpty(playUrl)) {
-            playUrl = id;
-        }
-
+        
         // 设置请求头
         Map<String, String> headers = new HashMap<>();
-        headers.put("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 9_1 like Mac OS X) AppleWebKit/601.1.46 Mobile/13B143 Safari/601.1");
-
-        // 央视网返回MP4直链,但需要嗅探获取真实地址
-        // parse=1表示需要解析,jx=1表示启用嗅探
-        return Result.get().url(playUrl).parse(1).jx().header(headers).string();
+        headers.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
+        headers.put("Referer", "https://tv.cctv.com/");
+        
+        // 返回播放地址
+        return Result.get().url(playUrl).header(headers).string();
     }
 
     @Override
