@@ -25,7 +25,7 @@ import java.util.regex.Pattern;
  */
 public class AndyDuanju extends Spider {
 
-    private static final String SITE_URL = "https://www.andyduanju.com";
+    private static final String SITE_URL = "https://www.andy666.com";
 
     private static final Pattern VIDEO_URL_PATTERN = Pattern.compile("<a[^>]+href=\"(/[\\w-]+\\.html)\"[^>]*title=\"([^\"]+)\"");
     private static final Pattern M3U8_PATTERN = Pattern.compile("(https?://[^\"'\\s]+\\.m3u8[^\"'\\s]*)", Pattern.CASE_INSENSITIVE);

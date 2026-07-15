@@ -27,11 +27,11 @@ import java.util.regex.Pattern;
 public class TianlongDuanju extends Spider {
 
     private static final String[] API_HOSTS = {
-        "https://www.tianlongduanju.com",
-        "https://m.tianlongduanju.net"
+        "https://m.82mao.com",
+        "https://www.82mao.com"
     };
 
-    private static final Pattern VIDEO_URL_PATTERN = Pattern.compile("<a[^>]+href=\"(/[\\w-]+\\.html)\"[^>]*title=\"([^\"]+)\"");
+    private static final Pattern VIDEO_URL_PATTERN = Pattern.compile("href=\"(/Movie/(\\\\d+)\\\\.html)\"");
     private static final Pattern VIDEO_TITLE_PATTERN = Pattern.compile("<title>([^<]+)</title>");
     private static final Pattern M3U8_PATTERN = Pattern.compile("\"url\":\"([^\"]+)\"", Pattern.CASE_INSENSITIVE);
 
