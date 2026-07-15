@@ -477,7 +477,9 @@ public class Cntv extends Spider {
         Map<String, String> headers = new HashMap<>();
         headers.put("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 9_1 like Mac OS X) AppleWebKit/601.1.46 Mobile/13B143 Safari/601.1");
 
-        return Result.get().url(playUrl).header(headers).string();
+        // 判断播放类型: mp4直链用parse(0), m3u8流媒体用parse(1)
+        int parse = playUrl.contains(".m3u8") ? 1 : 0;
+        return Result.get().url(playUrl).parse(parse).header(headers).string();
     }
 
     @Override
