@@ -398,8 +398,22 @@ public class Cntv extends Spider {
 
                                 String guid = item.optString("guid");
                                 String title = item.optString("title");
-                                if (!TextUtils.isEmpty(guid)) {
-                                    playUrls.add(title + "$" + guid);
+                                String itemUrl = item.optString("url"); // 获取完整URL
+                                
+                                // 必须使用完整URL,不能是bare GUID
+                                if (!TextUtils.isEmpty(itemUrl)) {
+                                    playUrls.add(title + "$" + itemUrl);
+                                } else if (!TextUtils.isEmpty(guid)) {
+                                    // 如果没有URL,尝试从GUID构造视频页URL
+                                    // GUID格式: VIDE + 日期信息
+                                    if (guid.startsWith("VIDE")) {
+                                        // 从GUID提取日期(简化处理,使用当天日期)
+                                        String datePath = new java.text.SimpleDateFormat("yyyy/MM/dd").format(new java.util.Date());
+                                        String constructedUrl = "https://tv.cctv.com/" + datePath + "/" + guid + ".shtml";
+                                        playUrls.add(title + "$" + constructedUrl);
+                                    } else {
+                                        playUrls.add(title + "$" + guid);
+                                    }
                                 }
                             }
                         }
@@ -456,30 +470,16 @@ public class Cntv extends Spider {
 
     @Override
     public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
-        // id格式: 可能是完整URL或GUID
-        
-        String playUrl = id;
-        
-        // 如果是GUID,尝试获取播放地址
-        if (id != null && id.startsWith("VIDE") && !id.startsWith("http")) {
-            // 尝试通过API获取m3u8地址
-            try {
-                String m3u8Url = getPlayUrl(id);
-                if (!TextUtils.isEmpty(m3u8Url)) {
-                    playUrl = m3u8Url;
-                }
-            } catch (Exception e) {
-                // API失败,继续使用原始值
-            }
-        }
+        // id必须是完整URL(视频页或m3u8),不能是bare GUID
+        // 播放器会自动嗅探页面中的真实视频地址
         
         // 设置请求头
         Map<String, String> headers = new HashMap<>();
         headers.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
         headers.put("Referer", "https://tv.cctv.com/");
         
-        // 返回播放地址
-        return Result.get().url(playUrl).header(headers).string();
+        // parse(1)让播放器解析页面,自动提取视频地址
+        return Result.get().url(id).parse(1).header(headers).string();
     }
 
     @Override
