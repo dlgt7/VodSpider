@@ -215,7 +215,7 @@ public class Cntv extends Spider {
 
     /**
      * 获取视频播放地址 (实例方法 d)
-     * 支持多清晰度 fallback: 2000 -> 1500 -> 1200 -> 800 -> 450
+     * 简化清晰度逻辑,避免花屏
      */
     private String getPlayUrl(String pid) {
         try {
@@ -226,45 +226,10 @@ public class Cntv extends Spider {
             String hlsUrl = obj.optString("hls_url").trim();
             if (TextUtils.isEmpty(hlsUrl)) return "";
 
-            String hlsContent = OkHttp.string(hlsUrl, getHeaders()).trim();
-            String[] lines = hlsContent.split("\n");
-            if (lines.length < 1) return hlsUrl;
-
-            // 提取域名
-            Matcher matcher = DOMAIN_PATTERN.matcher(hlsUrl);
-            if (!matcher.find()) return hlsUrl;
-            String domain = matcher.group(1);
-
-            // 尝试多种清晰度（从高到低）
-            int[] qualities = new int[]{2000, 1500, 1200, 800, 450};
-            String lastLine = lines[lines.length - 1];
-            String[] parts = lastLine.split("/");
-
-            if (parts.length > 3) {
-                for (int quality : qualities) {
-                    parts[3] = String.valueOf(quality);
-                    parts[parts.length - 1] = quality + ".m3u8";
-
-                    StringBuilder hdUrl = new StringBuilder(domain);
-                    for (int i = 0; i < parts.length; i++) {
-                        hdUrl.append("/").append(parts[i]);
-                    }
-
-                    try {
-                        String hdResp = OkHttp.string(hdUrl.toString(), getHeaders());
-                        if (!TextUtils.isEmpty(hdResp) && hdResp.contains("#EXT")) {
-                            return hdUrl.toString();
-                        }
-                    } catch (Exception e) {
-                        // 该清晰度不可用，继续尝试下一个
-                    }
-                }
-            }
-
-            // 回退：拼接最后一段（原始清晰度）
-            StringBuilder fallbackUrl = new StringBuilder(domain);
-            fallbackUrl.append("/").append(lastLine);
-            return fallbackUrl.toString();
+            // 直接返回原始hls_url,避免清晰度切换导致花屏
+            // 央视网的hls_url通常已经是最优清晰度
+            return hlsUrl;
+            
         } catch (Exception e) {
             return "";
         }
@@ -381,9 +346,11 @@ public class Cntv extends Spider {
         } else {
             // 其他分类：尝试多种方式获取播放列表
 
-            // 方式1: 通过 albumId 获取（电视剧、纪录片、特别节目常用）
+            // 方式1: 通过 albumId 获取（电视剧、纪录片、特别节目、动画片）
+            // 注意：电视剧和动画片的API是 getVideoAlbumList，返回的item结构不同
             if (!TextUtils.isEmpty(videoId)) {
                 try {
+                    // 尝试电视剧/动画片专用API
                     String apiUrl = "https://api.cntv.cn/NewVideo/getVideoListByAlbumIdNew?id=" + videoId + "&serviceId=tvcctv&p=1&n=100&mode=0&pub=1";
                     String resp = OkHttp.string(apiUrl, getHeaders());
                     JSONObject obj = new JSONObject(resp);
@@ -391,7 +358,7 @@ public class Cntv extends Spider {
 
                     if (data != null) {
                         JSONArray list = data.optJSONArray("list");
-                        if (list != null) {
+                        if (list != null && list.length() > 0) {
                             for (int i = 0; i < list.length(); i++) {
                                 JSONObject item = list.optJSONObject(i);
                                 if (item == null) continue;
@@ -423,14 +390,31 @@ public class Cntv extends Spider {
                 }
             }
 
-            // 方式2: 如果方式1失败，尝试通过 url 页面获取 guid（动画片常用）
+            // 方式2: 如果方式1失败，尝试通过 url 页面获取 guid（动画片、电视剧详情页）
             if (playUrls.isEmpty() && !TextUtils.isEmpty(url)) {
                 try {
                     String html = OkHttp.string(url, getHeaders());
-                    Matcher matcher = GUID_PATTERN.matcher(html);
-                    if (matcher.find()) {
-                        String guid = matcher.group(1);
-                        playUrls = getVideoList(guid);
+                    
+                    // 尝试从详情页提取剧集列表
+                    // 方法1: 提取所有视频链接
+                    Pattern videoLinkPattern = Pattern.compile("href=\"(https?://tv\\.cctv\\.com/[^\"]+\\.shtml)\"");
+                    Matcher videoLinkMatcher = videoLinkPattern.matcher(html);
+                    
+                    int episodeCount = 0;
+                    while (videoLinkMatcher.find() && episodeCount < 100) {
+                        String videoUrl = videoLinkMatcher.group(1);
+                        episodeCount++;
+                        String episodeTitle = "第" + episodeCount + "集";
+                        playUrls.add(episodeTitle + "$" + videoUrl);
+                    }
+                    
+                    // 方法2: 如果没有提取到视频链接，尝试提取guid
+                    if (playUrls.isEmpty()) {
+                        Matcher matcher = GUID_PATTERN.matcher(html);
+                        if (matcher.find()) {
+                            String guid = matcher.group(1);
+                            playUrls = getVideoList(guid);
+                        }
                     }
                 } catch (Exception e) {
                     // skip
