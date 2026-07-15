@@ -430,30 +430,43 @@ public class Cntv extends Spider {
         if ("栏目大全".equals(tid)) {
             playUrls = getVideoList(vsetid);
         } else {
-            // 其他分类：尝试多种方式获取播放列表
+            // 其他分类：从详情页提取剧集列表（API已失效）
 
-            // 方式1: 使用vsetid获取剧集列表
-            if (!TextUtils.isEmpty(vsetid) && vsetid.startsWith("VSET")) {
+            // 方式1: 从详情页HTML提取剧集列表（主要方式）
+            if (!TextUtils.isEmpty(url)) {
                 try {
-                    String apiUrl = "https://api.cntv.cn/NewVideo/getVideoListById?id=" + vsetid + "&serviceId=tvcctv";
-                    String resp = OkHttp.string(apiUrl, getHeaders());
-                    JSONObject obj = new JSONObject(resp);
-                    JSONObject data = obj.optJSONObject("data");
+                    String html = OkHttp.string(url, getHeaders());
 
-                    if (data != null) {
-                        JSONArray list = data.optJSONArray("list");
-                        if (list != null && list.length() > 0) {
-                            for (int i = 0; i < list.length(); i++) {
-                                JSONObject item = list.optJSONObject(i);
-                                if (item == null) continue;
+                    // 提取剧集列表 - 匹配所有VIDE开头的视频链接
+                    // 格式: <a href="https://tv.cctv.com/.../VIDE...shtml">标题</a>
+                    Pattern episodePattern = Pattern.compile(
+                        "<a[^>]+href=\"(https?://tv\\.cctv\\.com/[^\"]*VIDE[A-Za-z0-9]+\\.shtml)\"[^>]*>([^<]+)</a>",
+                        Pattern.CASE_INSENSITIVE
+                    );
+                    Matcher episodeMatcher = episodePattern.matcher(html);
 
-                                String guid = item.optString("guid");
-                                String title = item.optString("title");
+                    while (episodeMatcher.find()) {
+                        String videoUrl = episodeMatcher.group(1);
+                        String title = episodeMatcher.group(2).trim();
 
-                                if (!TextUtils.isEmpty(guid)) {
-                                    playUrls.add(title + "$" + guid);
-                                }
+                        // 过滤掉导航链接，只保留剧集链接
+                        if (title.contains("集") || title.contains("正片") || title.contains("期")) {
+                            // 提取guid（VIDE开头的ID）
+                            Matcher guidMatcher = Pattern.compile("VIDE[A-Za-z0-9]+").matcher(videoUrl);
+                            String guid = guidMatcher.find() ? guidMatcher.group() : videoUrl;
+
+                            if (!TextUtils.isEmpty(guid)) {
+                                playUrls.add(title + "$" + guid);
                             }
+                        }
+                    }
+
+                    // 如果没找到剧集，尝试提取单个guid
+                    if (playUrls.isEmpty()) {
+                        Matcher guidMatcher = GUID_PATTERN.matcher(html);
+                        if (guidMatcher.find()) {
+                            String guid = guidMatcher.group(1);
+                            playUrls.add("正片$" + guid);
                         }
                     }
                 } catch (Exception e) {
@@ -461,23 +474,7 @@ public class Cntv extends Spider {
                 }
             }
 
-            // 方式2: 从详情页提取剧集链接
-            if (playUrls.isEmpty() && !TextUtils.isEmpty(url)) {
-                try {
-                    String html = OkHttp.string(url, getHeaders());
-
-                    // 提取guid
-                    Matcher guidMatcher = GUID_PATTERN.matcher(html);
-                    if (guidMatcher.find()) {
-                        String guid = guidMatcher.group(1);
-                        playUrls.add("正片$" + guid);
-                    }
-                } catch (Exception e) {
-                    // skip
-                }
-            }
-
-            // 方式3: 如果vsetid是32位哈希值
+            // 方式2: 如果vsetid是32位哈希值，尝试用getVideoList
             if (playUrls.isEmpty() && !TextUtils.isEmpty(vsetid)) {
                 if (vsetid.matches("[0-9a-fA-F]{32}")) {
                     playUrls = getVideoList(vsetid);
