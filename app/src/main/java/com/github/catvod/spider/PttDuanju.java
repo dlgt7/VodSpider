@@ -30,7 +30,13 @@ public class PttDuanju extends Spider {
     public static JSONArray parseVideoListJson(String jsonStr) {
         if (TextUtils.isEmpty(jsonStr)) return new JSONArray();
         String list = PttDuanjuNative.parseList(jsonStr);
-        return TextUtils.isEmpty(list) ? new JSONArray() : new JSONArray(list);
+        if (TextUtils.isEmpty(list)) return new JSONArray();
+        
+        try {
+            return new JSONArray(list);
+        } catch (Exception e) {
+            return new JSONArray();
+        }
     }
 
     public void ensureInitialized() {
