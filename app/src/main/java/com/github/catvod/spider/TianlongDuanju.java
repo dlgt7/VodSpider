@@ -265,7 +265,7 @@ public class TianlongDuanju extends Spider {
                                     put("aes_key", keyMatcher.group(1));
                                     put("aes_iv", ivMatcher.group(1));
                                 }},
-                                buildHeaders(apiUrl)).getBody());
+                                buildHeaders(apiUrl)));
 
                             if ("success".equals(decryptResponse.optString("status"))) {
                                 result = decryptResponse.optString("url", result);
