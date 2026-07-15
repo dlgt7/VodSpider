@@ -468,18 +468,18 @@ public class Cntv extends Spider {
             }
         }
 
-        // 空值回退
+        // 空值回退 - 如果API失败,直接使用原始URL让播放器嗅探
         if (TextUtils.isEmpty(playUrl)) {
             playUrl = id;
         }
 
-        // 设置 iPhone UA
+        // 设置请求头
         Map<String, String> headers = new HashMap<>();
         headers.put("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 9_1 like Mac OS X) AppleWebKit/601.1.46 Mobile/13B143 Safari/601.1");
 
-        // 判断播放类型: mp4直链用parse(0), m3u8流媒体用parse(1)
-        int parse = playUrl.contains(".m3u8") ? 1 : 0;
-        return Result.get().url(playUrl).parse(parse).header(headers).string();
+        // 央视网返回MP4直链,但需要嗅探获取真实地址
+        // parse=1表示需要解析,jx=1表示启用嗅探
+        return Result.get().url(playUrl).parse(1).jx().header(headers).string();
     }
 
     @Override
