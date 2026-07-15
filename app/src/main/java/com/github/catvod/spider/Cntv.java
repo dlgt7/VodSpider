@@ -504,7 +504,7 @@ public class Cntv extends Spider {
 
     @Override
     public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
-        // 参考原始smali逻辑
+        // 参考原始smali逻辑,但需要处理API失败的情况
         String playUrl;
         
         // 如果是CCTV标识或id不是以http开头,尝试获取播放地址
@@ -526,13 +526,24 @@ public class Cntv extends Spider {
             playUrl = id;
         }
         
-        // 设置 iPhone User-Agent (参考原始代码)
+        // 如果playUrl是bare GUID,构造完整URL
+        if (playUrl.startsWith("VIDE") && !playUrl.startsWith("http")) {
+            String datePath = new java.text.SimpleDateFormat("yyyy/MM/dd").format(new java.util.Date());
+            playUrl = "https://tv.cctv.com/" + datePath + "/" + playUrl + ".shtml";
+        }
+        
+        // 设置 iPhone User-Agent
         Map<String, String> headers = new HashMap<>();
         headers.put("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 9_1 like Mac OS X) AppleWebKit/601.1.46 Mobile/13B143 Safari/601.1");
         headers.put("Referer", "https://tv.cctv.com/");
         
-        // 直接返回播放地址(原始代码没有parse参数)
-        return Result.get().url(playUrl).header(headers).string();
+        // 智能判断:如果是直接媒体链接用parse(0),否则用parse(1)嗅探
+        if (playUrl.endsWith(".m3u8") || playUrl.endsWith(".mp4")) {
+            return Result.get().url(playUrl).parse(0).header(headers).string();
+        } else {
+            // HTML页面或GUID,需要嗅探
+            return Result.get().url(playUrl).parse(1).header(headers).string();
+        }
     }
 
     @Override
