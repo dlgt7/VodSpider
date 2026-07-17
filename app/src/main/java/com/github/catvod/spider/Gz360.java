@@ -52,12 +52,12 @@ public class Gz360 extends Spider {
         "https://m.82mao.org"
     };
 
-    // AES 加密密钥和 IV（硬编码）
-    private static final String AES_KEY = "3053905234000000";
-    private static final String AES_IV = "5249000000000000";
+    // AES 加密密钥和 IV（从 smali 解码验证）
+    private static final String AES_KEY = "OITxa5OqAYjhswxx";
+    private static final String AES_IV = "rCMNwZASNBKZ8mXV";
 
-    // RSA 公钥（Base64）
-    private static final String RSA_PUBLIC_KEY_BASE64 = "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC5m0bdMVa7W8CrwjBfOFiZwVptD9a0mf3qau6QdvQ3yOZoDDwVsfuPJcRfEyQv2jZWsmcx6JqQ0TDoxO0NHNyG+vraj0dG+++J6Ef1jPZZgz1q8iQ0d8SB8vGRs06BsCAmMZ3rPcfPcE1IdYs5j5nxQ0vNWMqVUYxN3Px1wIDAQAB";
+    // RSA 公钥（Base64，从 smali 解码验证）
+    private static final String RSA_PUBLIC_KEY_BASE64 = "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDUM5+/y8sPsWkd1/RQS64X259EUwxFXFE5HlA65MqrxnPs0JqoSRojSDy5QhwvROlaD6TwRQHKMY2OAZ6SnQeUJsChTEFIR9qUkwrs3/MVUMxjsv6JS6Oe/juclyJGTgVmDhB55EafXsD0SQYVj/QXXsxR6ewR5E2kL52yAAD4yQIDAQAB";
 
     // RSA 私钥（Base64，从 smali 解密获取）
     private static final String RSA_PRIVATE_KEY_TEMPLATE =
@@ -134,7 +134,7 @@ public class Gz360 extends Spider {
 
     @Override
     public String homeContent(boolean filter) throws Exception {
-        // 5个分类
+        // 5个分类（从 smali 解码验证）
         List<Class> classes = Arrays.asList(
             new Class("1", "电影"),
             new Class("2", "电视剧"),
@@ -143,8 +143,8 @@ public class Gz360 extends Spider {
             new Class("5", "少儿")
         );
 
-        // 获取首页推荐列表
-        ArrayList<Vod> list = getHomeVideoList();
+        // 首页不获取推荐列表，返回空列表
+        ArrayList<Vod> list = new ArrayList<>();
 
         // 添加过滤器
         LinkedHashMap<String, List<Filter>> filters = buildFilters();
@@ -201,7 +201,7 @@ public class Gz360 extends Spider {
             // 第一次请求：获取详情信息
             JsonObject params1 = new JsonObject();
             params1.addProperty("token_id", userId);       // 正确字段名
-            params1.addProperty("vod_d_id", vodId);        // 正确字段名
+            params1.addProperty("vod_id", vodId);          // 正确字段名（解码验证：仓乓业乆仌乘 → vod_id）
             params1.addProperty("mobile_time", String.valueOf(System.currentTimeMillis() / 1000)); // 正确字段名
             params1.addProperty("token", token);
 
@@ -215,7 +215,7 @@ public class Gz360 extends Spider {
             // 第二次请求：获取播放列表
             JsonObject params2 = new JsonObject();
             params2.addProperty("vurl_cloud_id", "2");     // 正确字段名和值
-            params2.addProperty("vod_d_id", vodId);        // 正确字段名
+            params2.addProperty("vod_id", vodId);          // 正确字段名
 
             JsonObject data2 = fetchEncryptedApi("/App/Resource/Vurl/show", params2, false);
 
@@ -422,15 +422,16 @@ public class Gz360 extends Spider {
     }
 
     /**
-     * 初始化请求（获取 token 和 userId）
+     * 初始化请求（获取 userId）- 解码验证的 API 路径
      */
     private void fetchInitData() throws Exception {
         JsonObject params = new JsonObject();
-        params.addProperty("random", randomStr);
-        params.addProperty("version", "1.0.0");
-        params.addProperty("type", "1");
+        params.addProperty("random", randomStr);                          // 解码验证：介乙三乆从乙万 → random
+        params.addProperty("old_key", "aLFBMWpxBrIDAD1Si/KVvm41");        // 解码验证：今乐业乆从乙万 → old_key
+        params.addProperty("phone_type", 1);                              // 解码验证：仕乔丑乷什乣上习仕乙 → phone_type
+        params.addProperty("code", "");                                   // 解码验证：仆乓业乼 → code
 
-        JsonObject data = fetchEncryptedApi("/api/v1/init", params, true);
+        JsonObject data = fetchEncryptedApi("/App/Authentication/Device/signUp", params, true);
         if (data != null) {
             userId = getString(data, "userId");
             initialized = true;
@@ -438,11 +439,11 @@ public class Gz360 extends Spider {
     }
 
     /**
-     * 获取 token
+     * 获取 token - 解码验证的 API 路径
      */
     private void fetchToken() throws Exception {
         JsonObject params = new JsonObject();
-        JsonObject data = fetchEncryptedApi("/api/v1/token", params, true);
+        JsonObject data = fetchEncryptedApi("/App/Authentication/Authenticator/refresh", params, true);
         if (data != null) {
             token = getString(data, "token");
         }
