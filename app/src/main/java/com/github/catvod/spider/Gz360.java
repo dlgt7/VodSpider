@@ -147,7 +147,7 @@ public class Gz360 extends Spider {
         ArrayList<Vod> list = getHomeVideoList();
 
         // 添加过滤器
-        ArrayList<Filter> filters = buildFilters();
+        LinkedHashMap<String, List<Filter>> filters = buildFilters();
 
         return Result.string(classes, list, filter ? filters : null);
     }
@@ -334,43 +334,51 @@ public class Gz360 extends Spider {
     /**
      * 构建过滤器
      */
-    private static ArrayList<Filter> buildFilters() {
-        ArrayList<Filter> filters = new ArrayList<>();
+    private static LinkedHashMap<String, List<Filter>> buildFilters() {
+        LinkedHashMap<String, List<Filter>> filters = new LinkedHashMap<>();
 
         // 分类筛选
-        filters.add(new Filter("class", "类型", Arrays.asList(
-            new Filter.Value("全部", "全部"),
-            new Filter.Value("动作", "动作"),
-            new Filter.Value("喜剧", "喜剧"),
-            new Filter.Value("爱情", "爱情"),
-            new Filter.Value("科幻", "科幻"),
-            new Filter.Value("悬疑", "悬疑")
-        )));
+        filters.put("class", Arrays.asList(
+            new Filter("class", "类型", Arrays.asList(
+                new Filter.Value("全部", "全部"),
+                new Filter.Value("动作", "动作"),
+                new Filter.Value("喜剧", "喜剧"),
+                new Filter.Value("爱情", "爱情"),
+                new Filter.Value("科幻", "科幻"),
+                new Filter.Value("悬疑", "悬疑")
+            ))
+        ));
 
         // 年份筛选
-        filters.add(new Filter("year", "年份", Arrays.asList(
-            new Filter.Value("全部", "全部"),
-            new Filter.Value("2024", "2024"),
-            new Filter.Value("2023", "2023"),
-            new Filter.Value("2022", "2022"),
-            new Filter.Value("2021", "2021")
-        )));
+        filters.put("year", Arrays.asList(
+            new Filter("year", "年份", Arrays.asList(
+                new Filter.Value("全部", "全部"),
+                new Filter.Value("2024", "2024"),
+                new Filter.Value("2023", "2023"),
+                new Filter.Value("2022", "2022"),
+                new Filter.Value("2021", "2021")
+            ))
+        ));
 
         // 地区筛选
-        filters.add(new Filter("area", "地区", Arrays.asList(
-            new Filter.Value("全部", "全部"),
-            new Filter.Value("中国大陆", "中国大陆"),
-            new Filter.Value("中国香港", "中国香港"),
-            new Filter.Value("美国", "美国"),
-            new Filter.Value("韩国", "韩国")
-        )));
+        filters.put("area", Arrays.asList(
+            new Filter("area", "地区", Arrays.asList(
+                new Filter.Value("全部", "全部"),
+                new Filter.Value("中国大陆", "中国大陆"),
+                new Filter.Value("中国香港", "中国香港"),
+                new Filter.Value("美国", "美国"),
+                new Filter.Value("韩国", "韩国")
+            ))
+        ));
 
         // 排序
-        filters.add(new Filter("sort", "排序", Arrays.asList(
-            new Filter.Value("最新", "最新"),
-            new Filter.Value("最热", "最热"),
-            new Filter.Value("评分", "评分")
-        )));
+        filters.put("sort", Arrays.asList(
+            new Filter("sort", "排序", Arrays.asList(
+                new Filter.Value("最新", "最新"),
+                new Filter.Value("最热", "最热"),
+                new Filter.Value("评分", "评分")
+            ))
+        ));
 
         return filters;
     }
