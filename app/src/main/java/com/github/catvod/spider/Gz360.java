@@ -214,8 +214,8 @@ public class Gz360 extends Spider {
 
             // 第二次请求：获取播放列表
             JsonObject params2 = new JsonObject();
-            params2.addProperty("vurl_cloud_id", "2");     // 正确字段名和值
-            params2.addProperty("vod_id", vodId);          // 正确字段名
+            params2.addProperty("vurl_cloud_id", "2");     // 解码验证：仓义丌乵仺也丒乶仐乘両买仁 → vurl_cloud_id
+            params2.addProperty("vod_d_id", vodId);        // 解码验证：仓乓业乆仁乣丗乽 → vod_d_id（注意：与第一次请求的参数名不同！）
 
             JsonObject data2 = fetchEncryptedApi("/App/Resource/Vurl/show", params2, false);
 
@@ -227,34 +227,44 @@ public class Gz360 extends Spider {
                 for (int i = 0; i < playList.size(); i++) {
                     JsonObject episode = playList.get(i).getAsJsonObject();
 
-                    // 跳过特定类型（show_type 匹配时）
-                    String showType = getString(episode, "show_type");
-                    if ("2".equals(showType)) {
-                        continue;
-                    }
-
+                    // 获取标题
                     String title = getString(episode, "title");
-                    String url = getString(episode, "param");  // 使用 param 字段
-
-                    if (TextUtils.isEmpty(title) || TextUtils.isEmpty(url)) {
+                    if (TextUtils.isEmpty(title)) {
                         continue;
                     }
 
-                    // 解析线路名和播放URL
-                    // play 字段包含实际的URL信息（可能有多个清晰度）
-                    String playUrl = getString(episode, "play");
-                    if (TextUtils.isEmpty(playUrl)) {
-                        playUrl = url;
+                    // play 字段是一个 JSON 对象，包含多个线路
+                    JsonObject playObj = episode.getAsJsonObject("play");
+                    if (playObj == null) {
+                        continue;
                     }
 
-                    // 使用默认线路
-                    String lineName = "默认";
-                    if (!playMap.containsKey(lineName)) {
-                        playMap.put(lineName, new ArrayList<>());
-                    }
+                    // 遍历每个线路（key 是线路名）
+                    for (String lineName : playObj.keySet()) {
+                        JsonObject lineData = playObj.getAsJsonObject(lineName);
+                        if (lineData == null) {
+                            continue;
+                        }
 
-                    // 格式：title$url
-                    playMap.get(lineName).add(title + "$" + playUrl);
+                        // 检查 show_type，跳过值为 "2" 的线路
+                        String showType = getString(lineData, "show_type");
+                        if ("2".equals(showType)) {
+                            continue;
+                        }
+
+                        // 获取播放 URL（param 字段）
+                        String playUrl = getString(lineData, "param");
+                        if (TextUtils.isEmpty(playUrl)) {
+                            continue;
+                        }
+
+                        // 添加到播放列表
+                        if (!playMap.containsKey(lineName)) {
+                            playMap.put(lineName, new ArrayList<>());
+                        }
+                        // 格式：title$url
+                        playMap.get(lineName).add(title + "$" + playUrl);
+                    }
                 }
             }
 
