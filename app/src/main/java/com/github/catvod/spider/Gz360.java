@@ -19,7 +19,6 @@ import java.nio.charset.StandardCharsets;
 import java.security.KeyFactory;
 import java.security.PrivateKey;
 import java.security.PublicKey;
-import java.security.spec.AlgorithmParameterSpec;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.ArrayList;
@@ -36,36 +35,42 @@ import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
 /**
- * Gz360 Spider - 加密型视频源
- * 使用 AES + RSA 混合加密，支持多域名轮换
+ * Gz360 源爬虫实现。
+ * 使用 AES+RSA 混合加密，支持多域名轮换、搜索、分类列表、详情解析及播放地址获取。
  */
 public class Gz360 extends Spider {
 
     // ==================== 静态常量 ====================
 
-    // API URL 数组（多域名备份）
+    /** API 域名数组（多域名轮换） */
     private static final String[] API_URLS = {
-        "https://m.82mao.com",
-        "https://m.82mao.xyz",
-        "https://m.82mao.fun",
-        "https://m.82mao.top",
-        "https://m.82mao.org"
+        "https://apinew.uozvr.com",
+        "https://api.w32z7vtd.com",
+        "https://api.6a7nnf7.com",
+        "https://api.umygrx3.com",
+        "https://api.rmedphk.com"
     };
 
-    // AES 加密密钥和 IV（从 smali 解码验证）
+    /** AES 加密密钥（请求体加密） */
     private static final String AES_KEY = "OITxa5OqAYjhswxx";
+    /** AES 加密 IV */
     private static final String AES_IV = "rCMNwZASNBKZ8mXV";
+    /** AES 加密算法 */
+    private static final String AES_ALGORITHM = "AES/CBC/PKCS5Padding";
+    /** RSA 加密算法 */
+    private static final String RSA_ALGORITHM = "RSA/ECB/PKCS1Padding";
 
-    // RSA 公钥（Base64，从 smali 解码验证）
-    private static final String RSA_PUBLIC_KEY_BASE64 = "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDUM5+/y8sPsWkd1/RQS64X259EUwxFXFE5HlA65MqrxnPs0JqoSRojSDy5QhwvROlaD6TwRQHKMY2OAZ6SnQeUJsChTEFIR9qUkwrs3/MVUMxjsv6JS6Oe/juclyJGTgVmDhB55EafXsD0SQYVj/QXXsxR6ewR5E2kL52yAAD4yQIDAQAB";
+    /** RSA 公钥（Base64，用于加密 AES key/iv） */
+    private static final String RSA_PUBLIC_KEY_BASE64 =
+        "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDUM5+/y8sPsWkd1/RQS64X259EUwxFXFE5HlA65MqrxnPs0JqoSRojSDy5QhwvROlaD6TwRQHKMY2OAZ6SnQeUJsChTEFIR9qUkwrs3/MVUMxjsv6JS6Oe/juclyJGTgVmDhB55EafXsD0SQYVj/QXXsxR6ewR5E2kL52yAAD4yQIDAQAB";
 
-    // RSA 私钥（Base64，从 smali 解密获取）
-    private static final String RSA_PRIVATE_KEY_TEMPLATE =
+    /** RSA 私钥（PEM 格式，用于解密响应中的会话密钥） */
+    private static final String RSA_PRIVATE_KEY_PEM =
         "-----BEGIN PRIVATE KEY-----\n" +
         "MIICdgIBADANBgkqhkiG9w0BAQEFAASCAmAwggJcAgEAAoGAe6hKrWLi1zQmjTT1\n" +
         "ozbE4QdFeJGNxubxld6GrFGximxfMsMB6BpJhpcTouAqywAFppiKetUBBbXwYsYU\n" +
         "1wNr648XVmPmCMCy4rY8vdliFnbMUj086DU6Z+/oXBdWU3/b1G0DN3E9wULRSwcK\n" +
-        "ZT3wj/cCI1vsCm3gj2R5SqkA9Y0CAwEAAQKBgAJH+4CxV0/zBVcLiBCHvSANm0l7\n" +
+        "ZT3wj/cCI1vsCm3gj2R5SqkA9Y0CAwEANQKBgAJH+4CxV0/zBVcLiBCHvSANm0l7\n" +
         "HetybTh/j2p0Y1sTXro4ALwAaCTUeqdBjWiLSo9lNwDHFyq8zX90+gNxa7c5EqcW\n" +
         "V9FmlVXr8VhfBzcZo1nXeNdXFT7tQ2yah/odtdcx+vRMSGJd1t/5k5bDd9wAvYdI\n" +
         "DblMAg+wiKKZ5KcdAkEA1cCakEN4NexkF5tHPRrR6XOY/XHfkqXxEhMqmNbB9U34\n" +
@@ -78,31 +83,57 @@ public class Gz360 extends Spider {
         "t5lYKfpe8k83ZA==\n" +
         "-----END PRIVATE KEY-----";
 
-    // 随机字符表（用于生成随机字符串）
-    private static final String RANDOM_CHARS = "0123456789abcdef";
+    /** 签名后缀（固定盐值） */
+    private static final String SIGN_SUFFIX = "*&zvdvdvddbfikkkumtmdwqppp?|4Y!s!2br";
+    /** 随机字符表（用于生成 deviceId） */
+    private static final String HEX_CHARS = "0123456789ABCDEF";
+
+    // ==================== 端点常量 ====================
+    private static final String EP_SIGN_UP = "/App/Authentication/Device/signUp";
+    private static final String EP_SIGN_IN = "/App/Authentication/Device/signIn";
+    private static final String EP_REFRESH = "/App/Authentication/Authenticator/refresh";
+    private static final String EP_INDEX_LIST = "/App/IndexList/indexList";
+    private static final String EP_PLAY_INFO = "/App/IndexPlay/playInfo";
+    private static final String EP_VURL_SHOW = "/App/Resource/Vurl/show";
+    private static final String EP_VURL_DETAIL = "/App/Resource/VurlDetail/showOne";
+    private static final String EP_FIND_MORE_VOD = "/App/Index/findMoreVod";
+
+    // ==================== 请求头常量 ====================
+    private static final String HEADER_UA = "Lavf/57.83.100";
+    private static final String HEADER_CODE = "GZ0369";
+    private static final String HEADER_LANG = "zh_cn";
+    private static final String HEADER_VERSION = "2604028";
+    private static final String HEADER_PACKAGE = "com.ae06aebdbb.y286327f5a.ofe849883320260517";
+    private static final String HEADER_VER = "3.0.3.2";
+    private static final String PHONE_MODEL = "xiaomi-25031";
 
     // ==================== 实例字段 ====================
 
-    // 重命名同名字段
-    private final HashMap<String, String> headersMap = new HashMap<>();
+    /** 分类默认值映射（cateId -> 默认 area 值） */
+    private final HashMap<String, String> defaultAreaMap = new HashMap<>();
+    /** 当前域名索引（用于轮换） */
     private int urlIndex = 0;
+    /** 当前 API URL */
     private String currentUrl = API_URLS[0];
-    private boolean initialized = false;
-
-    // b/c/d/e 字段
-    private String timestamp;      // b - 时间戳
-    private String randomStr;      // c - 随机字符串
-    private String token;          // d - 令牌
-    private String userId;         // e - 用户ID
+    /** 是否已完成注册（signUp） */
+    private boolean registered = false;
+    /** 设备 ID（时间戳偏移） */
+    private String deviceId;
+    /** 随机字符串（40 位） */
+    private String randomStr;
+    /** 认证令牌 */
+    private String token = "";
+    /** 用户 ID */
+    private String userId = "";
 
     // ==================== 构造函数 ====================
 
     public Gz360() {
-        headersMap.put("1", "电影");
-        headersMap.put("2", "电视剧");
-        headersMap.put("3", "综艺");
-        headersMap.put("4", "动漫");
-        headersMap.put("ext", "");
+        defaultAreaMap.put("1", "5");
+        defaultAreaMap.put("2", "12");
+        defaultAreaMap.put("3", "30");
+        defaultAreaMap.put("4", "22");
+        defaultAreaMap.put("64", "");
     }
 
     // ==================== Spider 标准方法 ====================
@@ -110,321 +141,448 @@ public class Gz360 extends Spider {
     @Override
     public void init(Context context, String extend) throws Exception {
         super.init(context, extend);
-
-        // 初始化时间戳（随机偏移）
         Random random = new Random();
-        long baseTime = 8639954892000L;
-        timestamp = String.valueOf(baseTime + random.nextInt(10000));
-
-        // 生成随机字符串（40位）
+        // 生成 deviceId（固定基准值 + 随机偏移）
+        deviceId = String.valueOf(8639954892000L + random.nextInt(10000));
+        // 生成 40 位随机字符串
         StringBuilder sb = new StringBuilder(40);
         for (int i = 0; i < 40; i++) {
-            sb.append(RANDOM_CHARS.charAt(random.nextInt(16)));
+            sb.append(HEX_CHARS.charAt(random.nextInt(16)));
         }
         randomStr = sb.toString();
-
-        // 初始化请求
+        // 尝试注册和刷新令牌（失败忽略，后续请求会重试）
         try {
-            fetchInitData();
-            fetchToken();
-        } catch (Exception e) {
-            // 忽略初始化失败
+            signUp();
+            refresh();
+        } catch (Exception ignored) {
         }
     }
 
     @Override
     public String homeContent(boolean filter) throws Exception {
-        // 5个分类（从 smali 解码验证）
         List<Class> classes = Arrays.asList(
             new Class("1", "电影"),
-            new Class("2", "电视剧"),
+            new Class("2", "国产剧"),
             new Class("3", "综艺"),
             new Class("4", "动漫"),
-            new Class("5", "少儿")
+            new Class("64", "短剧")
         );
-
-        // 首页不获取推荐列表，返回空列表
-        ArrayList<Vod> list = new ArrayList<>();
-
-        // 添加过滤器
         LinkedHashMap<String, List<Filter>> filters = buildFilters();
-
-        return Result.string(classes, list, filter ? filters : null);
+        return Result.string(classes, new ArrayList<>(), filter ? filters : null);
     }
 
     @Override
     public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
         ArrayList<Vod> list = new ArrayList<>();
-
         try {
             JsonObject params = new JsonObject();
-            params.addProperty("tid", tid);                     // 正确字段名
+            params.addProperty("tid", tid);
             params.addProperty("page", pg);
-            params.addProperty("sort", extend != null ? extend.getOrDefault("sort", "0") : "0");  // 正确字段名
-            params.addProperty("area", extend != null ? extend.getOrDefault("area", "0") : "0");  // 正确字段名
-
-            // sub 字段：子类（从 extend 获取或使用默认）
-            String sub = extend != null ? extend.getOrDefault("class", (String) headersMap.get(tid)) : headersMap.get(tid);
+            // sort：默认 "d_id"（综合）
+            String sort = (extend != null && extend.containsKey("sort")) ? extend.get("sort") : "d_id";
+            params.addProperty("sort", sort);
+            // sub：默认 "0"（全部）
+            String sub = (extend != null && extend.containsKey("sub")) ? extend.get("sub") : "0";
             params.addProperty("sub", sub);
-
-            // year 字段
-            params.addProperty("year", extend != null ? extend.getOrDefault("year", "0") : "0");
-
-            // pageSize 固定为 30
+            // area：默认从分类映射取
+            String area = (extend != null && extend.containsKey("area")) ? extend.get("area") : defaultAreaMap.get(tid);
+            params.addProperty("area", area);
+            // year：默认 "0"（全部）
+            String year = (extend != null && extend.containsKey("year")) ? extend.get("year") : "0";
+            params.addProperty("year", year);
             params.addProperty("pageSize", "30");
 
-            JsonObject data = fetchEncryptedApi("/App/IndexList/indexList", params, false);
-            if (data == null || !data.has("list")) {
-                return Result.get().vod(list).page(Integer.parseInt(pg), 9999, 30, 0).string();
-            }
-
-            JsonArray items = data.getAsJsonArray("list");
-            for (int i = 0; i < items.size(); i++) {
-                JsonObject item = items.get(i).getAsJsonObject();
-                Vod vod = parseVodItem(item);
-                if (vod != null) {
-                    list.add(vod);
+            JsonObject data = fetchWithRetry(params, EP_INDEX_LIST);
+            if (data != null && data.has("list")) {
+                JsonArray items = data.getAsJsonArray("list");
+                for (JsonElement element : items) {
+                    list.add(toVod(element.getAsJsonObject()));
                 }
             }
-
-            return Result.get().vod(list).page(Integer.parseInt(pg), 9999, 30, list.size()).string();
-        } catch (Exception e) {
-            return Result.get().vod(list).page(Integer.parseInt(pg), 9999, 30, 0).string();
+        } catch (Exception ignored) {
         }
+        int page = Integer.parseInt(pg);
+        return Result.get().vod(list).page(page, 9999, 30, list.size()).string();
     }
 
     @Override
     public String detailContent(List<String> ids) throws Exception {
+        String vodId = ids.get(0);
         try {
-            String vodId = ids.get(0);
-
             // 第一次请求：获取详情信息
             JsonObject params1 = new JsonObject();
-            params1.addProperty("token_id", userId);       // 正确字段名
-            params1.addProperty("vod_id", vodId);          // 正确字段名（解码验证：仓乓业乆仌乘 → vod_id）
-            params1.addProperty("mobile_time", String.valueOf(System.currentTimeMillis() / 1000)); // 正确字段名
+            params1.addProperty("token_id", userId);
+            params1.addProperty("vod_id", vodId);
+            params1.addProperty("mobile_time", String.valueOf(System.currentTimeMillis() / 1000));
             params1.addProperty("token", token);
 
-            JsonObject data1 = fetchEncryptedApi("/App/IndexPlay/playInfo", params1, false);
+            JsonObject data1 = fetchWithRetry(params1, EP_PLAY_INFO);
             if (data1 == null || !data1.has("vodInfo")) {
                 return Result.error("详情获取失败");
             }
+            JsonObject vodInfo = data1.getAsJsonObject("vodInfo");
 
-            JsonObject detailData = data1.getAsJsonObject("vodInfo");
-
-            // 第二次请求：获取播放列表
+            // 第二次请求：获取播放列表（注意参数名为 vod_d_id，与第一次的 vod_id 不同）
             JsonObject params2 = new JsonObject();
-            params2.addProperty("vurl_cloud_id", "2");     // 解码验证：仓义丌乵仺也丒乶仐乘両买仁 → vurl_cloud_id
-            params2.addProperty("vod_d_id", vodId);        // 解码验证：仓乓业乆仁乣丗乽 → vod_d_id（注意：与第一次请求的参数名不同！）
+            params2.addProperty("vurl_cloud_id", "2");
+            params2.addProperty("vod_d_id", vodId);
 
-            JsonObject data2 = fetchEncryptedApi("/App/Resource/Vurl/show", params2, false);
+            JsonObject data2 = fetchWithRetry(params2, EP_VURL_SHOW);
 
-            // 构建播放列表映射（线路名 -> 集数列表）
+            // 解析播放列表（线路名 -> 集数列表）
             LinkedHashMap<String, List<String>> playMap = new LinkedHashMap<>();
             if (data2 != null && data2.has("list")) {
                 JsonArray playList = data2.getAsJsonArray("list");
-
-                for (int i = 0; i < playList.size(); i++) {
-                    JsonObject episode = playList.get(i).getAsJsonObject();
-
-                    // 获取标题
+                for (JsonElement element : playList) {
+                    JsonObject episode = element.getAsJsonObject();
                     String title = getString(episode, "title");
-                    if (TextUtils.isEmpty(title)) {
+                    if (TextUtils.isEmpty(title) || !episode.has("play")) {
                         continue;
                     }
-
-                    // play 字段是一个 JSON 对象，包含多个线路
                     JsonObject playObj = episode.getAsJsonObject("play");
-                    if (playObj == null) {
-                        continue;
-                    }
-
-                    // 遍历每个线路（key 是线路名）
                     for (String lineName : playObj.keySet()) {
                         JsonObject lineData = playObj.getAsJsonObject(lineName);
-                        if (lineData == null) {
+                        // 跳过 show_type == "2" 的线路
+                        if ("2".equals(getString(lineData, "show_type"))) {
                             continue;
                         }
-
-                        // 检查 show_type，跳过值为 "2" 的线路
-                        String showType = getString(lineData, "show_type");
-                        if ("2".equals(showType)) {
-                            continue;
-                        }
-
-                        // 获取播放 URL（param 字段）
                         String playUrl = getString(lineData, "param");
                         if (TextUtils.isEmpty(playUrl)) {
                             continue;
                         }
-
-                        // 添加到播放列表
                         if (!playMap.containsKey(lineName)) {
                             playMap.put(lineName, new ArrayList<>());
                         }
-                        // 格式：title$url
                         playMap.get(lineName).add(title + "$" + playUrl);
                     }
                 }
             }
 
-            // 构建Vod对象
+            // 构建 Vod 对象
             Vod vod = new Vod();
             vod.setVodId(vodId);
-            vod.setVodName(getString(detailData, "vod_name"));         // 正确字段名
-            vod.setVodPic(getString(detailData, "vod_pic"));           // 正确字段名
-            vod.setVodYear(getString(detailData, "vod_year"));         // 正确字段名
-            vod.setVodArea(getString(detailData, "vod_area"));         // 正确字段名
-            vod.setVodDirector(getString(detailData, "vod_director")); // 正确字段名
-            vod.setVodActor(getString(detailData, "vod_actor"));       // 正确字段名
-            vod.setVodContent(getString(detailData, "vod_use_content")); // 正确字段名
-            vod.setVodRemarks(getString(detailData, "vod_scroe"));     // 评分字段
+            vod.setVodName(getString(vodInfo, "vod_name"));
+            vod.setVodPic(getString(vodInfo, "vod_pic"));
+            vod.setVodContent(getString(vodInfo, "vod_use_content"));
+            vod.setVodActor(getString(vodInfo, "vod_actor"));
+            vod.setVodDirector(getString(vodInfo, "vod_director"));
+            vod.setVodArea(getString(vodInfo, "vod_area"));
+            vod.setVodYear(getString(vodInfo, "vod_year"));
+            vod.setVodRemarks(getString(vodInfo, "vod_scroe"));
 
-            // 设置播放信息
             if (!playMap.isEmpty()) {
                 ArrayList<String> playFrom = new ArrayList<>();
                 ArrayList<String> playUrl = new ArrayList<>();
-
                 for (Map.Entry<String, List<String>> entry : playMap.entrySet()) {
                     playFrom.add(entry.getKey());
-                    playUrl.add(join("#", entry.getValue()));
+                    playUrl.add(TextUtils.join("#", entry.getValue()));
                 }
-
-                vod.setVodPlayFrom(join("$$$", playFrom));
-                vod.setVodPlayUrl(join("$$$", playUrl));
+                vod.setVodPlayFrom(TextUtils.join("$$$", playFrom));
+                vod.setVodPlayUrl(TextUtils.join("$$$", playUrl));
             }
-
             return Result.string(vod);
         } catch (Exception e) {
-            return Result.error("详情获取失败: " + e.getMessage());
+            return Result.error("详情获取失败");
         }
     }
 
     @Override
-    public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
-        // 解析播放URL
-        String[] parts = id.split("@");
-        String playUrl = parts[0];
-
-        // 如果URL包含多个清晰度，选择最佳
-        if (parts.length > 1) {
-            playUrl = parts[parts.length - 1];
+    public String playerContent(String flag, String id, List<String> vipHeaders) throws Exception {
+        // 解析 id 中的 key=value 对（以 & 分隔）
+        JsonObject params = new JsonObject();
+        String[] pairs = id.split("&");
+        for (String pair : pairs) {
+            int idx = pair.indexOf('=');
+            if (idx > 0) {
+                params.addProperty(pair.substring(0, idx), pair.substring(idx + 1));
+            }
         }
 
-        JsonObject result = new JsonObject();
-        result.addProperty("url", playUrl);
-        result.addProperty("parse", 1);
-        result.addProperty("jx", 1);
+        JsonObject data = fetchWithRetry(params, EP_VURL_DETAIL);
+        String playUrl = "";
+        if (data != null) {
+            playUrl = getString(data, "url");
+        }
+        if (TextUtils.isEmpty(playUrl)) {
+            return Result.error("播放链接解析失败");
+        }
 
-        return result.toString();
+        // 构建播放请求头
+        HashMap<String, String> headers = new HashMap<>();
+        headers.put("User-Agent", HEADER_UA);
+        headers.put("Referer", "http://WJiZxLXA2.com/");
+
+        return Result.get().url(playUrl).parse(0).header(headers).string();
     }
 
     @Override
-    public String searchContent(String key, boolean quick) throws Exception {
+    public String searchContent(String keyword, boolean quick) throws Exception {
+        JsonObject params = new JsonObject();
+        params.addProperty("keywords", keyword);
+        params.addProperty("order_val", "1");
+
+        JsonObject data = fetchWithRetry(params, EP_FIND_MORE_VOD);
         ArrayList<Vod> list = new ArrayList<>();
-
-        try {
-            JsonObject params = new JsonObject();
-            params.addProperty("keywords", key);     // 正确字段名
-            params.addProperty("order_val", "1");    // 固定值
-
-            JsonObject data = fetchEncryptedApi("/App/Index/findMoreVod", params, false);
-            if (data == null || !data.has("list")) {
-                return Result.string(list);
+        if (data != null && data.has("list")) {
+            for (JsonElement element : data.getAsJsonArray("list")) {
+                list.add(toVod(element.getAsJsonObject()));
             }
-
-            JsonArray items = data.getAsJsonArray("list");
-            for (int i = 0; i < items.size(); i++) {
-                JsonObject item = items.get(i).getAsJsonObject();
-                Vod vod = parseVodItem(item);
-                if (vod != null) {
-                    list.add(vod);
-                }
-            }
-        } catch (Exception e) {
-            // 忽略搜索失败
         }
-
         return Result.string(list);
     }
 
-    // ==================== 私有辅助方法 ====================
+    // ==================== 核心加密与请求方法 ====================
 
     /**
-     * 获取首页推荐列表
+     * 带重试的 API 请求（3 次外循环 × 5 次域名轮换）。
+     * 失败后调用 signUp()+refresh() 重新认证。
      */
-    private ArrayList<Vod> getHomeVideoList() throws Exception {
-        ArrayList<Vod> list = new ArrayList<>();
-        try {
-            JsonObject params = new JsonObject();
-            params.addProperty("type", "recommend");
-            params.addProperty("page", "1");
-
-            JsonObject data = fetchEncryptedApi("/api/v1/home", params, false);
-            if (data == null || !data.has("list")) {
-                return list;
-            }
-
-            JsonArray items = data.getAsJsonArray("list");
-            for (int i = 0; i < items.size(); i++) {
-                JsonObject item = items.get(i).getAsJsonObject();
-                Vod vod = parseVodItem(item);
-                if (vod != null) {
-                    list.add(vod);
+    private JsonObject fetchWithRetry(JsonObject params, String endpoint) {
+        for (int outer = 0; outer < 3; outer++) {
+            for (int inner = 0; inner < 5; inner++) {
+                currentUrl = API_URLS[urlIndex];
+                try {
+                    JsonObject result = encryptAndFetch(params, endpoint, false);
+                    if (result != null) {
+                        return result;
+                    }
+                } catch (Exception ignored) {
                 }
+                urlIndex = (urlIndex + 1) % 5;
             }
-        } catch (Exception e) {
-            // 忽略失败
+            // 前 2 次外循环失败后重新认证
+            if (outer < 2) {
+                try {
+                    registered = false;
+                    signUp();
+                    refresh();
+                } catch (Exception ignored) {
+                }
+                urlIndex = 0;
+            }
         }
-        return list;
+        return null;
     }
 
     /**
-     * 构建过滤器
+     * 核心加密请求方法。
+     * 1. 检查认证状态（必要时自动注册/刷新）
+     * 2. AES 加密请求参数为十六进制字符串
+     * 3. RSA 加密 AES key/iv 为 Base64
+     * 4. 构建 MD5 签名
+     * 5. 发送 POST 请求
+     * 6. RSA 解密响应中的会话密钥
+     * 7. AES 解密响应数据
+     *
+     * @param params   请求参数（JSON）
+     * @param endpoint API 端点
+     * @param forceAuth 是否强制重新认证（忽略已有 token）
+     * @return 解密后的响应 JSON
      */
-    private static LinkedHashMap<String, List<Filter>> buildFilters() {
+    private JsonObject encryptAndFetch(JsonObject params, String endpoint, boolean forceAuth) throws Exception {
+        // 认证检查（非强制认证时）
+        if (!forceAuth) {
+            if (TextUtils.isEmpty(token) || TextUtils.isEmpty(userId)) {
+                if (registered) {
+                    // 已注册过，调用 signIn
+                    JsonObject signInParams = new JsonObject();
+                    signInParams.addProperty("new_key", randomStr);
+                    signInParams.addProperty("old_key", PHONE_MODEL);
+                    JsonObject signInResult = encryptAndFetch(signInParams, EP_SIGN_IN, true);
+                    saveToken(signInResult);
+                } else {
+                    signUp();
+                }
+                refresh();
+            }
+        }
+
+        // AES 加密请求参数
+        String jsonStr = params.toString();
+        byte[] aesEncrypted = aesEncrypt(jsonStr.getBytes(StandardCharsets.UTF_8));
+        String aesHex = bytesToHex(aesEncrypted, "%02X");
+
+        // RSA 加密 AES key/iv
+        JsonObject keyIvJson = new JsonObject();
+        keyIvJson.addProperty("iv", AES_IV);
+        keyIvJson.addProperty("key", AES_KEY);
+        byte[] rsaEncrypted = rsaEncrypt(keyIvJson.toString().getBytes(StandardCharsets.UTF_8));
+        String rsaKey = Base64.encodeToString(rsaEncrypted, Base64.NO_WRAP);
+
+        // 构建签名
+        String time = String.valueOf(System.currentTimeMillis() / 1000);
+        StringBuilder signBuilder = new StringBuilder();
+        signBuilder.append("token_id=,token=").append(token);
+        signBuilder.append(",phone_type=1,request_key=").append(aesHex);
+        signBuilder.append(",app_id=1,time=").append(time);
+        signBuilder.append(",keys=").append(rsaKey).append(SIGN_SUFFIX);
+        String signature = md5Hex(signBuilder.toString()).toUpperCase(Locale.ROOT);
+
+        // 构建请求体（LinkedHashMap 保持顺序）
+        LinkedHashMap<String, String> body = new LinkedHashMap<>();
+        body.put("token", token == null ? "" : token);
+        body.put("token_id", "");
+        body.put("phone_type", "1");
+        body.put("time", time);
+        body.put("phone_model", PHONE_MODEL);
+        body.put("keys", rsaKey);
+        body.put("response_key", aesHex);
+        body.put("signature", signature);
+        body.put("app_id", "1");
+        body.put("ad_version", "1");
+
+        // 构建请求 URL
+        String url = currentUrl + endpoint;
+
+        // 构建请求头
+        HashMap<String, String> headers = new HashMap<>();
+        headers.put("User-Agent", HEADER_UA);
+        headers.put("code", HEADER_CODE);
+        headers.put("deviceId", deviceId);
+        headers.put("lang", HEADER_LANG);
+        headers.put("Cache-Control", "no-cache");
+        headers.put("Content-Type", "application/x-www-form-urlencoded");
+        headers.put("Version", HEADER_VERSION);
+        headers.put("PackageName", HEADER_PACKAGE);
+        headers.put("Ver", HEADER_VER);
+        headers.put("api-ver", HEADER_VER);
+        headers.put("Referer", currentUrl);
+
+        // 发送 POST 请求
+        String response = OkHttp.post(url, body, headers);
+        if (TextUtils.isEmpty(response)) {
+            throw new Exception("空响应");
+        }
+
+        JsonObject respJson = JsonParser.parseString(response).getAsJsonObject();
+        // 检查业务码
+        if (respJson.has("code") && respJson.get("code").getAsInt() != 200) {
+            throw new Exception("业务错误 code=" + respJson.get("code"));
+        }
+        if (!respJson.has("data")) {
+            throw new Exception("无 data");
+        }
+        JsonObject data = respJson.getAsJsonObject("data");
+        if (!data.has("keys") || !data.has("response_key")) {
+            throw new Exception("缺加密封装");
+        }
+
+        // RSA 解密会话密钥
+        String keysBase64 = data.get("keys").getAsString();
+        String privKeyStr = RSA_PRIVATE_KEY_PEM
+            .replace("-----BEGIN PRIVATE KEY-----", "")
+            .replace("-----END PRIVATE KEY-----", "")
+            .replaceAll("\n", "");
+        byte[] privKeyBytes = Base64.decode(privKeyStr, Base64.DEFAULT);
+        PKCS8EncodedKeySpec privSpec = new PKCS8EncodedKeySpec(privKeyBytes);
+        PrivateKey privateKey = KeyFactory.getInstance("RSA").generatePrivate(privSpec);
+
+        // 分块解密 RSA（每块 128 字节）
+        byte[] keysBytes = Base64.decode(keysBase64, Base64.DEFAULT);
+        Cipher rsaCipher = Cipher.getInstance(RSA_ALGORITHM);
+        rsaCipher.init(Cipher.DECRYPT_MODE, privateKey);
+        StringBuilder keysDecrypted = new StringBuilder();
+        for (int i = 0; i < keysBytes.length; i += 128) {
+            int len = Math.min(128, keysBytes.length - i);
+            byte[] block = Arrays.copyOfRange(keysBytes, i, i + len);
+            byte[] decrypted = rsaCipher.doFinal(block);
+            keysDecrypted.append(new String(decrypted, StandardCharsets.UTF_8));
+        }
+        JsonObject sessionKeys = JsonParser.parseString(keysDecrypted.toString().trim()).getAsJsonObject();
+        String sessionKey = sessionKeys.get("key").getAsString();
+        String sessionIv = sessionKeys.get("iv").getAsString();
+
+        // AES 解密响应数据
+        String responseHex = data.get("response_key").getAsString();
+        byte[] responseBytes = hexToBytes(responseHex);
+        byte[] decrypted = aesDecrypt(responseBytes, sessionKey, sessionIv);
+        String decryptedStr = new String(decrypted, StandardCharsets.UTF_8);
+        if (TextUtils.isEmpty(decryptedStr)) {
+            throw new Exception("解密为空");
+        }
+        return JsonParser.parseString(decryptedStr).getAsJsonObject();
+    }
+
+    /**
+     * 注册设备（signUp）。
+     */
+    private void signUp() throws Exception {
+        JsonObject params = new JsonObject();
+        params.addProperty("new_key", randomStr);
+        params.addProperty("old_key", PHONE_MODEL);
+        params.addProperty("phone_type", 1);
+        params.addProperty("time", "");
+        JsonObject result = encryptAndFetch(params, EP_SIGN_UP, true);
+        saveToken(result);
+        registered = true;
+    }
+
+    /**
+     * 刷新令牌（refresh）。
+     */
+    private void refresh() throws Exception {
+        JsonObject params = new JsonObject();
+        JsonObject result = encryptAndFetch(params, EP_REFRESH, true);
+        saveToken(result);
+    }
+
+    /**
+     * 保存认证响应中的 token 和 userId。
+     */
+    private void saveToken(JsonObject response) throws Exception {
+        if (response == null) {
+            throw new Exception("认证响应为空");
+        }
+        String newToken = getString(response, "token");
+        if (TextUtils.isEmpty(newToken)) {
+            throw new Exception("认证失败，无 token");
+        }
+        token = newToken;
+        String newUserId = getString(response, "app_user_id");
+        if (!TextUtils.isEmpty(newUserId)) {
+            userId = newUserId;
+        }
+    }
+
+    // ==================== 工具方法 ====================
+
+    /**
+     * 构建首页过滤器。
+     */
+    private LinkedHashMap<String, List<Filter>> buildFilters() {
         LinkedHashMap<String, List<Filter>> filters = new LinkedHashMap<>();
 
-        // 分类筛选
-        filters.put("class", Arrays.asList(
-            new Filter("class", "类型", Arrays.asList(
-                new Filter.Value("全部", "全部"),
-                new Filter.Value("动作", "动作"),
-                new Filter.Value("喜剧", "喜剧"),
-                new Filter.Value("爱情", "爱情"),
-                new Filter.Value("科幻", "科幻"),
-                new Filter.Value("悬疑", "悬疑")
+        // 类型过滤器（sub）
+        filters.put("sub", Arrays.asList(
+            new Filter("sub", "类型", Arrays.asList(
+                new Filter.Value("全部", "0"),
+                new Filter.Value("动作片", "动作片"),
+                new Filter.Value("喜剧片", "喜剧片"),
+                new Filter.Value("爱情片", "爱情片"),
+                new Filter.Value("科幻片", "科幻片"),
+                new Filter.Value("恐怖片", "恐怖片"),
+                new Filter.Value("剧情片", "剧情片")
             ))
         ));
 
-        // 年份筛选
+        // 年份过滤器（year）
         filters.put("year", Arrays.asList(
             new Filter("year", "年份", Arrays.asList(
-                new Filter.Value("全部", "全部"),
-                new Filter.Value("2024", "2024"),
-                new Filter.Value("2023", "2023"),
-                new Filter.Value("2022", "2022"),
-                new Filter.Value("2021", "2021")
+                new Filter.Value("全部", "0"),
+                new Filter.Value("2026", "10"),
+                new Filter.Value("2025", "13"),
+                new Filter.Value("2024", "14"),
+                new Filter.Value("2023", "15")
             ))
         ));
 
-        // 地区筛选
-        filters.put("area", Arrays.asList(
-            new Filter("area", "地区", Arrays.asList(
-                new Filter.Value("全部", "全部"),
-                new Filter.Value("中国大陆", "中国大陆"),
-                new Filter.Value("中国香港", "中国香港"),
-                new Filter.Value("美国", "美国"),
-                new Filter.Value("韩国", "韩国")
-            ))
-        ));
-
-        // 排序
+        // 排序过滤器（sort）
         filters.put("sort", Arrays.asList(
             new Filter("sort", "排序", Arrays.asList(
-                new Filter.Value("最新", "最新"),
-                new Filter.Value("最热", "最热"),
-                new Filter.Value("评分", "评分")
+                new Filter.Value("综合", "d_id"),
+                new Filter.Value("最新", "d_addtime"),
+                new Filter.Value("最热", "d_score"),
+                new Filter.Value("高分", "d_score")
             ))
         ));
 
@@ -432,268 +590,109 @@ public class Gz360 extends Spider {
     }
 
     /**
-     * 初始化请求（获取 userId）- 解码验证的 API 路径
+     * 将 JsonObject 转换为 Vod 对象（用于列表项）。
      */
-    private void fetchInitData() throws Exception {
-        JsonObject params = new JsonObject();
-        params.addProperty("random", randomStr);                          // 解码验证：介乙三乆从乙万 → random
-        params.addProperty("old_key", "aLFBMWpxBrIDAD1Si/KVvm41");        // 解码验证：今乐业乆从乙万 → old_key
-        params.addProperty("phone_type", 1);                              // 解码验证：仕乔丑乷什乣上习仕乙 → phone_type
-        params.addProperty("code", "");                                   // 解码验证：仆乓业乼 → code
-
-        JsonObject data = fetchEncryptedApi("/App/Authentication/Device/signUp", params, true);
-        if (data != null) {
-            userId = getString(data, "userId");
-            initialized = true;
+    private Vod toVod(JsonObject item) {
+        Vod vod = new Vod();
+        vod.setVodId(getString(item, "vod_id"));
+        vod.setVodName(getString(item, "vod_name"));
+        vod.setVodPic(getString(item, "vod_pic"));
+        vod.setVodYear(getString(item, "vod_year"));
+        String continu = getString(item, "vod_continu");
+        String remarks = getString(item, "vod_scroe");
+        if (!TextUtils.isEmpty(continu) && !"0".equals(continu)) {
+            remarks = "更新至" + continu + "集";
+        } else if (TextUtils.isEmpty(remarks)) {
+            remarks = "暂无备注";
         }
+        vod.setVodRemarks(remarks);
+        return vod;
     }
 
     /**
-     * 获取 token - 解码验证的 API 路径
-     */
-    private void fetchToken() throws Exception {
-        JsonObject params = new JsonObject();
-        JsonObject data = fetchEncryptedApi("/App/Authentication/Authenticator/refresh", params, true);
-        if (data != null) {
-            token = getString(data, "token");
-        }
-    }
-
-    /**
-     * 执行加密 API 请求
-     */
-    private JsonObject fetchEncryptedApi(String path, JsonObject params, boolean forceInit) throws Exception {
-        // 检查是否需要初始化
-        if (!forceInit && (TextUtils.isEmpty(userId) || TextUtils.isEmpty(token))) {
-            if (initialized) {
-                fetchInitData();
-                fetchToken();
-            } else {
-                fetchInitData();
-                fetchToken();
-            }
-        }
-
-        // AES 加密请求体
-        String plainBody = params.toString();
-        String encryptedBody = aesEncrypt(plainBody, AES_KEY, AES_IV);
-
-        // RSA 加密 AES 密钥
-        JsonObject keyInfo = new JsonObject();
-        keyInfo.addProperty("key", AES_KEY);
-        keyInfo.addProperty("iv", AES_IV);
-        String rsaEncrypted = rsaEncrypt(keyInfo.toString(), RSA_PUBLIC_KEY_BASE64);
-
-        // SHA-256 签名
-        String signData = encryptedBody + ":" + timestamp + ":" + randomStr + ":" + userId;
-        String sign = sha256Hex(signData).toUpperCase(Locale.ROOT);
-
-        // 构建请求参数
-        LinkedHashMap<String, String> bodyParams = new LinkedHashMap<>();
-        bodyParams.put("data", userId);
-        bodyParams.put("timestamp", "");
-        bodyParams.put("version", "1");
-        bodyParams.put("time", timestamp);
-        bodyParams.put("platform", "Android");
-        bodyParams.put("key", rsaEncrypted);
-        bodyParams.put("body", encryptedBody);
-        bodyParams.put("sign", sign);
-        bodyParams.put("ext", "1");
-        bodyParams.put("token", token);
-
-        // 构建请求头
-        HashMap<String, String> headers = new HashMap<>();
-        headers.put("User-Agent", "Mozilla/5.0");
-        headers.put("Content-Type", "application/x-www-form-urlencoded");
-        headers.put("Accept", "application/json");
-        headers.put("token", timestamp);
-        headers.put("random", randomStr);
-
-        // 执行 HTTP POST 请求
-        String url = currentUrl + path;
-        String response = OkHttp.post(url, bodyParams, headers);
-
-        if (TextUtils.isEmpty(response)) {
-            return null;
-        }
-
-        // 解析响应
-        JsonObject json = JsonParser.parseString(response).getAsJsonObject();
-
-        // 检查状态码
-        if (json.has("code")) {
-            int code = json.get("code").getAsInt();
-            if (code != 200) {
-                throw new Exception("API返回错误码: " + code);
-            }
-        }
-
-        // 检查是否有加密数据
-        if (json.has("data")) {
-            JsonObject dataObj = json.getAsJsonObject("data");
-
-            // 如果有加密的密钥和数据，需要解密
-            if (dataObj.has("key") && dataObj.has("body")) {
-                String encryptedKey = getString(dataObj, "key");
-                String encryptedData = getString(dataObj, "body");
-
-                // 使用 RSA 私钥解密 AES 密钥
-                byte[] keyBytes = Base64.decode(encryptedKey, Base64.DEFAULT);
-                PrivateKey privateKey = loadPrivateKey(RSA_PRIVATE_KEY_TEMPLATE);
-
-                Cipher rsaCipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
-                rsaCipher.init(Cipher.DECRYPT_MODE, privateKey);
-                byte[] decryptedKey = rsaCipher.doFinal(keyBytes);
-                String aesKeyJson = new String(decryptedKey, StandardCharsets.UTF_8);
-
-                // 解析 AES 密钥
-                JsonObject keyJson = JsonParser.parseString(aesKeyJson).getAsJsonObject();
-                String aesKey = getString(keyJson, "key");
-                String aesIv = getString(keyJson, "iv");
-
-                // 使用 AES 解密数据
-                byte[] encryptedBytes = Base64.decode(encryptedData, Base64.DEFAULT);
-                byte[] decryptedBytes = aesDecrypt(encryptedBytes, aesKey, aesIv);
-                String decryptedData = new String(decryptedBytes, StandardCharsets.UTF_8);
-
-                return JsonParser.parseString(decryptedData).getAsJsonObject();
-            }
-
-            return dataObj;
-        }
-
-        return json;
-    }
-
-    /**
-     * AES 加密
-     */
-    private String aesEncrypt(String data, String key, String iv) throws Exception {
-        SecretKeySpec keySpec = new SecretKeySpec(key.getBytes(StandardCharsets.UTF_8), "AES");
-        IvParameterSpec ivSpec = new IvParameterSpec(iv.getBytes(StandardCharsets.UTF_8));
-
-        Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
-        cipher.init(Cipher.ENCRYPT_MODE, keySpec, ivSpec);
-
-        byte[] encrypted = cipher.doFinal(data.getBytes(StandardCharsets.UTF_8));
-
-        // 转为十六进制字符串
-        StringBuilder sb = new StringBuilder();
-        for (byte b : encrypted) {
-            sb.append(String.format("%02x", b));
-        }
-        return sb.toString();
-    }
-
-    /**
-     * AES 解密
-     */
-    private byte[] aesDecrypt(byte[] encrypted, String key, String iv) throws Exception {
-        SecretKeySpec keySpec = new SecretKeySpec(key.getBytes(StandardCharsets.UTF_8), "AES");
-        IvParameterSpec ivSpec = new IvParameterSpec(iv.getBytes(StandardCharsets.UTF_8));
-
-        Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
-        cipher.init(Cipher.DECRYPT_MODE, keySpec, ivSpec);
-
-        return cipher.doFinal(encrypted);
-    }
-
-    /**
-     * RSA 加密
-     */
-    private String rsaEncrypt(String data, String publicKeyStr) throws Exception {
-        byte[] keyBytes = Base64.decode(publicKeyStr, Base64.DEFAULT);
-        X509EncodedKeySpec keySpec = new X509EncodedKeySpec(keyBytes);
-        PublicKey publicKey = KeyFactory.getInstance("RSA").generatePublic(keySpec);
-
-        Cipher cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
-        cipher.init(Cipher.ENCRYPT_MODE, publicKey);
-
-        byte[] encrypted = cipher.doFinal(data.getBytes(StandardCharsets.UTF_8));
-        return Base64.encodeToString(encrypted, Base64.NO_WRAP);
-    }
-
-    /**
-     * 加载 RSA 私钥
-     */
-    private PrivateKey loadPrivateKey(String privateKeyStr) throws Exception {
-        // 去除 PEM 头尾标记和换行符
-        String cleanKey = privateKeyStr
-            .replace("-----BEGIN PRIVATE KEY-----", "")
-            .replace("-----END PRIVATE KEY-----", "")
-            .replaceAll("\\s", "");
-
-        byte[] keyBytes = Base64.decode(cleanKey, Base64.DEFAULT);
-        PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(keyBytes);
-        return KeyFactory.getInstance("RSA").generatePrivate(keySpec);
-    }
-
-    /**
-     * SHA-256 哈希（十六进制）
-     */
-    private String sha256Hex(String data) throws Exception {
-        java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
-        byte[] digest = md.digest(data.getBytes(StandardCharsets.UTF_8));
-
-        StringBuilder sb = new StringBuilder();
-        for (byte b : digest) {
-            sb.append(String.format("%02x", b));
-        }
-        return sb.toString();
-    }
-
-    /**
-     * 解析 Vod 项
-     */
-    private Vod parseVodItem(JsonObject item) {
-        try {
-            String id = getString(item, "id");
-            String name = getString(item, "name");
-            String pic = getString(item, "pic");
-            String remark = getString(item, "remark");
-
-            if (TextUtils.isEmpty(id) || TextUtils.isEmpty(name)) {
-                return null;
-            }
-
-            return new Vod(id, name, pic, remark);
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    /**
-     * 从 JsonObject 获取字符串
+     * 安全地从 JsonObject 获取字符串值。
      */
     private static String getString(JsonObject obj, String key) {
-        if (obj == null || !obj.has(key)) {
+        if (obj == null || !obj.has(key) || obj.get(key).isJsonNull()) {
             return "";
         }
         try {
-            JsonElement element = obj.get(key);
-            if (element.isJsonNull()) {
-                return "";
-            }
-            return element.getAsString();
+            return obj.get(key).getAsString();
         } catch (Exception e) {
             return "";
         }
     }
 
     /**
-     * 连接字符串数组
+     * AES 加密（CBC/PKCS5Padding，使用固定 key 和 iv）。
      */
-    private static String join(String delimiter, List<String> list) {
-        if (list == null || list.isEmpty()) {
-            return "";
-        }
+    private byte[] aesEncrypt(byte[] data) throws Exception {
+        Cipher cipher = Cipher.getInstance(AES_ALGORITHM);
+        SecretKeySpec keySpec = new SecretKeySpec(AES_KEY.getBytes(StandardCharsets.UTF_8), "AES");
+        IvParameterSpec ivSpec = new IvParameterSpec(AES_IV.getBytes(StandardCharsets.UTF_8));
+        cipher.init(Cipher.ENCRYPT_MODE, keySpec, ivSpec);
+        return cipher.doFinal(data);
+    }
+
+    /**
+     * AES 解密（CBC/PKCS5Padding，使用指定 key 和 iv）。
+     */
+    private byte[] aesDecrypt(byte[] data, String key, String iv) throws Exception {
+        Cipher cipher = Cipher.getInstance(AES_ALGORITHM);
+        SecretKeySpec keySpec = new SecretKeySpec(key.getBytes(StandardCharsets.UTF_8), "AES");
+        IvParameterSpec ivSpec = new IvParameterSpec(iv.getBytes(StandardCharsets.UTF_8));
+        cipher.init(Cipher.DECRYPT_MODE, keySpec, ivSpec);
+        return cipher.doFinal(data);
+    }
+
+    /**
+     * RSA 加密（ECB/PKCS1Padding，使用公钥）。
+     */
+    private byte[] rsaEncrypt(byte[] data) throws Exception {
+        byte[] keyBytes = Base64.decode(RSA_PUBLIC_KEY_BASE64, Base64.DEFAULT);
+        X509EncodedKeySpec keySpec = new X509EncodedKeySpec(keyBytes);
+        PublicKey publicKey = KeyFactory.getInstance("RSA").generatePublic(keySpec);
+        Cipher cipher = Cipher.getInstance(RSA_ALGORITHM);
+        cipher.init(Cipher.ENCRYPT_MODE, publicKey);
+        return cipher.doFinal(data);
+    }
+
+    /**
+     * 字节数组转十六进制字符串。
+     *
+     * @param bytes   字节数组
+     * @param format  格式化模板（如 "%02X" 大写或 "%02x" 小写）
+     */
+    private static String bytesToHex(byte[] bytes, String format) {
         StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < list.size(); i++) {
-            if (i > 0) {
-                sb.append(delimiter);
-            }
-            sb.append(list.get(i));
+        for (byte b : bytes) {
+            sb.append(String.format(format, b & 0xFF));
         }
         return sb.toString();
+    }
+
+    /**
+     * 十六进制字符串转字节数组。
+     */
+    private static byte[] hexToBytes(String hex) {
+        int len = hex.length() / 2;
+        byte[] bytes = new byte[len];
+        for (int i = 0; i < len; i++) {
+            bytes[i] = (byte) Integer.parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+        }
+        return bytes;
+    }
+
+    /**
+     * 计算 MD5 哈希（返回小写十六进制字符串）。
+     */
+    private static String md5Hex(String input) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("MD5");
+            byte[] digest = md.digest(input.getBytes(StandardCharsets.UTF_8));
+            return bytesToHex(digest, "%02x");
+        } catch (Exception e) {
+            return "";
+        }
     }
 }
