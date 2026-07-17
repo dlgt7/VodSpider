@@ -158,16 +158,24 @@ public class Gz360 extends Spider {
 
         try {
             JsonObject params = new JsonObject();
-            params.addProperty("type", tid);
+            params.addProperty("tid", tid);                     // 正确字段名
             params.addProperty("page", pg);
-            params.addProperty("class", extend != null ? extend.getOrDefault("class", "全部") : "全部");
-            params.addProperty("year", extend != null ? extend.getOrDefault("year", "全部") : "全部");
-            params.addProperty("area", extend != null ? extend.getOrDefault("area", "全部") : "全部");
-            params.addProperty("sort", extend != null ? extend.getOrDefault("sort", "最新") : "最新");
+            params.addProperty("sort", extend != null ? extend.getOrDefault("sort", "0") : "0");  // 正确字段名
+            params.addProperty("area", extend != null ? extend.getOrDefault("area", "0") : "0");  // 正确字段名
 
-            JsonObject data = fetchEncryptedApi("/api/v1/list", params, false);
+            // sub 字段：子类（从 extend 获取或使用默认）
+            String sub = extend != null ? extend.getOrDefault("class", (String) headersMap.get(tid)) : headersMap.get(tid);
+            params.addProperty("sub", sub);
+
+            // year 字段
+            params.addProperty("year", extend != null ? extend.getOrDefault("year", "0") : "0");
+
+            // pageSize 固定为 30
+            params.addProperty("pageSize", "30");
+
+            JsonObject data = fetchEncryptedApi("/App/IndexList/indexList", params, false);
             if (data == null || !data.has("list")) {
-                return Result.get().vod(list).page(Integer.parseInt(pg), 9999, 20, 0).string();
+                return Result.get().vod(list).page(Integer.parseInt(pg), 9999, 30, 0).string();
             }
 
             JsonArray items = data.getAsJsonArray("list");
@@ -179,9 +187,9 @@ public class Gz360 extends Spider {
                 }
             }
 
-            return Result.get().vod(list).page(Integer.parseInt(pg), 9999, 20, list.size()).string();
+            return Result.get().vod(list).page(Integer.parseInt(pg), 9999, 30, list.size()).string();
         } catch (Exception e) {
-            return Result.get().vod(list).page(Integer.parseInt(pg), 9999, 20, 0).string();
+            return Result.get().vod(list).page(Integer.parseInt(pg), 9999, 30, 0).string();
         }
     }
 
@@ -190,60 +198,90 @@ public class Gz360 extends Spider {
         try {
             String vodId = ids.get(0);
 
-            // 第一次请求获取基本信息
+            // 第一次请求：获取详情信息
             JsonObject params1 = new JsonObject();
-            params1.addProperty("id", userId);
-            params1.addProperty("vodId", vodId);
-            params1.addProperty("t", String.valueOf(System.currentTimeMillis() / 1000));
+            params1.addProperty("token_id", userId);       // 正确字段名
+            params1.addProperty("vod_d_id", vodId);        // 正确字段名
+            params1.addProperty("mobile_time", String.valueOf(System.currentTimeMillis() / 1000)); // 正确字段名
             params1.addProperty("token", token);
 
-            JsonObject data1 = fetchEncryptedApi("/api/v1/detail", params1, false);
-            if (data1 == null || !data1.has("data")) {
+            JsonObject data1 = fetchEncryptedApi("/App/IndexPlay/playInfo", params1, false);
+            if (data1 == null || !data1.has("vodInfo")) {
                 return Result.error("详情获取失败");
             }
 
-            JsonObject detailData = data1.getAsJsonObject("data");
+            JsonObject detailData = data1.getAsJsonObject("vodInfo");
+
+            // 第二次请求：获取播放列表
+            JsonObject params2 = new JsonObject();
+            params2.addProperty("vurl_cloud_id", "2");     // 正确字段名和值
+            params2.addProperty("vod_d_id", vodId);        // 正确字段名
+
+            JsonObject data2 = fetchEncryptedApi("/App/Resource/Vurl/show", params2, false);
+
+            // 构建播放列表映射（线路名 -> 集数列表）
+            LinkedHashMap<String, List<String>> playMap = new LinkedHashMap<>();
+            if (data2 != null && data2.has("list")) {
+                JsonArray playList = data2.getAsJsonArray("list");
+
+                for (int i = 0; i < playList.size(); i++) {
+                    JsonObject episode = playList.get(i).getAsJsonObject();
+
+                    // 跳过特定类型（show_type 匹配时）
+                    String showType = getString(episode, "show_type");
+                    if ("2".equals(showType)) {
+                        continue;
+                    }
+
+                    String title = getString(episode, "title");
+                    String url = getString(episode, "param");  // 使用 param 字段
+
+                    if (TextUtils.isEmpty(title) || TextUtils.isEmpty(url)) {
+                        continue;
+                    }
+
+                    // 解析线路名和播放URL
+                    // play 字段包含实际的URL信息（可能有多个清晰度）
+                    String playUrl = getString(episode, "play");
+                    if (TextUtils.isEmpty(playUrl)) {
+                        playUrl = url;
+                    }
+
+                    // 使用默认线路
+                    String lineName = "默认";
+                    if (!playMap.containsKey(lineName)) {
+                        playMap.put(lineName, new ArrayList<>());
+                    }
+
+                    // 格式：title$url
+                    playMap.get(lineName).add(title + "$" + playUrl);
+                }
+            }
 
             // 构建Vod对象
             Vod vod = new Vod();
             vod.setVodId(vodId);
-            vod.setVodName(getString(detailData, "name"));
-            vod.setVodPic(getString(detailData, "pic"));
-            vod.setVodYear(getString(detailData, "year"));
-            vod.setVodArea(getString(detailData, "area"));
-            vod.setVodDirector(getString(detailData, "director"));
-            vod.setVodActor(getString(detailData, "actor"));
-            vod.setVodContent(getString(detailData, "content"));
+            vod.setVodName(getString(detailData, "vod_name"));         // 正确字段名
+            vod.setVodPic(getString(detailData, "vod_pic"));           // 正确字段名
+            vod.setVodYear(getString(detailData, "vod_year"));         // 正确字段名
+            vod.setVodArea(getString(detailData, "vod_area"));         // 正确字段名
+            vod.setVodDirector(getString(detailData, "vod_director")); // 正确字段名
+            vod.setVodActor(getString(detailData, "vod_actor"));       // 正确字段名
+            vod.setVodContent(getString(detailData, "vod_use_content")); // 正确字段名
+            vod.setVodRemarks(getString(detailData, "vod_scroe"));     // 评分字段
 
-            // 第二次请求获取播放列表
-            JsonObject params2 = new JsonObject();
-            params2.addProperty("type", "detail");
-            params2.addProperty("vodId", vodId);
-
-            JsonObject data2 = fetchEncryptedApi("/api/v1/play", params2, false);
-
-            LinkedHashMap<String, String> playMap = new LinkedHashMap<>();
-            if (data2 != null && data2.has("playList")) {
-                JsonArray playList = data2.getAsJsonArray("playList");
-                ArrayList<String> episodes = new ArrayList<>();
-
-                for (int i = 0; i < playList.size(); i++) {
-                    JsonObject episode = playList.get(i).getAsJsonObject();
-                    String title = getString(episode, "title");
-                    String url = getString(episode, "url");
-                    if (!TextUtils.isEmpty(title) && !TextUtils.isEmpty(url)) {
-                        episodes.add(title + "$" + url);
-                    }
-                }
-
-                if (!episodes.isEmpty()) {
-                    playMap.put("默认", join("#", episodes));
-                }
-            }
-
+            // 设置播放信息
             if (!playMap.isEmpty()) {
-                vod.setVodPlayFrom(join("$$$", new ArrayList<>(playMap.keySet())));
-                vod.setVodPlayUrl(join("$$$", new ArrayList<>(playMap.values())));
+                ArrayList<String> playFrom = new ArrayList<>();
+                ArrayList<String> playUrl = new ArrayList<>();
+
+                for (Map.Entry<String, List<String>> entry : playMap.entrySet()) {
+                    playFrom.add(entry.getKey());
+                    playUrl.add(join("#", entry.getValue()));
+                }
+
+                vod.setVodPlayFrom(join("$$$", playFrom));
+                vod.setVodPlayUrl(join("$$$", playUrl));
             }
 
             return Result.string(vod);
@@ -277,10 +315,10 @@ public class Gz360 extends Spider {
 
         try {
             JsonObject params = new JsonObject();
-            params.addProperty("keyword", key);
-            params.addProperty("page", "1");
+            params.addProperty("keywords", key);     // 正确字段名
+            params.addProperty("order_val", "1");    // 固定值
 
-            JsonObject data = fetchEncryptedApi("/api/v1/search", params, false);
+            JsonObject data = fetchEncryptedApi("/App/Index/findMoreVod", params, false);
             if (data == null || !data.has("list")) {
                 return Result.string(list);
             }
