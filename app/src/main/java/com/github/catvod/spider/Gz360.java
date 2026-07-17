@@ -70,7 +70,7 @@ public class Gz360 extends Spider {
         "MIICdgIBADANBgkqhkiG9w0BAQEFAASCAmAwggJcAgEAAoGAe6hKrWLi1zQmjTT1\n" +
         "ozbE4QdFeJGNxubxld6GrFGximxfMsMB6BpJhpcTouAqywAFppiKetUBBbXwYsYU\n" +
         "1wNr648XVmPmCMCy4rY8vdliFnbMUj086DU6Z+/oXBdWU3/b1G0DN3E9wULRSwcK\n" +
-        "ZT3wj/cCI1vsCm3gj2R5SqkA9Y0CAwEANQKBgAJH+4CxV0/zBVcLiBCHvSANm0l7\n" +
+        "ZT3wj/cCI1vsCm3gj2R5SqkA9Y0CAwEAAQKBgAJH+4CxV0/zBVcLiBCHvSANm0l7\n" +
         "HetybTh/j2p0Y1sTXro4ALwAaCTUeqdBjWiLSo9lNwDHFyq8zX90+gNxa7c5EqcW\n" +
         "V9FmlVXr8VhfBzcZo1nXeNdXFT7tQ2yah/odtdcx+vRMSGJd1t/5k5bDd9wAvYdI\n" +
         "DblMAg+wiKKZ5KcdAkEA1cCakEN4NexkF5tHPRrR6XOY/XHfkqXxEhMqmNbB9U34\n" +
@@ -87,6 +87,8 @@ public class Gz360 extends Spider {
     private static final String SIGN_SUFFIX = "*&zvdvdvddbfikkkumtmdwqppp?|4Y!s!2br";
     /** 随机字符表（用于生成 deviceId） */
     private static final String HEX_CHARS = "0123456789ABCDEF";
+    /** signIn/signUp 中 old_key 的固定值 */
+    private static final String OLD_KEY_VALUE = "aLFBMWpxBrIDAD1Si/KVvm41";
 
     // ==================== 端点常量 ====================
     private static final String EP_SIGN_UP = "/App/Authentication/Device/signUp";
@@ -142,8 +144,8 @@ public class Gz360 extends Spider {
     public void init(Context context, String extend) throws Exception {
         super.init(context, extend);
         Random random = new Random();
-        // 生成 deviceId（固定基准值 + 随机偏移）
-        deviceId = String.valueOf(8639954892000L + random.nextInt(10000));
+        // 生成 deviceId（固定基准值 0x311f09d5be300L + 随机偏移）— 与 smali 一致
+        deviceId = String.valueOf(864150060000000L + random.nextInt(10000));
         // 生成 40 位随机字符串
         StringBuilder sb = new StringBuilder(40);
         for (int i = 0; i < 40; i++) {
@@ -181,12 +183,12 @@ public class Gz360 extends Spider {
             // sort：默认 "d_id"（综合）
             String sort = (extend != null && extend.containsKey("sort")) ? extend.get("sort") : "d_id";
             params.addProperty("sort", sort);
-            // sub：默认 "0"（全部）
-            String sub = (extend != null && extend.containsKey("sub")) ? extend.get("sub") : "0";
-            params.addProperty("sub", sub);
-            // area：默认从分类映射取
-            String area = (extend != null && extend.containsKey("area")) ? extend.get("area") : defaultAreaMap.get(tid);
+            // area：默认 "0"（全部）— 与 smali 一致
+            String area = (extend != null && extend.containsKey("area")) ? extend.get("area") : "0";
             params.addProperty("area", area);
+            // sub：默认从分类映射取 — 与 smali 一致
+            String sub = (extend != null && extend.containsKey("sub")) ? extend.get("sub") : defaultAreaMap.get(tid);
+            params.addProperty("sub", sub);
             // year：默认 "0"（全部）
             String year = (extend != null && extend.containsKey("year")) ? extend.get("year") : "0";
             params.addProperty("year", year);
@@ -229,14 +231,15 @@ public class Gz360 extends Spider {
 
             JsonObject data2 = fetchWithRetry(params2, EP_VURL_SHOW);
 
-            // 解析播放列表（线路名 -> 集数列表）
+            // 解析播放列表（线路名 -> 集数列表）— 与 smali 一致
             LinkedHashMap<String, List<String>> playMap = new LinkedHashMap<>();
             if (data2 != null && data2.has("list")) {
                 JsonArray playList = data2.getAsJsonArray("list");
                 for (JsonElement element : playList) {
                     JsonObject episode = element.getAsJsonObject();
                     String title = getString(episode, "title");
-                    if (TextUtils.isEmpty(title) || !episode.has("play")) {
+                    // smali 只检查 has("play")，不检查 title 是否为空
+                    if (!episode.has("play")) {
                         continue;
                     }
                     JsonObject playObj = episode.getAsJsonObject("play");
@@ -270,16 +273,15 @@ public class Gz360 extends Spider {
             vod.setVodYear(getString(vodInfo, "vod_year"));
             vod.setVodRemarks(getString(vodInfo, "vod_scroe"));
 
-            if (!playMap.isEmpty()) {
-                ArrayList<String> playFrom = new ArrayList<>();
-                ArrayList<String> playUrl = new ArrayList<>();
-                for (Map.Entry<String, List<String>> entry : playMap.entrySet()) {
-                    playFrom.add(entry.getKey());
-                    playUrl.add(TextUtils.join("#", entry.getValue()));
-                }
-                vod.setVodPlayFrom(TextUtils.join("$$$", playFrom));
-                vod.setVodPlayUrl(TextUtils.join("$$$", playUrl));
+            // smali 总是设置 playFrom/playUrl，即使 playMap 为空
+            ArrayList<String> playFrom = new ArrayList<>();
+            ArrayList<String> playUrl = new ArrayList<>();
+            for (Map.Entry<String, List<String>> entry : playMap.entrySet()) {
+                playFrom.add(entry.getKey());
+                playUrl.add(TextUtils.join("#", entry.getValue()));
             }
+            vod.setVodPlayFrom(TextUtils.join("$$$", playFrom));
+            vod.setVodPlayUrl(TextUtils.join("$$$", playUrl));
             return Result.string(vod);
         } catch (Exception e) {
             return Result.error("详情获取失败");
@@ -384,10 +386,10 @@ public class Gz360 extends Spider {
         if (!forceAuth) {
             if (TextUtils.isEmpty(token) || TextUtils.isEmpty(userId)) {
                 if (registered) {
-                    // 已注册过，调用 signIn
+                    // 已注册过，调用 signIn（仅 new_key + old_key 两个字段）
                     JsonObject signInParams = new JsonObject();
                     signInParams.addProperty("new_key", randomStr);
-                    signInParams.addProperty("old_key", PHONE_MODEL);
+                    signInParams.addProperty("old_key", OLD_KEY_VALUE);
                     JsonObject signInResult = encryptAndFetch(signInParams, EP_SIGN_IN, true);
                     saveToken(signInResult);
                 } else {
@@ -426,7 +428,7 @@ public class Gz360 extends Spider {
         body.put("time", time);
         body.put("phone_model", PHONE_MODEL);
         body.put("keys", rsaKey);
-        body.put("response_key", aesHex);
+        body.put("request_key", aesHex);
         body.put("signature", signature);
         body.put("app_id", "1");
         body.put("ad_version", "1");
@@ -472,7 +474,7 @@ public class Gz360 extends Spider {
         String privKeyStr = RSA_PRIVATE_KEY_PEM
             .replace("-----BEGIN PRIVATE KEY-----", "")
             .replace("-----END PRIVATE KEY-----", "")
-            .replaceAll("\n", "");
+            .replaceAll("\\s", "");
         byte[] privKeyBytes = Base64.decode(privKeyStr, Base64.DEFAULT);
         PKCS8EncodedKeySpec privSpec = new PKCS8EncodedKeySpec(privKeyBytes);
         PrivateKey privateKey = KeyFactory.getInstance("RSA").generatePrivate(privSpec);
@@ -505,13 +507,14 @@ public class Gz360 extends Spider {
 
     /**
      * 注册设备（signUp）。
+     * 请求字段：new_key, old_key, phone_type(Number), code("")
      */
     private void signUp() throws Exception {
         JsonObject params = new JsonObject();
         params.addProperty("new_key", randomStr);
-        params.addProperty("old_key", PHONE_MODEL);
+        params.addProperty("old_key", OLD_KEY_VALUE);
         params.addProperty("phone_type", 1);
-        params.addProperty("time", "");
+        params.addProperty("code", "");
         JsonObject result = encryptAndFetch(params, EP_SIGN_UP, true);
         saveToken(result);
         registered = true;
@@ -611,6 +614,8 @@ public class Gz360 extends Spider {
 
     /**
      * 安全地从 JsonObject 获取字符串值。
+     * 与 smali g() 方法一致：getAsString 失败时返回 String.valueOf(jsonElement)，
+     * 确保数字类型的字段（如 vod_id）能正确转为字符串。
      */
     private static String getString(JsonObject obj, String key) {
         if (obj == null || !obj.has(key) || obj.get(key).isJsonNull()) {
@@ -619,7 +624,8 @@ public class Gz360 extends Spider {
         try {
             return obj.get(key).getAsString();
         } catch (Exception e) {
-            return "";
+            // 与 smali 一致：返回元素的字符串表示（数字类型会返回数字字符串）
+            return String.valueOf(obj.get(key));
         }
     }
 
