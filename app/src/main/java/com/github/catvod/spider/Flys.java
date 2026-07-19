@@ -114,7 +114,7 @@ public class Flys extends Spider {
 
         int currentPage = Integer.parseInt(pg);
         int pageCount = response.optInt("pagecount", 1);
-        return Result.string(currentPage, pageCount, list.size(), list);
+        return Result.string(currentPage, pageCount, list.size(), pageCount, list);
     }
 
     @Override
