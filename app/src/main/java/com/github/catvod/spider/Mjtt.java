@@ -136,8 +136,9 @@ public class Mjtt extends Spider {
         vod.setVodName(name);
 
         // Year from title suffix like (2026)
-        Matcher yearMatcher = YEAR_PATTERN.matcher(doc.select("h1").parent().text());
-        if (yearMatcher.find()) {
+        Element h1 = doc.select("h1").first();
+        Matcher yearMatcher = h1 != null ? YEAR_PATTERN.matcher(h1.parent().text()) : null;
+        if (yearMatcher != null && yearMatcher.find()) {
             vod.setVodYear(yearMatcher.group(1));
         }
 
