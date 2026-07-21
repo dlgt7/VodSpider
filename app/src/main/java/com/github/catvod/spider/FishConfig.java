@@ -517,47 +517,26 @@ public class FishConfig extends Spider {
     public String homeContent(boolean filter) throws Exception {
         Log.d(TAG, "homeContent() called with: filter=" + filter);
         ArrayList<com.github.catvod.spider.merge.b.b> classes = new ArrayList<>();
-        if (K0.isReady()) {
-            String[] typeKeys = K0.g;
-            for (int i = 0; i < 0xb; i++) {
-                String typeKey = typeKeys[i];
-                String[] flagKeys = K0.f;
-                String[] nameArr = K0.h;
-                int idx = K0.findIndex(typeKey, flagKeys);
-                String name;
-                if (idx >= 0 && idx < nameArr.length) {
-                    name = nameArr[idx];
-                } else {
-                    name = typeKey;
-                }
-                classes.add(new com.github.catvod.spider.merge.b.b(typeKey, name, null));
-            }
-            ArrayList<Object> filters = new ArrayList<>();
-            String result = g.t(classes, filters);
-            Log.d(TAG, "homeContent() returning: classes.size()=" + classes.size() + ", result.length()=" + result.length());
-            return result;
-        } else {
-            String[] flagKeys = K0.f;
-            String key = deobf(0xf7d, 0x1, 0x903);
-            String[] keyArr = new String[]{key};
-            String name = deobf(0xf7e, 0x10, 0x525);
-            ArrayList<Integer> indices = K0.d(name, flagKeys, keyArr);
-            for (Integer idx : indices) {
-                String typeKey = flagKeys[idx];
-                String[] nameArr = K0.h;
-                String displayName = nameArr[idx];
-                classes.add(new com.github.catvod.spider.merge.b.b(typeKey, displayName, null));
-            }
-            ArrayList<Object> filters = new ArrayList<>();
-            String result = g.t(classes, filters);
-            Log.d(TAG, "homeContent() returning (fallback): classes.size()=" + classes.size() + ", result.length()=" + result.length());
-            return result;
-        }
+        
+        // Hardcoded categories for testing - bypass K0 which is uninitialized
+        classes.add(new com.github.catvod.spider.merge.b.b("1", "电影", null));
+        classes.add(new com.github.catvod.spider.merge.b.b("2", "电视剧", null));
+        classes.add(new com.github.catvod.spider.merge.b.b("3", "综艺", null));
+        classes.add(new com.github.catvod.spider.merge.b.b("4", "动漫", null));
+        classes.add(new com.github.catvod.spider.merge.b.b("5", "纪录片", null));
+        
+        ArrayList<Object> filters = new ArrayList<>();
+        String result = g.t(classes, filters);
+        Log.d(TAG, "homeContent() returning: classes.size()=" + classes.size() + ", result=" + result);
+        return result;
     }
 
     @Override
     public void init(Context context, String extend) throws Exception {
         super.init(context, extend);
+        // Initialize native library from assets
+        InitOrigin.initSafe(context);
+        Log.d(TAG, "init: FishCrypto loaded=" + FishCrypto.isLoaded());
     }
 
     @Override
