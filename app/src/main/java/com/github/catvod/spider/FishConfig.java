@@ -1,6 +1,7 @@
 package com.github.catvod.spider;
 
 import android.content.Context;
+import android.util.Log;
 
 import com.github.catvod.spider.merge.A.K0;
 import com.github.catvod.spider.merge.A.s0;
@@ -30,6 +31,8 @@ import java.util.List;
  * deobfuscated string lookup via {@link #deobf(int, int, int)}.
  */
 public class FishConfig extends Spider {
+
+    private static final String TAG = "FishConfig";
 
     /** Bilibili WBI signature provider; the anonymous subclass returns no WBI query. */
     public static final e a = new e() {
@@ -467,9 +470,9 @@ public class FishConfig extends Spider {
         v3.V0(arr0, arr1, arr2, p1, p2);
     }
 
-    /** Returns the current account status array from {@link a}. */
+    /** Returns the current account status array from {@link com.github.catvod.spider.merge.w.a#h()}. */
     public static String[] getAccountStatuses() {
-        return a.h();
+        return com.github.catvod.spider.merge.w.a.h();
     }
 
     /** Schedules an account status refresh through {@link InitOrigin#execute(Runnable)} using {@link r}. */
@@ -477,9 +480,9 @@ public class FishConfig extends Spider {
         InitOrigin.execute(new r(0xc));
     }
 
-    /** Forwards the supplied callback to {@link a#F(Runnable)}. */
+    /** Forwards the supplied callback to {@link com.github.catvod.spider.merge.w.a#F(Runnable)}. */
     public static void refreshConsoleStatus(Runnable callback) {
-        a.F(callback);
+        com.github.catvod.spider.merge.w.a.F(callback);
     }
 
     /** Schedules a status refresh for the given key through {@link InitOrigin#execute(Runnable)} using {@link w}. */
@@ -512,6 +515,7 @@ public class FishConfig extends Spider {
 
     @Override
     public String homeContent(boolean filter) throws Exception {
+        Log.d(TAG, "homeContent() called with: filter=" + filter);
         ArrayList<com.github.catvod.spider.merge.b.b> classes = new ArrayList<>();
         if (K0.isReady()) {
             String[] typeKeys = K0.g;
@@ -529,7 +533,9 @@ public class FishConfig extends Spider {
                 classes.add(new com.github.catvod.spider.merge.b.b(typeKey, name, null));
             }
             ArrayList<Object> filters = new ArrayList<>();
-            return g.t(classes, filters);
+            String result = g.t(classes, filters);
+            Log.d(TAG, "homeContent() returning: classes.size()=" + classes.size() + ", result.length()=" + result.length());
+            return result;
         } else {
             String[] flagKeys = K0.f;
             String key = deobf(0xf7d, 0x1, 0x903);
@@ -543,7 +549,9 @@ public class FishConfig extends Spider {
                 classes.add(new com.github.catvod.spider.merge.b.b(typeKey, displayName, null));
             }
             ArrayList<Object> filters = new ArrayList<>();
-            return g.t(classes, filters);
+            String result = g.t(classes, filters);
+            Log.d(TAG, "homeContent() returning (fallback): classes.size()=" + classes.size() + ", result.length()=" + result.length());
+            return result;
         }
     }
 
@@ -554,6 +562,9 @@ public class FishConfig extends Spider {
 
     @Override
     public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
-        return com.github.catvod.spider.merge.E.b.g("");
+        Log.d(TAG, "playerContent() called with: flag=" + flag + ", id=" + id + ", vipFlags=" + vipFlags);
+        String result = com.github.catvod.spider.merge.E.b.g("");
+        Log.d(TAG, "playerContent() returning: result=" + result);
+        return result;
     }
 }
