@@ -3,13 +3,10 @@ package com.github.catvod.spider;
 import android.content.Context;
 
 import com.github.catvod.spider.merge.A.K0;
-import com.github.catvod.spider.merge.A.c;
 import com.github.catvod.spider.merge.A.s0;
 import com.github.catvod.spider.merge.A.y0;
 import com.github.catvod.spider.merge.A.z0;
-import com.github.catvod.spider.merge.E.b;
 import com.github.catvod.spider.merge.a.w;
-import com.github.catvod.spider.merge.b.b;
 import com.github.catvod.spider.merge.b.g;
 import com.github.catvod.spider.merge.d0.i;
 import com.github.catvod.spider.merge.f.e;
@@ -515,7 +512,7 @@ public class FishConfig extends Spider {
 
     @Override
     public String homeContent(boolean filter) throws Exception {
-        ArrayList<b> classes = new ArrayList<>();
+        ArrayList<com.github.catvod.spider.merge.b.b> classes = new ArrayList<>();
         if (K0.isReady()) {
             String[] typeKeys = K0.g;
             for (int i = 0; i < 0xb; i++) {
@@ -529,7 +526,7 @@ public class FishConfig extends Spider {
                 } else {
                     name = typeKey;
                 }
-                classes.add(new b(typeKey, name, null));
+                classes.add(new com.github.catvod.spider.merge.b.b(typeKey, name, null));
             }
             ArrayList<Object> filters = new ArrayList<>();
             return g.t(classes, filters);
@@ -543,7 +540,7 @@ public class FishConfig extends Spider {
                 String typeKey = flagKeys[idx];
                 String[] nameArr = K0.h;
                 String displayName = nameArr[idx];
-                classes.add(new b(typeKey, displayName, null));
+                classes.add(new com.github.catvod.spider.merge.b.b(typeKey, displayName, null));
             }
             ArrayList<Object> filters = new ArrayList<>();
             return g.t(classes, filters);
@@ -557,6 +554,6 @@ public class FishConfig extends Spider {
 
     @Override
     public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
-        return b.g("");
+        return com.github.catvod.spider.merge.E.b.g("");
     }
 }
