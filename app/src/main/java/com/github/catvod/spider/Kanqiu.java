@@ -12,10 +12,11 @@ import com.github.catvod.net.OkHttp;
 import com.github.catvod.utils.Util;
 
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
-import org.jsoup.select.Elements;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -24,12 +25,12 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 88看球直播源爬虫实现。
- * 支持篮球、足球、网球等体育赛事直播列表、详情解析及播放地址获取。
+ * @author Qile
  */
 public class Kanqiu extends Spider {
 
-    private static String siteUrl = "http://www.88kanqiu.one";
+    private static String siteUrl = "https://www.88kanqiu.tw";
+    private static final String DEFAULT_PIC = "https://pic.imgdb.cn/item/657673d6c458853aeff94ab9.jpg";
 
     private Map<String, String> getHeader() {
         Map<String, String> header = new HashMap<>();
@@ -43,7 +44,7 @@ public class Kanqiu extends Spider {
     }
 
     @Override
-    public String homeContent(boolean filter) throws Exception {
+    public String homeContent(boolean filter) throws JSONException {
         List<Class> classes = new ArrayList<>();
         List<String> typeIds = Arrays.asList("", "1", "8", "21");
         List<String> typeNames = Arrays.asList("全部直播", "篮球直播", "足球直播", "其他直播");
@@ -56,113 +57,75 @@ public class Kanqiu extends Spider {
     @Override
     public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) {
         String cateId = extend.get("cateId") == null ? tid : extend.get("cateId");
-        // 处理 "all" 类型
-        if ("all".equals(cateId)) cateId = "";
         String urlPath = cateId == null || cateId.isEmpty() ? "" : String.format("/match/%s/live", cateId);
-        Elements lis = Jsoup.parse(OkHttp.string(siteUrl + urlPath, getHeader())).select("li.group-game-item");
-        List<Vod> list = new ArrayList<>();
-        for (Element li : lis) {
-            // 获取直播链接
-            Elements linkElements = li.select("a[href*=/live/]");
-            if (linkElements.isEmpty()) continue;
-            Element linkElement = linkElements.first();
-            String href = linkElement.attr("href");
-            if (href.isEmpty()) continue;
-            String vid = href.startsWith("http") ? href : siteUrl + href;
-
-            // 获取按钮状态文本（备注）
-            String remark = linkElement.text().trim();
-            // 如果按钮被禁用且无文本，标记为"未开始"
-            if (linkElement.hasClass("btn-disabled") && remark.isEmpty()) {
-                remark = "未开始";
-            }
-
-            // 获取比赛名称（队伍名称）
-            Elements teamElements = li.select(".team-name[title]");
-            String name;
-            if (teamElements.size() >= 2) {
-                // 双方对阵
-                name = teamElements.get(0).attr("title") + " vs " + teamElements.get(1).attr("title");
-            } else if (teamElements.size() == 1) {
-                // 单方
-                name = teamElements.get(0).attr("title");
-            } else {
-                // 使用游戏类型或备注
-                Element gameType = li.select(".game-type").first();
-                name = gameType != null ? gameType.text() : remark.isEmpty() ? vid : remark;
-            }
-
-            // 获取图片
-            String pic = li.select("img[data-src]").attr("data-src");
-            if (pic.isEmpty()) pic = li.select("img").attr("src");
-            if (pic.isEmpty()) pic = "https://pic.imgdb.cn/item/657673d6c458853aeff94ab9.jpg";
-            if (!pic.startsWith("http")) pic = siteUrl + pic;
-
-            list.add(new Vod(vid, name, pic.trim(), remark));
-        }
-        return Result.get().page(1, 1, 0, lis.size()).vod(list).string();
+        Document doc = Jsoup.parse(OkHttp.string(siteUrl + urlPath, getHeader()));
+        List<Vod> list = parseVods(doc);
+        return Result.get().page(1, 1, 0, list.size()).vod(list).string();
     }
 
-    /**
-     * 解码并解析播放链接。
-     * 从 Base64 编码的数据中提取播放链接列表。
-     */
-    private List<String> decodeAndParsePlayLinks(String encodedData) {
-        List<String> playLinks = new ArrayList<>();
-        try {
-            // 剪切掉前6个字符和后2个字符
-            String trimmed = encodedData.substring(6, encodedData.length() - 2);
-            // Base64 解码
-            String json = new String(Base64.decode(trimmed, Base64.DEFAULT));
-            JSONArray linksArray = new JSONObject(json).getJSONArray("links");
-            for (int i = 0; i < linksArray.length(); i++) {
-                JSONObject linkObject = linksArray.getJSONObject(i);
-                String name = linkObject.optString("name");
-                String url = linkObject.optString("url").replace("#", "***");
-                playLinks.add(name + "$" + url);
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
+    List<Vod> parseVods(Document doc) {
+        List<Vod> list = new ArrayList<>();
+        for (Element li : doc.select(".list-group-item.group-game-item")) {
+            Element link = li.selectFirst(".pay-btn > a[href]");
+            if (link == null) continue;
+            String vid = resolveUrl(link.attr("href"));
+            String name = li.select(".row.d-none").text();
+            if (name.isEmpty()) name = li.text();
+            Element image = li.selectFirst(".col-xs-1 img");
+            String pic = image == null ? "" : image.attr("data-src").trim();
+            if (pic.isEmpty() && image != null) pic = image.attr("src").trim();
+            pic = pic.isEmpty() ? DEFAULT_PIC : resolveUrl(pic);
+            String remark = link.text();
+            list.add(new Vod(vid, name, pic, remark));
         }
-        return playLinks;
+        return list;
+    }
+
+    private String resolveUrl(String url) {
+        if (url.startsWith("http://") || url.startsWith("https://")) return url;
+        if (url.startsWith("//")) return "https:" + url;
+        String base = siteUrl.endsWith("/") ? siteUrl.substring(0, siteUrl.length() - 1) : siteUrl;
+        return base + (url.startsWith("/") ? "" : "/") + url;
+    }
+
+    String getSourceUrl(String id) {
+        return id.endsWith("/play") ? id.substring(0, id.length() - 5) + "/source" : id + "/source";
+    }
+
+    String extractPayload(String content) {
+        try {
+            String data = new JSONObject(content).optString("data");
+            return data.length() > 8 ? data.substring(6, data.length() - 2) : "";
+        } catch (JSONException e) {
+            return "";
+        }
     }
 
     @Override
     public String detailContent(List<String> ids) {
-        if (ids == null || ids.isEmpty()) return Result.error("无内容");
-        String videoId = ids.get(0);
-        if (videoId.equals(siteUrl)) return Result.error("比赛尚未开始");
-
-        List<String> playLinks = new ArrayList<>();
+        if (ids.get(0).equals(siteUrl)) return Result.error("比赛尚未开始");
+        String content = OkHttp.string(getSourceUrl(ids.get(0)), getHeader());
+        String result = extractPayload(content);
+        if (result.isEmpty()) return Result.error("比赛尚未开始");
+        JSONArray linksArray;
         try {
-            // 尝试第一种解析方式：从 -url 接口获取
-            String content = OkHttp.string(videoId + "-url", getHeader());
-            String encodedData = new JSONObject(content).optString("data");
-            if (!encodedData.isEmpty()) {
-                playLinks = decodeAndParsePlayLinks(encodedData);
-            }
-        } catch (Exception e1) {
-            // 第一种方式失败，尝试备用方案：从详情页提取
-            try {
-                String html = OkHttp.string(videoId, getHeader());
-                Element inputElement = Jsoup.parse(html).select("#t[value]").first();
-                if (inputElement != null) {
-                    String value = inputElement.attr("value");
-                    if (!value.isEmpty()) {
-                        playLinks = decodeAndParsePlayLinks(value);
-                    }
-                }
-            } catch (Exception e2) {
-                e2.printStackTrace();
-            }
+            String json = new String(Base64.decode(result, Base64.DEFAULT));
+            linksArray = new JSONObject(json).getJSONArray("links");
+        } catch (IllegalArgumentException | JSONException e) {
+            return Result.error("比赛尚未开始");
         }
-
-        if (playLinks.isEmpty()) return Result.error("比赛尚未开始或暂无线路");
-
+        List<String> vodItems = new ArrayList<>();
+        for (int i = 0; i < linksArray.length(); i++) {
+            JSONObject linkObject = linksArray.optJSONObject(i);
+            if (linkObject == null) continue;
+            String text = linkObject.optString("name");
+            String href = linkObject.optString("url").replace("#", "***");
+            vodItems.add(text + "$" + href);
+        }
         Vod vod = new Vod();
-        vod.setVodId(videoId);
+        vod.setVodId(ids.get(0));
         vod.setVodPlayFrom("Qile");
-        vod.setVodPlayUrl(TextUtils.join("#", playLinks));
+        vod.setVodPlayUrl(TextUtils.join("#", vodItems));
         return Result.string(vod);
     }
 
