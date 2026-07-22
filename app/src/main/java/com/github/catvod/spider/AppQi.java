@@ -501,7 +501,9 @@ public class AppQi extends Spider {
         HashMap<String, String> header = buildHeaders(false);
         header.put("Content-Type", "application/x-www-form-urlencoded");
         String url = apiUrl + "/api.php" + path;
-        String resp = OkHttp.post(url, body, header);
+        // 使用 postFormRaw 以尊重 header 中的 Content-Type（application/x-www-form-urlencoded），
+        // OkHttp.post 会强制 application/json 导致服务器拒绝请求
+        String resp = OkHttp.postFormRaw(url, body, header);
         JsonObject root = JsonParser.parseString(resp).getAsJsonObject();
         String data = root.get("data").getAsString();
         return Crypto.CBC(data, aesKey, aesIv);
