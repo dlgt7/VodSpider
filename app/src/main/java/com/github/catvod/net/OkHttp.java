@@ -82,6 +82,24 @@ public class OkHttp {
         return new OkRequest(POST, url, params, header).execute(client()).getBody();
     }
 
+    /**
+     * 以原始字符串作为请求体发起 POST 请求，遵循 header 中的 Content-Type（不像 {@link #post(String, String, Map)}
+     * 强制 application/json）。供 AppQi 这类需要 application/x-www-form-urlencoded 原始 body 的站点使用。
+     */
+    public static String postFormRaw(String url, String body, Map<String, String> header) {
+        String contentType = (header != null) ? header.get("Content-Type") : null;
+        if (TextUtils.isEmpty(contentType)) contentType = "application/x-www-form-urlencoded";
+        RequestBody requestBody = RequestBody.create(MediaType.parse(contentType), body);
+        Request.Builder builder = new Request.Builder().url(url).post(requestBody);
+        if (header != null) for (String key : header.keySet()) builder.addHeader(key, header.get(key));
+        try (Response res = client().newCall(builder.build()).execute()) {
+            return res.body().string();
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+            return "";
+        }
+    }
+
     public static String put(String url, String json) {
         return put(url, json, null);
     }
