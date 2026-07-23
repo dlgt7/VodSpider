@@ -9,11 +9,8 @@ import javax.crypto.Cipher;
 import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import java.io.IOException;
-import java.security.Security;
 
 import android.util.Base64;
-
-import org.bouncycastle.jce.provider.BouncyCastleProvider;
 
 
 public class CgImageUtil {
@@ -22,14 +19,13 @@ public class CgImageUtil {
 
     private static String aesDecrypt(String word) {
         try {
-            Security.addProvider(new BouncyCastleProvider());
-
             byte[] srcBytes = Base64.decode(word, Base64.DEFAULT);
             byte[] keyBytes = KEY.getBytes("UTF-8");
             byte[] ivBytes = IV.getBytes("UTF-8");
 
             SecretKeySpec secretKey = new SecretKeySpec(keyBytes, "AES");
-            Cipher cipher = Cipher.getInstance("AES/CBC/PKCS7Padding", "BC");
+            // 使用 PKCS5Padding（与 PKCS7Padding 在 AES 16字节块下兼容）
+            Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
             cipher.init(Cipher.DECRYPT_MODE, secretKey, new IvParameterSpec(ivBytes));
 
             byte[] decryptedBytes = cipher.doFinal(srcBytes);
