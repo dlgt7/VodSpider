@@ -37,7 +37,7 @@ import java.util.regex.Pattern;
  *   - 播放页：Artplayer 配置中 {@code url: 'https://...index.m3u8'}
  *   - 搜索页：{@code /search/?wd=xxx} 或 {@code /search/?wd=xxx&pageno=N}
  */
-public class Yhdm extends Spider {
+public class YHDM extends Spider {
 
     private static final String DEFAULT_HOST = "https://www.dmvvv.com";
 
