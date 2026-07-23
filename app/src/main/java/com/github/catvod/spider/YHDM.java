@@ -326,25 +326,79 @@ public class YHDM extends Spider {
 
     /**
      * 从HTML解析播放列表（优先方案）
+     * 使用正则表达式直接提取，避免 Jsoup 选择器可能的兼容性问题
      */
     private void parsePlayListFromHtml(Document doc, List<String> playFromList, List<String> playUrlList) {
+        // 方法1：尝试 Jsoup 选择器
         Elements tabs = doc.select(".playlist .tabs a");
         Elements rows = doc.select(".playlist .row");
-        int lineCount = Math.min(tabs.size(), rows.size());
-        for (int i = 0; i < lineCount; i++) {
-            String lineName = tabs.get(i).text().trim();
-            if (TextUtils.isEmpty(lineName)) lineName = "线路" + (i + 1);
-            playFromList.add(lineName);
-            Elements episodes = rows.get(i).select("ul.list6 li a");
+        
+        if (!tabs.isEmpty() && !rows.isEmpty()) {
+            int lineCount = Math.min(tabs.size(), rows.size());
+            for (int i = 0; i < lineCount; i++) {
+                String lineName = tabs.get(i).text().trim();
+                if (TextUtils.isEmpty(lineName)) lineName = "线路" + (i + 1);
+                playFromList.add(lineName);
+                Elements episodes = rows.get(i).select("ul.list6 li a");
+                StringBuilder eps = new StringBuilder();
+                for (int j = 0; j < episodes.size(); j++) {
+                    Element a = episodes.get(j);
+                    String epName = a.text().trim();
+                    String epUrl = a.attr("href");
+                    if (j > 0) eps.append("#");
+                    eps.append(epName).append("$").append(epUrl);
+                }
+                playUrlList.add(eps.toString());
+            }
+            return;
+        }
+        
+        // 方法2：直接从 Document 的 HTML 字符串中用正则提取
+        String html = doc.html();
+        
+        // 提取线路名（处理嵌套的 <i> 标签）
+        Pattern tabPattern = Pattern.compile("<div[^>]+class=\"tabs\"[^>]*>(.*?)</div>", Pattern.DOTALL);
+        Matcher tabMatcher = tabPattern.matcher(html);
+        if (tabMatcher.find()) {
+            String tabsHtml = tabMatcher.group(1);
+            // 匹配 <a> 标签，提取其所有文本（包括嵌套标签后的文本）
+            Pattern aPattern = Pattern.compile("<a[^>]*>(.*?)</a>", Pattern.DOTALL);
+            Matcher aMatcher = aPattern.matcher(tabsHtml);
+            while (aMatcher.find()) {
+                String aContent = aMatcher.group(1);
+                // 移除所有 HTML 标签，只保留文本
+                String lineName = aContent.replaceAll("<[^>]+>", "").trim();
+                if (!TextUtils.isEmpty(lineName)) {
+                    playFromList.add(lineName);
+                }
+            }
+        }
+        
+        // 提取剧集列表
+        Pattern rowPattern = Pattern.compile("<div[^>]+class=\"row\"[^>]*>.*?<ul[^>]+class=\"list6\"[^>]*>(.*?)</ul>.*?</div>", Pattern.DOTALL);
+        Matcher rowMatcher = rowPattern.matcher(html);
+        while (rowMatcher.find()) {
+            String rowHtml = rowMatcher.group(1);
+            Pattern epPattern = Pattern.compile("<a[^>]+href=\"([^\"]+)\"[^>]*>([^<]+)</a>");
+            Matcher epMatcher = epPattern.matcher(rowHtml);
             StringBuilder eps = new StringBuilder();
-            for (int j = 0; j < episodes.size(); j++) {
-                Element a = episodes.get(j);
-                String epName = a.text().trim();
-                String epUrl = a.attr("href");
-                if (j > 0) eps.append("#");
+            while (epMatcher.find()) {
+                String epUrl = epMatcher.group(1);
+                String epName = epMatcher.group(2).trim();
+                if (eps.length() > 0) eps.append("#");
                 eps.append(epName).append("$").append(epUrl);
             }
-            playUrlList.add(eps.toString());
+            if (eps.length() > 0) {
+                playUrlList.add(eps.toString());
+            }
+        }
+        
+        // 对齐线路名和剧集列表数量
+        while (playFromList.size() > playUrlList.size()) {
+            playUrlList.add("");
+        }
+        while (playUrlList.size() > playFromList.size()) {
+            playFromList.add("线路" + (playFromList.size() + 1));
         }
     }
 
