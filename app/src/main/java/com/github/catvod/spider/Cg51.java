@@ -155,19 +155,57 @@ public class Cg51 extends Spider {
             }
         }
         
-        // 方式2：如果无播放器，尝试从页面链接中提取视频页面（合集页）
+        // 方式2：从文章内容中提取 TOP 列表（每日大瓜、网黄合集等）
+        if (playUrl.isEmpty()) {
+            // 获取文章正文内容
+            Element articleContent = doc.selectFirst(".entry-content, .post-content, article .content");
+            if (articleContent == null) articleContent = doc.selectFirst("article");
+            
+            if (articleContent != null) {
+                // 提取所有包含 /archives/ 的链接，按顺序编号
+                Elements links = articleContent.select("a[href*=/archives/]");
+                for (Element a : links) {
+                    String href = a.attr("href");
+                    String text = a.text().trim();
+                    // 过滤掉导航链接和当前页面链接
+                    if (href.contains("/archives/") && !href.equals(ids.get(0)) && !href.contains("category")) {
+                        // 清理链接文本，只保留主要内容
+                        if (text.contains("点击查看") || text.contains("上一篇") || text.contains("下一篇")) continue;
+                        
+                        String epName = text.isEmpty() ? "TOP " + index : text;
+                        // 截取前30个字符作为标题
+                        if (epName.length() > 30) epName = epName.substring(0, 30) + "...";
+                        
+                        if (playUrl.isEmpty()) {
+                            playUrl = epName + "$" + href;
+                        } else {
+                            playUrl = playUrl + "#" + epName + "$" + href;
+                        }
+                        index++;
+                        // 限制最多10个链接
+                        if (index > 10) break;
+                    }
+                }
+            }
+        }
+        
+        // 方式3：如果仍然没有，尝试从整个页面提取（兜底）
         if (playUrl.isEmpty()) {
             for (Element a : doc.select("a[href*=/archives/]")) {
                 String href = a.attr("href");
                 String text = a.text().trim();
-                if (href.contains("/archives/") && !href.equals(ids.get(0))) {
-                    // 将链接作为剧集
+                if (href.contains("/archives/") && !href.equals(ids.get(0)) && !href.contains("category")) {
+                    if (text.contains("点击查看") || text.contains("上一篇") || text.contains("下一篇")) continue;
+                    String epName = text.isEmpty() ? "视频" + index : text;
+                    if (epName.length() > 30) epName = epName.substring(0, 30) + "...";
+                    
                     if (playUrl.isEmpty()) {
-                        playUrl = (text.isEmpty() ? "视频" + index : text) + "$" + href;
+                        playUrl = epName + "$" + href;
                     } else {
-                        playUrl = playUrl + "#" + (text.isEmpty() ? "视频" + index : text) + "$" + href;
+                        playUrl = playUrl + "#" + epName + "$" + href;
                     }
                     index++;
+                    if (index > 10) break;
                 }
             }
         }
