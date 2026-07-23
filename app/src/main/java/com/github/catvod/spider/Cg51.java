@@ -18,11 +18,6 @@ import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -63,52 +58,54 @@ public class Cg51 extends Spider {
 
     private List<Vod> parseVods(Document doc) {
         List<Vod> list = new ArrayList<>();
-        ExecutorService executorService = Executors.newFixedThreadPool(20); // 创建一个线程池，最大并发数为10
-
-        List<Callable<String>> tasks = new ArrayList<>(); // 用于存储所有的任务
-
+        
         for (Element element : doc.select("article")) {
             String pic = String.valueOf(element.select("script"));
             String pattern = "'(https?://[^']+)";
             Pattern regex = Pattern.compile(pattern);
             Matcher matcher = regex.matcher(pic);
             String PicAddress = "";
-
+            
             if (matcher.find()) {
-                String imageUrl = matcher.group(1);
-                tasks.add(() -> CgImageUtil.loadBackgroundImage(imageUrl)); // 创建一个任务，并将其添加到任务列表中
+                PicAddress = matcher.group(1);
+                // 直接使用 OkHttp 下载并解密图片（使用项目的 OkHttp 工具）
+                try {
+                    String result = CgImageUtil.loadBackgroundImage(PicAddress);
+                    if (result != null && !result.isEmpty()) {
+                        PicAddress = result;
+                    }
+                } catch (Exception e) {
+                    // 忽略图片加载错误，使用原始 URL
+                }
             }
-
+            
             String url = element.select("a").attr("href");
             String name = element.select(".post-card-title").text();
-            String id = url.split("/")[2];
-            if (!name.isEmpty() && !url.isEmpty()) {
+            
+            // 从 URL 中提取 ID：/archives/267062/ -> 267062
+            String id = "";
+            if (!url.isEmpty()) {
+                String[] parts = url.split("/");
+                for (String part : parts) {
+                    if (part.matches("\\d+")) {
+                        id = part;
+                        break;
+                    }
+                }
+            }
+            
+            if (!name.isEmpty() && !id.isEmpty()) {
                 list.add(new Vod(id, name, PicAddress));
             }
         }
-        try {
-            // 执行所有的任务，并获取结果
-            List<Future<String>> futures = executorService.invokeAll(tasks);
-
-            // 遍历任务结果，并将结果设置到对应的Vod对象中
-            for (int i = 0; i < futures.size(); i++) {
-                if (i < list.size()) { // 确保索引不超出列表范围
-                    Vod vod = list.get(i);
-                    String result = futures.get(i).get();
-                    vod.setVodPic(result);
-                }
-            }
-        } catch (InterruptedException | ExecutionException e) {
-            e.printStackTrace();
-        }
-        executorService.shutdown(); // 关闭线程池
+        
         return list;
     }
     @Override
     public String homeContent(boolean filter) throws Exception {
         List<Class> classes = new ArrayList<>();
-        String[] typeIdList = {"wpcz","mrdg","rdsj","bkdg","whhl","xsxy","cbdj","thjx","whhj","rrcg","ldcg","ysyl","lldd","gcjq","snsn","hwcg","jpll","qubk","dcbq","zzs","cgxw","yczq","whmx"};
-        String[] typeNameList = {"今日吃瓜","每日大瓜","热门吃瓜","必看大瓜","网红黑料","学生学校","成人短剧","探花精选","网黄合集","人人吃瓜","领导干部","看片娱乐","伦理道德","国产剧情","骚男骚女","海外吃瓜","软萌甜妹","吃瓜看戏","擦边撩骚","51涨知识","吃瓜新闻","51原创","明星黑料"};
+        String[] typeIdList = {"wpcz","mrdg","rdsj","bkdg","whhl","xsxy","cbdj","thjx","whhj","rrcg","ldcg","51djc","ysyl","lldd","gcjq","snsn","hwcg","jpll","qubk","dcbq","zzs","cgxw","yczq","whmx"};
+        String[] typeNameList = {"今日吃瓜","每日大瓜","热门吃瓜","必看大瓜","网红黑料","学生学校","成人短剧","探花精选","网黄合集","人人吃瓜","领导干部","51剧场","看片娱乐","伦理道德","国产剧情","骚男骚女","海外吃瓜","软萌甜妹","吃瓜看戏","擦边撩骚","51涨知识","吃瓜新闻","51原创","明星黑料"};
         for (int i = 0; i < typeNameList.length; i++) {
             classes.add(new Class(typeIdList[i], typeNameList[i]));
         }
