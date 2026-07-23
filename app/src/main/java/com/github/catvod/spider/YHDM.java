@@ -116,8 +116,9 @@ public class YHDM extends Spider {
                 if (TextUtils.isEmpty(lineName)) lineName = "线路" + (i + 1);
                 playFrom.add(lineName);
                 
-                // 剧集
-                Elements eps = rows.get(i).select("ul.list6 li a");
+                // 剧集 - 使用更通用的选择器（兼容有无 class="list6" 的情况）
+                Elements eps = rows.get(i).select("ul li a");
+                if (eps.isEmpty()) eps = rows.get(i).select("ul.list6 li a");
                 StringBuilder sb = new StringBuilder();
                 for (int j = 0; j < eps.size(); j++) {
                     if (j > 0) sb.append("#");
@@ -144,8 +145,8 @@ public class YHDM extends Spider {
                 }
             }
             
-            // 提取剧集
-            Pattern rowPattern = Pattern.compile("<div[^>]+class=\"row\"[^>]*>.*?<ul[^>]+class=\"list6\"[^>]*>(.*?)</ul>", Pattern.DOTALL);
+            // 提取剧集 - 使用更通用的正则（不强制要求 class="list6"）
+            Pattern rowPattern = Pattern.compile("<div[^>]+class=\"row\"[^>]*>.*?<ul[^>]*>(.*?)</ul>", Pattern.DOTALL);
             Matcher rowMatcher = rowPattern.matcher(html);
             while (rowMatcher.find()) {
                 String rowHtml = rowMatcher.group(1);
@@ -162,20 +163,53 @@ public class YHDM extends Spider {
             }
         }
         
-        // 方法3：硬编码线路（兜底）- 确保总是有线路数据
-        if (playFrom.isEmpty() && !TextUtils.isEmpty(vodIdNum) && vodIdNum.matches("\\d+")) {
-            String[] names = {"高清", "ikun", "非凡", "量子"};
-            int[] idxs = {1, 3, 4, 2};
-            for (int i = 0; i < names.length; i++) {
-                playFrom.add(names[i]);
+        // 方法3：从播放链接中动态提取线路（兜底）
+        if (playFrom.isEmpty() && !TextUtils.isEmpty(html)) {
+            // 提取所有播放链接并按线路索引分组
+            Pattern playLinkPattern = Pattern.compile("/play/" + vodIdNum + "-(\\d+)-(\\d+)/");
+            Matcher m = playLinkPattern.matcher(html);
+            
+            // 使用 Map 按线路索引分组
+            Map<String, List<String[]>> sourceMap = new java.util.LinkedHashMap<>();
+            while (m.find()) {
+                String sourceIdx = m.group(1);
+                String epIdx = m.group(2);
+                if (!sourceMap.containsKey(sourceIdx)) {
+                    sourceMap.put(sourceIdx, new ArrayList<>());
+                }
+                // 存储剧集索引和完整链接
+                sourceMap.get(sourceIdx).add(new String[]{epIdx, m.group(0)});
+            }
+            
+            // 按线路索引排序并构建播放列表
+            List<String> sortedKeys = new ArrayList<>(sourceMap.keySet());
+            java.util.Collections.sort(sortedKeys, java.util.Comparator.comparingInt(Integer::parseInt));
+            
+            for (String sourceIdx : sortedKeys) {
+                playFrom.add("线路" + (playFrom.size() + 1));
+                List<String[]> eps = sourceMap.get(sourceIdx);
+                // 按剧集索引排序
+                eps.sort((a, b) -> Integer.parseInt(a[0]) - Integer.parseInt(b[0]));
                 StringBuilder sb = new StringBuilder();
-                for (int ep = 1; ep <= 24; ep++) {
+                for (int i = 0; i < eps.size(); i++) {
                     if (sb.length() > 0) sb.append("#");
-                    String epName = ep < 10 ? "第0" + ep + "集" : "第" + ep + "集";
-                    sb.append(epName).append("$").append("/play/").append(vodIdNum).append("-").append(idxs[i]).append("-").append(ep).append("/");
+                    String epName = "第" + (i + 1) + "集";
+                    sb.append(epName).append("$").append(eps.get(i)[1]);
                 }
                 playUrl.add(sb.toString());
             }
+        }
+        
+        // 方法4：如果以上都失败，使用硬编码线路名（最后兜底）
+        if (playFrom.isEmpty() && !TextUtils.isEmpty(vodIdNum) && vodIdNum.matches("\\d+")) {
+            playFrom.add("默认");
+            StringBuilder sb = new StringBuilder();
+            for (int ep = 1; ep <= 12; ep++) {
+                if (sb.length() > 0) sb.append("#");
+                String epName = ep < 10 ? "第0" + ep + "集" : "第" + ep + "集";
+                sb.append(epName).append("$").append("/play/").append(vodIdNum).append("-1-").append(ep).append("/");
+            }
+            playUrl.add(sb.toString());
         }
         
         // 对齐线路和剧集数量
