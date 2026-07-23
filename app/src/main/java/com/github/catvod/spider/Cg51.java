@@ -130,17 +130,47 @@ public class Cg51 extends Spider {
         Document doc = Jsoup.parse(OkHttp.string(detailUrl.concat(ids.get(0)), getHeaders()));
         String playUrl = "";
         int index = 1;
-        for (Element element : doc.select("div.dplayer")) {
-            String play = element.attr("data-config");
-            JSONObject jsonObject = new JSONObject(play);
-            JSONObject video = jsonObject.getJSONObject("video");
-            if (playUrl == ""){
-                playUrl = "第" + index + "集$" + video.get("url");
-            }else {
-                playUrl = playUrl + "#第" + index + "集$" + video.get("url");
+        
+        // 方式1：标准 dplayer 播放器
+        Elements dplayers = doc.select("div.dplayer");
+        if (!dplayers.isEmpty()) {
+            for (Element element : dplayers) {
+                String play = element.attr("data-config");
+                if (play == null || play.isEmpty()) continue;
+                try {
+                    JSONObject jsonObject = new JSONObject(play);
+                    JSONObject video = jsonObject.getJSONObject("video");
+                    String url = video.optString("url", "");
+                    if (url.isEmpty()) continue;
+                    if (playUrl.isEmpty()) {
+                        playUrl = "第" + index + "集$" + url;
+                    } else {
+                        playUrl = playUrl + "#第" + index + "集$" + url;
+                    }
+                    index++;
+                } catch (Exception e) {
+                    // 忽略解析错误
+                }
             }
-            index++;
         }
+        
+        // 方式2：如果无播放器，尝试从页面链接中提取视频页面（合集页）
+        if (playUrl.isEmpty()) {
+            for (Element a : doc.select("a[href*=/archives/]")) {
+                String href = a.attr("href");
+                String text = a.text().trim();
+                if (href.contains("/archives/") && !href.equals(ids.get(0))) {
+                    // 将链接作为剧集
+                    if (playUrl.isEmpty()) {
+                        playUrl = (text.isEmpty() ? "视频" + index : text) + "$" + href;
+                    } else {
+                        playUrl = playUrl + "#" + (text.isEmpty() ? "视频" + index : text) + "$" + href;
+                    }
+                    index++;
+                }
+            }
+        }
+        
         String name = doc.select("meta[property=og:title]").attr("content");
         String pic = doc.select("meta[property=og:image]").attr("content");
         String year = doc.select("meta[property=video:release_date]").attr("content");
@@ -150,8 +180,10 @@ public class Cg51 extends Spider {
         vod.setVodPic(pic);
         vod.setVodYear(year);
         vod.setVodName(name);
-        vod.setVodPlayFrom("Cg51");
-        vod.setVodPlayUrl(playUrl);
+        if (!playUrl.isEmpty()) {
+            vod.setVodPlayFrom("Cg51");
+            vod.setVodPlayUrl(playUrl);
+        }
         return Result.string(vod);
     }
 
@@ -164,6 +196,26 @@ public class Cg51 extends Spider {
 
     @Override
     public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
+        // 如果是详情页链接，需要二次解析获取真实播放地址
+        if (id.contains("/archives/")) {
+            Document doc = Jsoup.parse(OkHttp.string(siteUrl + id, getHeaders()));
+            for (Element element : doc.select("div.dplayer")) {
+                String play = element.attr("data-config");
+                if (play == null || play.isEmpty()) continue;
+                try {
+                    JSONObject jsonObject = new JSONObject(play);
+                    JSONObject video = jsonObject.getJSONObject("video");
+                    String url = video.optString("url", "");
+                    if (!url.isEmpty()) {
+                        return Result.get().url(url).header(getHeaders()).string();
+                    }
+                } catch (Exception e) {
+                    // 忽略解析错误
+                }
+            }
+            // 如果仍然找不到，返回原链接（让客户端尝试）
+            return Result.get().url(siteUrl + id).header(getHeaders()).string();
+        }
         return Result.get().url(id).header(getHeaders()).string();
     }
 }
