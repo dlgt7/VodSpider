@@ -32,20 +32,22 @@ import java.util.regex.Pattern;
  *   https://www.vtt6.com   (备)
  * <p>
  * 模板特征：非标站点，无 MacCMS 标志
- *   - 列表页：{@code <ul><li><a href="/detail/{id}/" title="..."><img data-original="..."></a><div class="txt"><a>name</a><p>remarks</p></div></li></ul>}
- *   - 详情页：{@code <div class="detail">} + {@code <div class="playlist"><div class="tabs">} 多线路 + 多个 {@code <div class="row"><ul class="list6">}
+ *   - 列表页：{@code <ul><li><a href="/detail/{id}/" title="..."><img data-original="..."></a><p>remarks</p></li></ul>}
+ *   - 详情页：多线路结构，线路索引从播放URL中提取
  *   - 播放页：Artplayer 配置中 {@code url: 'https://...index.m3u8'}
  *   - 搜索页：{@code /search/?wd=xxx} 或 {@code /search/?wd=xxx&pageno=N}
  */
 public class YHDM extends Spider {
 
     private static final String DEFAULT_HOST = "https://www.dmvvv.com";
+    private static final List<String> SOURCE_NAMES = Arrays.asList("高清", "ikun", "非凡", "量子");
 
-    private static final Pattern PLAYER_URL_PATTERN = Pattern.compile("url\\s*:\\s*'(https?://[^']+)'");
+    private static final Pattern PLAYER_URL_PATTERN = Pattern.compile("url\\s*:\\s*['\"]([^'\"]+\\.m3u8[^'\"]*)['\"]");
     private static final Pattern M3U8_FALLBACK_PATTERN = Pattern.compile("(https?://[^\\s'\"]+\\.m3u8(?:\\?[^\\s'\"]*)?)");
     private static final Pattern PAGE_NUMBER_PATTERN = Pattern.compile("/type/[^/]+/(\\d+)/");
     private static final Pattern SEARCH_TOTAL_PATTERN = Pattern.compile("找到\\s*<em>(\\d+)</em>");
-    private static final Pattern SEARCH_PAGENO_PATTERN = Pattern.compile("pageno=(\\d+)");
+    private static final Pattern EPISODE_COUNT_PATTERN = Pattern.compile("[共全更新至第]*(\\d+)[集话章]");
+    private static final Pattern VOD_ID_PATTERN = Pattern.compile("/(\\d+)/?$");
 
     private String siteUrl = DEFAULT_HOST;
 
@@ -102,7 +104,8 @@ public class YHDM extends Spider {
 
     @Override
     public String detailContent(List<String> ids) throws Exception {
-        String detailUrl = fixUrl(ids.get(0));
+        String videoId = ids.get(0);
+        String detailUrl = fixUrl(videoId);
         String html = OkHttp.string(detailUrl, getHeader());
         Document doc = Jsoup.parse(html);
 
@@ -127,30 +130,24 @@ public class YHDM extends Spider {
         Element blurb = doc.selectFirst("li.blurb");
         if (blurb != null) vodContent = blurb.text().replace("简介：", "").trim();
 
-        // 解析多线路播放列表
-        Elements tabs = doc.select(".playlist .tabs a");
-        Elements rows = doc.select(".playlist .row");
+        // 提取视频数字ID
+        String vodIdNum = extractVodId(videoId);
+
+        // 解析总集数
+        int totalEpisodes = parseEpisodeCount(state);
+
+        // 尝试从HTML解析线路（优先）
         List<String> playFromList = new ArrayList<>();
         List<String> playUrlList = new ArrayList<>();
-        int lineCount = Math.min(tabs.size(), rows.size());
-        for (int i = 0; i < lineCount; i++) {
-            String lineName = tabs.get(i).text().trim();
-            if (TextUtils.isEmpty(lineName)) lineName = "线路" + (i + 1);
-            playFromList.add(lineName);
-            Elements episodes = rows.get(i).select("ul.list6 li a");
-            StringBuilder eps = new StringBuilder();
-            for (int j = 0; j < episodes.size(); j++) {
-                Element a = episodes.get(j);
-                String epName = a.text().trim();
-                String epUrl = a.attr("href");
-                if (j > 0) eps.append("#");
-                eps.append(epName).append("$").append(epUrl);
-            }
-            playUrlList.add(eps.toString());
+        parsePlayListFromHtml(doc, playFromList, playUrlList);
+
+        // 如果HTML解析失败，使用URL测试方式
+        if (playFromList.isEmpty() && !TextUtils.isEmpty(vodIdNum)) {
+            testAndBuildPlayList(vodIdNum, totalEpisodes, playFromList, playUrlList);
         }
 
         Vod vod = new Vod();
-        vod.setVodId(ids.get(0));
+        vod.setVodId(videoId);
         vod.setVodName(vodName);
         vod.setVodPic(vodPic);
         vod.setVodYear(year);
@@ -182,23 +179,25 @@ public class YHDM extends Spider {
         List<Vod> list = new ArrayList<>();
         Document doc = Jsoup.parse(html);
         for (Element li : doc.select("ul > li")) {
-            Element cover = li.selectFirst("a.cover");
-            if (cover == null) continue;
-            String href = cover.attr("href");
-            String title = cover.attr("title");
-            if (TextUtils.isEmpty(href) || !href.contains("/detail/") || TextUtils.isEmpty(title)) continue;
+            Element link = li.selectFirst("a[href*=/detail/]");
+            if (link == null) continue;
+            String href = link.attr("href");
+            String title = link.attr("title");
+            if (TextUtils.isEmpty(title)) title = link.text().trim();
+            if (TextUtils.isEmpty(href) || TextUtils.isEmpty(title)) continue;
 
             String pic = "";
             Element img = li.selectFirst("img");
-            if (img != null) pic = img.attr("data-original");
-            if (TextUtils.isEmpty(pic)) pic = img != null ? img.attr("src") : "";
-
-            String remarks = "";
-            Element stateItem = li.selectFirst("div.item");
-            if (stateItem != null) {
-                remarks = stateItem.text().replace("状态：", "").trim();
+            if (img != null) {
+                pic = img.attr("data-original");
+                if (TextUtils.isEmpty(pic)) pic = img.attr("src");
             }
-            list.add(new Vod(href, title.trim(), pic, remarks));
+
+            String remark = "";
+            Element p = li.selectFirst("p");
+            if (p != null) remark = p.text().trim();
+
+            list.add(new Vod(href, title, pic, remark));
         }
 
         int pageCount = parseSearchPageCount(html, page, list.size());
@@ -230,10 +229,6 @@ public class YHDM extends Spider {
 
     // ==================== 辅助方法 ====================
 
-    /**
-     * 解析首页/分类页通用列表项
-     * 结构：{@code <li><a href="/detail/{id}/" title="..."><img data-original="..."></a><div class="txt"><a>name</a><p>remarks</p></div></li>}
-     */
     private List<Vod> parseHomeList(String html) {
         return parseListItems(html);
     }
@@ -255,20 +250,16 @@ public class YHDM extends Spider {
                 pic = img.attr("data-original");
                 if (TextUtils.isEmpty(pic)) pic = img.attr("src");
             }
+
             String remark = "";
             Element p = li.selectFirst("p");
             if (p != null) remark = p.text().trim();
+
             list.add(new Vod(href, title, pic, remark));
         }
         return list;
     }
 
-    /**
-     * 详情页信息项提取
-     *
-     * @param label 标签名（如"状态"、"年份"）
-     * @param useEm 状态项使用 {@code <em>} 包裹值，其他项为纯文本
-     */
     private String getInfoByLabel(String html, String label, boolean useEm) {
         String pattern = useEm
                 ? "<span>" + label + "：</span>\\s*<em>([^<]+)</em>"
@@ -277,9 +268,6 @@ public class YHDM extends Spider {
         return m.find() ? m.group(1).trim() : "";
     }
 
-    /**
-     * 分类页总页数：从分页链接中提取最大页码
-     */
     private int parseCategoryPageCount(String html, int currentPage) {
         int maxPage = currentPage;
         Matcher m = PAGE_NUMBER_PATTERN.matcher(html);
@@ -292,9 +280,6 @@ public class YHDM extends Spider {
         return maxPage;
     }
 
-    /**
-     * 搜索结果总数
-     */
     private int parseSearchTotal(String html) {
         Matcher m = SEARCH_TOTAL_PATTERN.matcher(html);
         if (m.find()) {
@@ -306,12 +291,9 @@ public class YHDM extends Spider {
         return 0;
     }
 
-    /**
-     * 搜索结果总页数：优先从 pageno 链接提取，否则根据当前页+条目数推算
-     */
     private int parseSearchPageCount(String html, int currentPage, int listSize) {
         int maxPage = currentPage;
-        Matcher m = SEARCH_PAGENO_PATTERN.matcher(html);
+        Matcher m = Pattern.compile("pageno=(\\d+)").matcher(html);
         while (m.find()) {
             try {
                 maxPage = Math.max(maxPage, Integer.parseInt(m.group(1)));
@@ -324,13 +306,77 @@ public class YHDM extends Spider {
         return maxPage;
     }
 
-    /**
-     * 补全相对 URL 为绝对 URL
-     */
     private String fixUrl(String url) {
         if (TextUtils.isEmpty(url)) return "";
         if (url.startsWith("http")) return url;
         if (url.startsWith("//")) return "https:" + url;
         return siteUrl + (url.startsWith("/") ? url : "/" + url);
+    }
+
+    private String extractVodId(String videoId) {
+        Matcher m = VOD_ID_PATTERN.matcher(videoId);
+        return m.find() ? m.group(1) : "";
+    }
+
+    private int parseEpisodeCount(String state) {
+        if (TextUtils.isEmpty(state)) return 24;
+        Matcher m = EPISODE_COUNT_PATTERN.matcher(state);
+        return m.find() ? Integer.parseInt(m.group(1)) : 24;
+    }
+
+    /**
+     * 从HTML解析播放列表（优先方案）
+     */
+    private void parsePlayListFromHtml(Document doc, List<String> playFromList, List<String> playUrlList) {
+        Elements tabs = doc.select(".playlist .tabs a");
+        Elements rows = doc.select(".playlist .row");
+        int lineCount = Math.min(tabs.size(), rows.size());
+        for (int i = 0; i < lineCount; i++) {
+            String lineName = tabs.get(i).text().trim();
+            if (TextUtils.isEmpty(lineName)) lineName = "线路" + (i + 1);
+            playFromList.add(lineName);
+            Elements episodes = rows.get(i).select("ul.list6 li a");
+            StringBuilder eps = new StringBuilder();
+            for (int j = 0; j < episodes.size(); j++) {
+                Element a = episodes.get(j);
+                String epName = a.text().trim();
+                String epUrl = a.attr("href");
+                if (j > 0) eps.append("#");
+                eps.append(epName).append("$").append(epUrl);
+            }
+            playUrlList.add(eps.toString());
+        }
+    }
+
+    /**
+     * 通过URL测试方式构建播放列表（备用方案）
+     * 参考樱花动漫.js的实现逻辑
+     */
+    private void testAndBuildPlayList(String vodId, int totalEpisodes, List<String> playFromList, List<String> playUrlList) {
+        int[] sourceIndices = {1, 3, 4, 2}; // 播放URL中的实际线路索引顺序
+        for (int i = 0; i < SOURCE_NAMES.size(); i++) {
+            int sourceIdx = sourceIndices[i];
+            String testName = SOURCE_NAMES.get(i);
+
+            // 测试第一集是否可访问
+            String testUrl = String.format("%s/play/%s-%d-1/", siteUrl, vodId, sourceIdx);
+            try {
+                String testHtml = OkHttp.string(testUrl, getHeader());
+                // 检查是否包含播放器配置
+                if (!TextUtils.isEmpty(testHtml) && (testHtml.contains("url:") || testHtml.contains(".m3u8"))) {
+                    // 构造剧集列表
+                    StringBuilder eps = new StringBuilder();
+                    for (int ep = 1; ep <= totalEpisodes; ep++) {
+                        String epName = ep < 10 ? "第0" + ep + "集" : "第" + ep + "集";
+                        String epUrl = String.format("/play/%s-%d-%d/", vodId, sourceIdx, ep);
+                        if (eps.length() > 0) eps.append("#");
+                        eps.append(epName).append("$").append(epUrl);
+                    }
+                    playFromList.add(testName);
+                    playUrlList.add(eps.toString());
+                }
+            } catch (Exception ignored) {
+            }
+        }
     }
 }
