@@ -81,6 +81,9 @@ public class YHDM extends Spider {
         String url = videoId.startsWith("http") ? videoId : siteUrl + videoId;
         String html = OkHttp.string(url, getHeader());
         
+        // 提取视频数字ID
+        String vodIdNum = videoId.replaceAll(".*/(\\d+)/?$", "$1");
+        
         Document doc = Jsoup.parse(html);
         
         // 基本信息
@@ -99,12 +102,17 @@ public class YHDM extends Spider {
         Elements tabs = doc.select(".playlist .tabs a");
         Elements rows = doc.select(".playlist .row");
         
-        // 方法1：直接解析
+        // 方法1：直接解析 - 使用 text() 提取完整文本
         if (!tabs.isEmpty() && !rows.isEmpty()) {
             int count = Math.min(tabs.size(), rows.size());
             for (int i = 0; i < count; i++) {
-                // 线路名
-                String lineName = tabs.get(i).ownText();
+                // 线路名：使用 text() 并清理空白字符
+                String lineName = tabs.get(i).text().trim();
+                // 如果为空，尝试从 HTML 中提取
+                if (TextUtils.isEmpty(lineName)) {
+                    String tabHtml = tabs.get(i).html();
+                    lineName = tabHtml.replaceAll("<[^>]+>", "").trim();
+                }
                 if (TextUtils.isEmpty(lineName)) lineName = "线路" + (i + 1);
                 playFrom.add(lineName);
                 
@@ -120,60 +128,69 @@ public class YHDM extends Spider {
         }
         
         // 方法2：正则提取（备用）
-        if (playFrom.isEmpty()) {
-            Pattern tabPattern = Pattern.compile("<a[^>]*>([^<]*)</a>");
-            Matcher m = tabPattern.matcher(html);
-            while (m.find()) {
-                String n = m.group(1).trim();
-                if (!TextUtils.isEmpty(n) && !n.contains("倒序")) {
-                    playFrom.add(n);
+        if (playFrom.isEmpty() && !TextUtils.isEmpty(html)) {
+            // 提取线路名
+            Pattern tabDivPattern = Pattern.compile("<div[^>]+class=\"tabs\"[^>]*>(.*?)</div>", Pattern.DOTALL);
+            Matcher tabMatcher = tabDivPattern.matcher(html);
+            if (tabMatcher.find()) {
+                String tabsHtml = tabMatcher.group(1);
+                Pattern aPattern = Pattern.compile("<a[^>]*>(.*?)</a>", Pattern.DOTALL);
+                Matcher aMatcher = aPattern.matcher(tabsHtml);
+                while (aMatcher.find()) {
+                    String lineName = aMatcher.group(1).replaceAll("<[^>]+>", "").trim();
+                    if (!TextUtils.isEmpty(lineName) && !lineName.contains("倒序")) {
+                        playFrom.add(lineName);
+                    }
                 }
             }
             
-            Pattern epPattern = Pattern.compile("<a[^>]+href=\"([^\"]+)\"[^>]*>([^<]+)</a>");
-            Matcher m2 = epPattern.matcher(html);
-            StringBuilder sb = new StringBuilder();
-            int epCount = 0;
-            while (m2.find()) {
-                String href = m2.group(1);
-                String name2 = m2.group(2).trim();
-                if (href.contains("/play/") && name2.contains("集")) {
+            // 提取剧集
+            Pattern rowPattern = Pattern.compile("<div[^>]+class=\"row\"[^>]*>.*?<ul[^>]+class=\"list6\"[^>]*>(.*?)</ul>", Pattern.DOTALL);
+            Matcher rowMatcher = rowPattern.matcher(html);
+            while (rowMatcher.find()) {
+                String rowHtml = rowMatcher.group(1);
+                Pattern epPattern = Pattern.compile("<a[^>]+href=\"([^\"]+)\"[^>]*>([^<]+)</a>");
+                Matcher epMatcher = epPattern.matcher(rowHtml);
+                StringBuilder sb = new StringBuilder();
+                while (epMatcher.find()) {
                     if (sb.length() > 0) sb.append("#");
-                    sb.append(name2).append("$").append(href);
-                    epCount++;
-                    if (epCount >= 14) {
-                        playUrl.add(sb.toString());
-                        sb = new StringBuilder();
-                        epCount = 0;
-                    }
+                    sb.append(epMatcher.group(2).trim()).append("$").append(epMatcher.group(1));
+                }
+                if (sb.length() > 0) {
+                    playUrl.add(sb.toString());
                 }
             }
         }
         
-        // 方法3：硬编码线路（兜底）
-        if (playFrom.isEmpty()) {
-            String vodId = videoId.replaceAll(".*/(\\d+)/?$", "$1");
-            if (!TextUtils.isEmpty(vodId) && vodId.matches("\\d+")) {
-                String[] names = {"高清", "ikun", "非凡", "量子"};
-                int[] idxs = {1, 3, 4, 2};
-                for (int i = 0; i < names.length; i++) {
-                    playFrom.add(names[i]);
-                    StringBuilder sb = new StringBuilder();
-                    for (int ep = 1; ep <= 24; ep++) {
-                        if (sb.length() > 0) sb.append("#");
-                        String epName = ep < 10 ? "第0" + ep + "集" : "第" + ep + "集";
-                        sb.append(epName).append("$").append("/play/").append(vodId).append("-").append(idxs[i]).append("-").append(ep).append("/");
-                    }
-                    playUrl.add(sb.toString());
+        // 方法3：硬编码线路（兜底）- 确保总是有线路数据
+        if (playFrom.isEmpty() && !TextUtils.isEmpty(vodIdNum) && vodIdNum.matches("\\d+")) {
+            String[] names = {"高清", "ikun", "非凡", "量子"};
+            int[] idxs = {1, 3, 4, 2};
+            for (int i = 0; i < names.length; i++) {
+                playFrom.add(names[i]);
+                StringBuilder sb = new StringBuilder();
+                for (int ep = 1; ep <= 24; ep++) {
+                    if (sb.length() > 0) sb.append("#");
+                    String epName = ep < 10 ? "第0" + ep + "集" : "第" + ep + "集";
+                    sb.append(epName).append("$").append("/play/").append(vodIdNum).append("-").append(idxs[i]).append("-").append(ep).append("/");
                 }
+                playUrl.add(sb.toString());
             }
+        }
+        
+        // 对齐线路和剧集数量
+        while (playFrom.size() > playUrl.size()) {
+            playUrl.add("");
+        }
+        while (playUrl.size() > playFrom.size()) {
+            playFrom.add("线路" + (playFrom.size() + 1));
         }
         
         Vod vod = new Vod();
         vod.setVodId(videoId);
         vod.setVodName(name);
         vod.setVodPic(pic);
-        if (!playFrom.isEmpty() && !playUrl.isEmpty()) {
+        if (!playFrom.isEmpty()) {
             vod.setVodPlayFrom(TextUtils.join("$$$", playFrom));
             vod.setVodPlayUrl(TextUtils.join("$$$", playUrl));
         }
