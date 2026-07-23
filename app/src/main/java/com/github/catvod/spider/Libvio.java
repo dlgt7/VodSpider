@@ -78,8 +78,9 @@ public class Libvio extends Spider {
         List<Class> classes = new ArrayList<>();
         classes.add(new Class("1", "电影"));
         classes.add(new Class("2", "剧集"));
-        classes.add(new Class("3", "综艺"));
         classes.add(new Class("4", "番剧"));
+        classes.add(new Class("15", "日韩"));
+        classes.add(new Class("16", "欧美"));
         Document doc = Jsoup.parse(OkHttp.string(siteUrl, getHeader()));
         List<Vod> list = parseList(doc);
         if (filter) {
@@ -97,12 +98,13 @@ public class Libvio extends Spider {
     @Override
     public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
         int page = Util.toInt(pg, 1);
-        String area = extend != null ? extend.getOrDefault("area", "") : "";
+        String area = extend != null ? URLEncoder.encode(extend.getOrDefault("area", ""), "UTF-8") : "";
         String by = extend != null ? extend.getOrDefault("by", "") : "";
         String cls = extend != null ? extend.getOrDefault("class", "") : "";
-        String lang = extend != null ? extend.getOrDefault("lang", "") : "";
+        String lang = extend != null ? URLEncoder.encode(extend.getOrDefault("lang", ""), "UTF-8") : "";
         String year = extend != null ? extend.getOrDefault("year", "") : "";
-        String url = siteUrl + "/show/" + tid + "-" + area + "-" + by + "-" + cls + "-" + lang + "---" + page + "---" + year + ".html";
+        // Format: /show/{tid}-{area}-{by}-{class}-{lang}-{letter}---{pg}---{year}.html (12 fields, 11 dashes)
+        String url = siteUrl + "/show/" + tid + "-" + area + "-" + by + "-" + cls + "-" + lang + "----" + page + "---" + year + ".html";
         String html = OkHttp.string(url, getHeader());
         Document doc = Jsoup.parse(html);
         List<Vod> list = parseList(doc);
@@ -139,35 +141,24 @@ public class Libvio extends Spider {
         }
 
         String pageText = doc.body() != null ? doc.body().text() : "";
-        String[] labels = {"主演：", "导演：", "类型：", "地区：", "年份：", "简介："};
-        int idx = pageText.indexOf("主演：");
-        if (idx >= 0) {
-            String sub = pageText.substring(idx + 3);
-            vod.setVodActor(splitAtNextLabel(sub, labels)[0].trim());
+        for (Element meta : doc.select(".vod-meta .meta-item")) {
+            String text = meta.text().trim();
+            if (text.startsWith("主演：")) {
+                vod.setVodActor(text.substring(3).trim());
+            } else if (text.startsWith("导演：")) {
+                vod.setVodDirector(text.substring(3).trim());
+            }
         }
-        idx = pageText.indexOf("导演：");
-        if (idx >= 0) {
-            String sub = pageText.substring(idx + 3);
-            vod.setVodDirector(splitAtNextLabel(sub, labels)[0].trim());
-        }
-        idx = pageText.indexOf("简介：");
-        if (idx >= 0) {
-            String sub = pageText.substring(idx + 3).trim();
-            int endIdx = sub.indexOf("播放选集");
-            if (endIdx < 0) endIdx = sub.indexOf("视频下载");
-            if (endIdx > 0) sub = sub.substring(0, endIdx).trim();
-            vod.setVodContent(sub);
-        }
-        idx = pageText.indexOf("地区：");
-        if (idx >= 0) {
-            String sub = pageText.substring(idx + 3);
-            vod.setVodArea(splitAtNextLabel(sub, labels)[0].trim());
-        }
+        Element desc = doc.selectFirst(".vod-desc .detail-content");
+        if (desc == null) desc = doc.selectFirst(".vod-desc .detail-sketch");
+        if (desc != null) vod.setVodContent(desc.text().trim());
+        List<Element> metaItems = doc.select(".vod-meta .meta-item");
+        if (metaItems.size() >= 2) vod.setVodArea(metaItems.get(1).text().trim());
         Matcher yearMatcher = YEAR_PATTERN.matcher(pageText);
         if (yearMatcher.find()) vod.setVodYear(yearMatcher.group(1));
 
         Map<String, List<String[]>> sourceMap = new LinkedHashMap<>();
-        for (Element a : doc.select("a[href*=/w/]")) {
+        for (Element a : doc.select(".stui-content__playlist a[href*=/w/]")) {
             String href = a.attr("href");
             Matcher m = PLAY_LINK_PATTERN.matcher(href);
             if (!m.find()) continue;
@@ -238,7 +229,7 @@ public class Libvio extends Spider {
         if (!TextUtils.isEmpty(directUrl)) {
             Map<String, String> header = new HashMap<>();
             header.put("User-Agent", Util.CHROME);
-            header.put("Referer", siteUrl + "/");
+            header.put("Referer", playUrl);
             return Result.get().parse(0).url(directUrl).header(header).string();
         }
         return Result.get().parse(1).url(playUrl).header(getHeader()).string();
@@ -253,15 +244,6 @@ public class Libvio extends Spider {
         return siteUrl + url;
     }
 
-    private String[] splitAtNextLabel(String text, String[] labels) {
-        int minPos = text.length();
-        for (String label : labels) {
-            int pos = text.indexOf(label);
-            if (pos >= 0 && pos < minPos) minPos = pos;
-        }
-        return new String[]{text.substring(0, minPos), text.substring(minPos)};
-    }
-
     private List<Vod> parseList(Document doc) {
         List<Vod> list = new ArrayList<>();
         Set<String> seen = new HashSet<>();
@@ -273,11 +255,6 @@ public class Libvio extends Spider {
             if (seen.contains(vid)) continue;
             String name = a.attr("title");
             if (name.isEmpty()) name = a.text().trim();
-            if (name.isEmpty()) {
-                Element h4 = a.selectFirst("h4");
-                if (h4 == null) h4 = a.selectFirst("h3");
-                if (h4 != null) name = h4.text().trim();
-            }
             if (name.isEmpty() || name.length() > 100) {
                 Element parent = a.parent();
                 if (parent != null) {
@@ -288,28 +265,44 @@ public class Libvio extends Spider {
             }
             if (name.isEmpty()) continue;
             seen.add(vid);
-            String pic = "";
-            Element img = a.selectFirst("img");
-            if (img == null) {
-                Element parent = a.parent();
-                if (parent != null) img = parent.selectFirst("img");
-                if (img == null && parent != null) {
-                    Element grand = parent.parent();
-                    if (grand != null) img = grand.selectFirst("img");
+            // Image: check <a> tag's own data-original first (stui-vodlist__thumb), then child/grandchild <img>
+            String pic = a.attr("data-original");
+            if (pic.isEmpty()) pic = a.attr("data-src");
+            if (pic.isEmpty()) {
+                Element img = a.selectFirst("img");
+                if (img == null) {
+                    Element parent = a.parent();
+                    if (parent != null) img = parent.selectFirst("img");
+                    if (img == null && parent != null) {
+                        Element grand = parent.parent();
+                        if (grand != null) img = grand.selectFirst("img");
+                    }
+                }
+                if (img != null) {
+                    pic = img.attr("data-original");
+                    if (pic.isEmpty()) pic = img.attr("data-src");
+                    if (pic.isEmpty()) pic = img.attr("src");
                 }
             }
-            if (img != null) {
-                pic = img.attr("data-original");
-                if (pic.isEmpty()) pic = img.attr("data-src");
-                if (pic.isEmpty()) pic = img.attr("src");
-            }
+            // Remark: from span.pic-text (e.g. "已完结"), combine with span.pic-tag (rating)
             String remark = "";
-            Element span = a.selectFirst("span");
-            if (span == null) {
+            Element picText = a.selectFirst("span.pic-text");
+            if (picText == null) {
                 Element parent = a.parent();
-                if (parent != null) span = parent.selectFirst("span");
+                if (parent != null) picText = parent.selectFirst("span.pic-text");
             }
-            if (span != null) remark = span.text().trim();
+            if (picText != null) remark = picText.text().trim();
+            Element picTag = a.selectFirst("span.pic-tag");
+            if (picTag == null) {
+                Element parent = a.parent();
+                if (parent != null) picTag = parent.selectFirst("span.pic-tag");
+            }
+            if (picTag != null) {
+                String rating = picTag.text().trim();
+                if (!rating.isEmpty()) {
+                    remark = remark.isEmpty() ? rating : remark + " " + rating;
+                }
+            }
             list.add(new Vod(vid, name, fixUrl(pic), remark));
         }
         return list;
@@ -344,29 +337,41 @@ public class Libvio extends Spider {
         List<Filter.Value> areas = new ArrayList<>();
         areas.add(new Filter.Value("全部", ""));
         for (String[] area : new String[][]{
-                {"大陆", "大陆"}, {"香港", "香港"}, {"台湾", "台湾"},
-                {"韩国", "韩国"}, {"日本", "日本"}, {"美国", "美国"},
-                {"泰国", "泰国"}, {"英国", "英国"}, {"法国", "法国"},
-                {"德国", "德国"}, {"印度", "印度"}, {"其它", "其它"}
+                {"中国大陆", "中国大陆"}, {"中国香港", "中国香港"}, {"中国台湾", "中国台湾"},
+                {"美国", "美国"}, {"法国", "法国"}, {"英国", "英国"},
+                {"日本", "日本"}, {"韩国", "韩国"}, {"德国", "德国"},
+                {"泰国", "泰国"}, {"印度", "印度"}, {"意大利", "意大利"},
+                {"西班牙", "西班牙"}, {"加拿大", "加拿大"}, {"其他", "其他"}
         }) {
             areas.add(new Filter.Value(area[0], area[1]));
         }
 
+        List<Filter.Value> langs = new ArrayList<>();
+        langs.add(new Filter.Value("全部", ""));
+        for (String[] lang : new String[][]{
+                {"国语", "国语"}, {"英语", "英语"}, {"粤语", "粤语"},
+                {"闽南语", "闽南语"}, {"韩语", "韩语"}, {"日语", "日语"},
+                {"法语", "法语"}, {"德语", "德语"}, {"其它", "其它"}
+        }) {
+            langs.add(new Filter.Value(lang[0], lang[1]));
+        }
+
         List<Filter.Value> years = new ArrayList<>();
         years.add(new Filter.Value("全部", ""));
-        for (int y = 2026; y >= 2015; y--) {
+        for (int y = 2026; y >= 1998; y--) {
             years.add(new Filter.Value(String.valueOf(y), String.valueOf(y)));
         }
 
         List<Filter.Value> sorts = new ArrayList<>();
-        sorts.add(new Filter.Value("最新", "time"));
-        sorts.add(new Filter.Value("最热", "hits"));
+        sorts.add(new Filter.Value("时间", "time"));
+        sorts.add(new Filter.Value("人气", "hits"));
         sorts.add(new Filter.Value("评分", "score"));
 
         LinkedHashMap<String, List<Filter>> filters = new LinkedHashMap<>();
-        for (String tid : Arrays.asList("1", "2", "3", "4")) {
+        for (String tid : Arrays.asList("1", "2", "4", "15", "16")) {
             List<Filter> filterList = new ArrayList<>();
             filterList.add(new Filter("area", "地区", areas));
+            filterList.add(new Filter("lang", "语言", langs));
             filterList.add(new Filter("year", "年份", years));
             filterList.add(new Filter("by", "排序", sorts));
             filters.put(tid, filterList);
