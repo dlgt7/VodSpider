@@ -130,25 +130,23 @@ public class YHDM extends Spider {
         // 解析多线路播放列表
         Elements tabs = doc.select(".playlist .tabs a");
         Elements rows = doc.select(".playlist .row");
-        StringBuilder vodPlayFrom = new StringBuilder();
-        StringBuilder vodPlayUrl = new StringBuilder();
+        List<String> playFromList = new ArrayList<>();
+        List<String> playUrlList = new ArrayList<>();
         int lineCount = Math.min(tabs.size(), rows.size());
         for (int i = 0; i < lineCount; i++) {
             String lineName = tabs.get(i).text().trim();
             if (TextUtils.isEmpty(lineName)) lineName = "线路" + (i + 1);
-            vodPlayFrom.append(lineName).append("$$$");
+            playFromList.add(lineName);
             Elements episodes = rows.get(i).select("ul.list6 li a");
+            StringBuilder eps = new StringBuilder();
             for (int j = 0; j < episodes.size(); j++) {
                 Element a = episodes.get(j);
                 String epName = a.text().trim();
                 String epUrl = a.attr("href");
-                vodPlayUrl.append(epName).append("$").append(epUrl);
-                vodPlayUrl.append(j < episodes.size() - 1 ? "#" : "$$$");
+                if (j > 0) eps.append("#");
+                eps.append(epName).append("$").append(epUrl);
             }
-            if (episodes.isEmpty()) {
-                // 空线路也要补 $$$ 与 vodPlayFrom 对齐
-                vodPlayUrl.append("$$$");
-            }
+            playUrlList.add(eps.toString());
         }
 
         Vod vod = new Vod();
@@ -161,8 +159,10 @@ public class YHDM extends Spider {
         vod.setTypeName(type);
         vod.setVodActor(actor);
         vod.setVodContent(vodContent);
-        vod.setVodPlayFrom(vodPlayFrom.toString());
-        vod.setVodPlayUrl(vodPlayUrl.toString());
+        if (!playFromList.isEmpty()) {
+            vod.setVodPlayFrom(TextUtils.join("$$$", playFromList));
+            vod.setVodPlayUrl(TextUtils.join("$$$", playUrlList));
+        }
         return Result.string(vod);
     }
 
