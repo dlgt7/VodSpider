@@ -740,40 +740,42 @@ public class DJHub extends Spider {
             page = 1;
         }
         String pgStr = String.valueOf(page);
+        final String finalKey = key;
+        final int finalPage = page;
         ArrayList<Vod> list = new ArrayList<>();
         HashSet<String> seen = new HashSet<>();
         mergeSearch(list, seen, "七猫", () -> {
             try {
-                return Result.objectFrom(qmdj.searchContent(key, quick, pgStr)).getList();
+                return Result.objectFrom(qmdj.searchContent(finalKey, quick, pgStr)).getList();
             } catch (Exception e) {
                 return new ArrayList<Vod>();
             }
         });
         mergeSearch(list, seen, "星芽", () -> {
             try {
-                return Result.objectFrom(xingya.searchContent(key, quick, pgStr)).getList();
+                return Result.objectFrom(xingya.searchContent(finalKey, quick, pgStr)).getList();
             } catch (Exception e) {
                 return new ArrayList<Vod>();
             }
         });
-        mergeSearch(list, seen, "西饭", () -> xifanSearch(page, key));
+        mergeSearch(list, seen, "西饭", () -> xifanSearch(finalPage, finalKey));
         mergeSearch(list, seen, "围观", () -> {
             try {
-                return Result.objectFrom(weiguanDJ.searchContent(key, quick, pgStr)).getList();
+                return Result.objectFrom(weiguanDJ.searchContent(finalKey, quick, pgStr)).getList();
             } catch (Exception e) {
                 return new ArrayList<Vod>();
             }
         });
         mergeSearch(list, seen, "河马", () -> {
             try {
-                return Result.objectFrom(hema.searchContent(key, quick, pgStr)).getList();
+                return Result.objectFrom(hema.searchContent(finalKey, quick, pgStr)).getList();
             } catch (Exception e) {
                 return new ArrayList<Vod>();
             }
         });
         mergeSearch(list, seen, "好看", () -> {
             try {
-                return Result.objectFrom(hhkk.searchContent(key, quick, pgStr)).getList();
+                return Result.objectFrom(hhkk.searchContent(finalKey, quick, pgStr)).getList();
             } catch (Exception e) {
                 return new ArrayList<Vod>();
             }
