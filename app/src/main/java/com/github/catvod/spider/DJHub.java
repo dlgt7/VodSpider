@@ -65,12 +65,12 @@ public class DJHub extends Spider {
         this.clientInfo = "";
     }
 
-    private static ArrayList<Vod> mergeWithLimit(ArrayList<Vod> list, HashSet<String> seen, Supplier<ArrayList<Vod>> supplier) {
+    private static ArrayList<Vod> mergeWithLimit(ArrayList<Vod> list, HashSet<String> seen, Supplier<List<Vod>> supplier) {
         if (list.size() >= HOME_LIMIT) {
             return list;
         }
         try {
-            ArrayList<Vod> supplied = supplier.get();
+            List<Vod> supplied = supplier.get();
             for (Object obj : supplied) {
                 Vod vod = (Vod) obj;
                 if (vod == null) continue;
@@ -162,9 +162,9 @@ public class DJHub extends Spider {
         return new Filter(key, name, values);
     }
 
-    private static void mergeSearch(ArrayList<Vod> list, HashSet<String> seen, String source, Supplier<ArrayList<Vod>> supplier) {
+    private static void mergeSearch(ArrayList<Vod> list, HashSet<String> seen, String source, Supplier<List<Vod>> supplier) {
         try {
-            ArrayList<Vod> supplied = supplier.get();
+            List<Vod> supplied = supplier.get();
             ArrayList<Vod> marked = markSource(source, supplied);
             for (Vod vod : marked) {
                 if (vod == null) continue;
@@ -491,7 +491,7 @@ public class DJHub extends Spider {
         }
     }
 
-    private List<Vod> parseVodList(String json) {
+    private ArrayList<Vod> parseVodList(String json) {
         if (TextUtils.isEmpty(json)) {
             return new ArrayList<>();
         }
