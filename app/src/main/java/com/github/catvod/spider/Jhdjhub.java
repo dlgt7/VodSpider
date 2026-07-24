@@ -284,7 +284,7 @@ public class Jhdjhub extends Spider {
             classes.add(new Class(platform.get("id"), platform.get("name")));
         }
         
-        Map<String, Object> filters = new HashMap<>();
+        JSONObject filters = new JSONObject();
         if (filter) {
             Map<String, Object> filterOptions = getFilterOptions();
             for (Map<String, String> platform : PLATFORM_LIST) {
