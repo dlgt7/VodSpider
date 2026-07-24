@@ -887,7 +887,7 @@ public class DJHub extends Spider {
 
             // 尝试从指定 key 获取
             if (!TextUtils.isEmpty(key) && json.has(key)) {
-                Object value = json.get(key);
+                Object value = json.opt(key);
                 String url = a(value);
                 if (!TextUtils.isEmpty(url)) return url;
             }
@@ -914,7 +914,7 @@ public class DJHub extends Spider {
             if (names != null) {
                 for (int i = 0; i < names.length(); i++) {
                     String name = names.optString(i);
-                    Object value = json.get(name);
+                    Object value = json.opt(name);
                     String foundUrl = a(value);
                     if (!TextUtils.isEmpty(foundUrl)) {
                         return foundUrl;
