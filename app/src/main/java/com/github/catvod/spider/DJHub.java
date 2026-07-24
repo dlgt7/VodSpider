@@ -3,6 +3,7 @@ package com.github.catvod.spider;
 import android.content.Context;
 import android.os.Build;
 import android.text.TextUtils;
+import android.util.Base64;
 
 import com.github.catvod.bean.Class;
 import com.github.catvod.bean.Filter;
@@ -27,6 +28,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.function.Supplier;
+
+import javax.crypto.Cipher;
+import javax.crypto.spec.SecretKeySpec;
 
 /**
  * DJHub aggregation spider for multiple short-drama sources.
@@ -706,6 +710,12 @@ public class DJHub extends Spider {
                 String newFlag = stripPrefix(flag, "好看");
                 return hhkk.playerContent(newFlag, id, vipFlags);
             }
+            if (!TextUtils.isEmpty(flag) && flag.contains("西饭")) {
+                HashMap<String, String> headers = new HashMap<>();
+                headers.put("User-Agent", UA_OKHTTP_3);
+                headers.put("Content-Type", CONTENT_TYPE_JSON);
+                return Result.get().url(id).header(headers).parse(0).string();
+            }
             if (!TextUtils.isEmpty(id) && (id.startsWith("http://") || id.startsWith("https://"))) {
                 HashMap<String, String> headers = new HashMap<>();
                 headers.put("User-Agent", "okhttp/4.10.0");
@@ -721,6 +731,400 @@ public class DJHub extends Spider {
         }
     }
 
+    /** 围观短剧 Spider - stub implementation. */
+    private static class WeiguanDJ extends Spider {
+        @Override
+        public void init(Context context, String extend) throws Exception {
+            super.init(context, extend);
+        }
+
+        @Override
+        public String homeContent(boolean filter) throws Exception {
+            ArrayList<Class> classes = new ArrayList<>();
+            classes.add(new Class("0", "推荐"));
+            return Result.string(classes, new ArrayList<>());
+        }
+
+        @Override
+        public String homeVideoContent() throws Exception {
+            return Result.get().vod(new ArrayList<>()).string();
+        }
+
+        @Override
+        public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
+            return Result.get().vod(new ArrayList<>()).page().string();
+        }
+
+        @Override
+        public String detailContent(List<String> ids) throws Exception {
+            if (ids == null || ids.isEmpty()) return Result.string(new ArrayList<>());
+            Vod vod = new Vod(ids.get(0), "围观短剧", "", "");
+            vod.setVodPlayFrom("围观");
+            vod.setVodPlayUrl("第1集$http://example.com");
+            return Result.string(vod);
+        }
+
+        @Override
+        public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
+            if (TextUtils.isEmpty(id)) return Result.get().url("").string();
+            if (id.startsWith("围观@")) {
+                String url = id.substring(3);
+                HashMap<String, String> headers = new HashMap<>();
+                headers.put("User-Agent", "okhttp/5.1.0");
+                return Result.get().url(url).header(headers).parse(0).string();
+            }
+            return Result.get().url(id).parse(0).string();
+        }
+
+        @Override
+        public String searchContent(String key, boolean quick) throws Exception {
+            return Result.get().vod(new ArrayList<>()).string();
+        }
+
+        @Override
+        public String searchContent(String key, boolean quick, String pg) throws Exception {
+            return Result.get().vod(new ArrayList<>()).string();
+        }
+    }
+
+    /** 河马短剧 Spider - stub implementation. */
+    private static class Hema extends Spider {
+        @Override
+        public void init(Context context, String extend) throws Exception {
+            super.init(context, extend);
+        }
+
+        @Override
+        public String homeContent(boolean filter) throws Exception {
+            ArrayList<Class> classes = new ArrayList<>();
+            classes.add(new Class("1", "推荐"));
+            return Result.string(classes, new ArrayList<>());
+        }
+
+        @Override
+        public String homeVideoContent() throws Exception {
+            return Result.get().vod(new ArrayList<>()).string();
+        }
+
+        @Override
+        public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
+            return Result.get().vod(new ArrayList<>()).page().string();
+        }
+
+        @Override
+        public String detailContent(List<String> ids) throws Exception {
+            if (ids == null || ids.isEmpty()) return Result.string(new ArrayList<>());
+            Vod vod = new Vod(ids.get(0), "河马短剧", "", "");
+            vod.setVodPlayFrom("河马");
+            vod.setVodPlayUrl("第1集$http://example.com");
+            return Result.string(vod);
+        }
+
+        @Override
+        public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
+            if (TextUtils.isEmpty(id)) return Result.get().url("").string();
+            return Result.get().url(id).parse(0).string();
+        }
+
+        @Override
+        public String searchContent(String key, boolean quick) throws Exception {
+            return Result.get().vod(new ArrayList<>()).string();
+        }
+    }
+
+    /** 七猫短剧 Spider - stub implementation. */
+    private static class Qmdj extends Spider {
+        @Override
+        public void init(Context context, String extend) throws Exception {
+            super.init(context, extend);
+        }
+
+        @Override
+        public String homeContent(boolean filter) throws Exception {
+            ArrayList<Class> classes = new ArrayList<>();
+            classes.add(new Class("0", "全部"));
+            classes.add(new Class("1", "男频"));
+            classes.add(new Class("3", "新剧"));
+            return Result.string(classes, new ArrayList<>());
+        }
+
+        @Override
+        public String homeVideoContent() throws Exception {
+            return Result.get().vod(new ArrayList<>()).string();
+        }
+
+        @Override
+        public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
+            return Result.get().vod(new ArrayList<>()).page().string();
+        }
+
+        @Override
+        public String detailContent(List<String> ids) throws Exception {
+            if (ids == null || ids.isEmpty()) return Result.string(new ArrayList<>());
+            Vod vod = new Vod(ids.get(0), "七猫短剧", "", "");
+            vod.setVodPlayFrom("七猫");
+            vod.setVodPlayUrl("第1集$http://example.com");
+            return Result.string(vod);
+        }
+
+        @Override
+        public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
+            if (TextUtils.isEmpty(id)) return Result.get().url("").string();
+            return Result.get().url(id).parse(0).string();
+        }
+
+        @Override
+        public String searchContent(String key, boolean quick) throws Exception {
+            return Result.get().vod(new ArrayList<>()).string();
+        }
+    }
+
+    /** 星芽短剧 Spider — short drama video source. */
+    private static class Xingya extends Spider {
+        private static final String BASE_URL = "https://app.whjzjx.cn";
+        private static final String LOGIN_URL = "https://u.shytkjgs.com/user/v3/account/login";
+        private static final String SEARCH_URL = "https://app.whjzjx.cn/v3/search";
+        private static final String FALLBACK_PLAY_URL = "https://fs-im-kefu.7moor-fs1.com/ly/4d2c3f00-7d4c-11e5-af15-41bf63ae4ea0/1732707176882/jiduo.txt";
+
+        private static final String AES_KEY = "B@ecf920Od8A4df7";
+        private static final String AES_ALGORITHM = "AES/ECB/PKCS5Padding";
+        private static final String DEVICE_ID = "2a50580e69d38388c94c93605241fb306";
+        private static final String PACKAGE_NAME = "com.jz.xydj";
+        private static final String ANDROID_ID = "ec1280db12795506";
+        private static final long INSTALL_TIME = 0x1980973d6d1L;
+        private static final String VERSION_NAME = "3.8.3.1";
+        private static final String PLATFORM = "1";
+        private static final String CONTENT_TYPE = "application/json; charset=utf-8";
+
+        private static final String LOGIN_UA = "Mozilla/5.0 (Linux; Android 9; V1938T Build/PQ3A.190705.08211809; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/91.0.4472.114 Safari/537.36";
+        private static final String PLAYER_UA = "Linux; Android 12; Pixel 3 XL) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.101 Mobile Safari/537.36";
+
+        private static final String PLAY_FROM_XINGYA = "星芽";
+        private static final String LOGIN_FAILED = "星芽登录失败";
+
+        private String token;
+
+        public Xingya() {
+            this.token = "";
+        }
+
+        @Override
+        public void init(Context context, String extend) throws Exception {
+            this.token = "";
+        }
+
+        private HashMap<String, String> getHeaders() throws Exception {
+            if (TextUtils.isEmpty(token)) {
+                login();
+            }
+            HashMap<String, String> headers = new HashMap<>();
+            headers.put("authorization", token);
+            headers.put("platform", PLATFORM);
+            headers.put("version_name", VERSION_NAME);
+            return headers;
+        }
+
+        private void login() throws Exception {
+            JSONObject payload = new JSONObject();
+            payload.put("device", DEVICE_ID);
+            payload.put("package_name", PACKAGE_NAME);
+            payload.put("android_id", ANDROID_ID);
+            payload.put("install_first_open", true);
+            payload.put("first_install_time", INSTALL_TIME);
+            payload.put("last_update_time", INSTALL_TIME);
+            payload.put("report_link_url", "");
+            payload.put("authorization", "");
+            payload.put("timestamp", System.currentTimeMillis());
+
+            Cipher cipher = Cipher.getInstance(AES_ALGORITHM);
+            SecretKeySpec keySpec = new SecretKeySpec(AES_KEY.getBytes(StandardCharsets.UTF_8), "AES");
+            cipher.init(Cipher.ENCRYPT_MODE, keySpec);
+            byte[] encrypted = cipher.doFinal(payload.toString().getBytes(StandardCharsets.UTF_8));
+            String encryptedBody = Base64.encodeToString(encrypted, Base64.NO_WRAP);
+
+            HashMap<String, String> loginHeaders = new HashMap<>();
+            loginHeaders.put("platform", PLATFORM);
+            loginHeaders.put("user_agent", LOGIN_UA);
+            loginHeaders.put("content-type", CONTENT_TYPE);
+
+            String response = OkHttp.post(LOGIN_URL, encryptedBody, loginHeaders);
+            JSONObject json = new JSONObject(response);
+            token = json.getJSONObject("data").optString("token");
+            if (TextUtils.isEmpty(token)) {
+                throw new Exception(LOGIN_FAILED);
+            }
+        }
+
+        private JSONObject fetchJson(String path) throws Exception {
+            String url = new StringBuilder(BASE_URL).append(path).toString();
+            String response = OkHttp.string(url, null, getHeaders());
+            return new JSONObject(response);
+        }
+
+        private static ArrayList<Vod> parseVodList(JSONArray array, String remarksKey) {
+            ArrayList<Vod> list = new ArrayList<>();
+            if (array == null) return list;
+            for (int i = 0; i < array.length(); i++) {
+                JSONObject wrapper = array.optJSONObject(i);
+                if (wrapper == null) continue;
+                JSONObject theater = wrapper.optJSONObject("theater");
+                if (theater == null) continue;
+                String id = String.valueOf(theater.optInt("id"));
+                String title = theater.optString("title");
+                String cover = theater.optString("cover_url");
+                String remarks = theater.optString(remarksKey);
+                if (TextUtils.isEmpty(remarks)) {
+                    remarks = theater.optString("play_amount_str");
+                }
+                list.add(new Vod(id, title, cover, remarks));
+            }
+            return list;
+        }
+
+        @Override
+        public String homeContent(boolean filter) throws Exception {
+            ArrayList<Class> classes = new ArrayList<>();
+            classes.add(new Class("1", "剧场"));
+            classes.add(new Class("3", "新剧"));
+            classes.add(new Class("2", "热播"));
+            classes.add(new Class("7", "星选"));
+            classes.add(new Class("5", "阳光"));
+            return Result.string(classes, new ArrayList<Vod>());
+        }
+
+        @Override
+        public String homeVideoContent() throws Exception {
+            JSONObject json = fetchJson("/v1/theater/home_page?theater_class_id=1&class2_id=4&page_num=1&page_size=24");
+            JSONArray list = json.optJSONObject("data").optJSONArray("list");
+            ArrayList<Vod> vodList = parseVodList(list, "play_amount_str");
+            return Result.string(vodList);
+        }
+
+        @Override
+        public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
+            int page = 1;
+            try {
+                page = Math.max(1, Integer.parseInt(pg));
+            } catch (Exception e) {
+            }
+            StringBuilder path = new StringBuilder("/v1/theater/home_page?theater_class_id=");
+            path.append(tid);
+            path.append("&page_num=");
+            path.append(page);
+            path.append("&page_size=24");
+            JSONObject json = fetchJson(path.toString());
+            JSONArray list = json.optJSONObject("data").optJSONArray("list");
+            ArrayList<Vod> vodList = parseVodList(list, "theme");
+            return Result.get().page(page, page + 1, 90, 9999).vod(vodList).string();
+        }
+
+        @Override
+        public String detailContent(List<String> ids) throws Exception {
+            String id = ids.get(0);
+            JSONObject json = fetchJson("/v2/theater_parent/detail?theater_parent_id=" + id);
+            JSONObject data = json.getJSONObject("data");
+
+            String content = "剧情：" + data.optString("introduction");
+
+            String area = "";
+            JSONArray descTags = data.optJSONArray("desc_tags");
+            if (descTags != null && descTags.length() > 0) {
+                area = descTags.optString(0);
+            }
+
+            String filing = data.optString("filing");
+
+            StringBuilder playUrl = new StringBuilder();
+            String playFrom;
+
+            JSONArray theaters = data.optJSONArray("theaters");
+            if (theaters != null && theaters.length() > 0) {
+                for (int i = 0; i < theaters.length(); i++) {
+                    if (playUrl.length() > 0) playUrl.append("#");
+                    JSONObject theater = theaters.getJSONObject(i);
+                    playUrl.append(theater.optString("num"));
+                    playUrl.append("$");
+                    playUrl.append(theater.optString("son_video_url"));
+                }
+                playFrom = PLAY_FROM_XINGYA;
+            } else {
+                String videoUrl = data.optString("video_url");
+                if (TextUtils.isEmpty(videoUrl)) {
+                    String external = OkHttp.string(FALLBACK_PLAY_URL, null);
+                    if (!TextUtils.isEmpty(external)) {
+                        int start = external.indexOf("s2='");
+                        if (start >= 0) {
+                            int begin = start + 4;
+                            int end = external.indexOf("'", begin);
+                            if (end >= 0) {
+                                playUrl.append(external.substring(begin, end).replace("\\", ""));
+                            }
+                        }
+                    }
+                    playFrom = PLATFORM;
+                } else {
+                    playUrl.append("1$");
+                    playUrl.append(videoUrl);
+                    playFrom = PLAY_FROM_XINGYA;
+                }
+            }
+
+            String title = data.optString("title", id);
+            String cover = data.optString("cover_url", "");
+            Vod vod = new Vod(id, title, cover, filing);
+            vod.setVodContent(content);
+            vod.setVodArea(area);
+            vod.setVodPlayFrom(playFrom);
+            vod.setVodPlayUrl(playUrl.toString());
+            return Result.string(vod);
+        }
+
+        @Override
+        public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
+            if (TextUtils.isEmpty(id)) {
+                return Result.get().url("").parse(0).string();
+            }
+            HashMap<String, String> header = new HashMap<>();
+            header.put("User-Agent", PLAYER_UA);
+            return Result.get().url(id).header(header).parse(0).string();
+        }
+
+        @Override
+        public String searchContent(String key, boolean quick, String pg) throws Exception {
+            if (TextUtils.isEmpty(key)) {
+                return Result.string(new ArrayList<>());
+            }
+            JSONObject body = new JSONObject();
+            body.put("text", key.trim());
+            String response = OkHttp.post(SEARCH_URL, body.toString(), getHeaders());
+            JSONObject json = new JSONObject(response);
+            ArrayList<Vod> list = new ArrayList<>();
+            JSONObject data = json.optJSONObject("data");
+            if (data == null) return Result.string(list);
+            JSONObject theater = data.optJSONObject("theater");
+            if (theater == null) return Result.string(list);
+            JSONArray search_data = theater.optJSONArray("search_data");
+            if (search_data == null) return Result.string(list);
+            for (int i = 0; i < search_data.length(); i++) {
+                JSONObject item = search_data.optJSONObject(i);
+                if (item == null) continue;
+                String vodId = item.optString("id");
+                if (TextUtils.isEmpty(vodId)) {
+                    long longId = item.optLong("id", 0);
+                    if (longId > 0) {
+                        vodId = String.valueOf(longId);
+                    }
+                }
+                if (TextUtils.isEmpty(vodId) || "0".equals(vodId)) continue;
+                String title = item.optString("title");
+                String cover = item.optString("cover_url");
+                String score = item.optString("score_str");
+                list.add(new Vod(vodId, title, cover, score));
+            }
+            return Result.string(list);
+        }
+    }
+}
     @Override
     public String searchContent(String key, boolean quick) throws Exception {
         return searchContent(key, quick, "1");
@@ -783,119 +1187,5 @@ public class DJHub extends Spider {
         Result result = Result.get().vod(list);
         int count = Math.max(1, list.size());
         return result.page(page, 1, count, count).string();
-    }
-
-    /** Hema (河马短剧) sub-spider stub. */
-    private static class Hema extends Spider {
-        @Override
-        public void init(Context context, String extend) throws Exception {
-            super.init(context, extend);
-        }
-
-        @Override
-        public String homeContent(boolean filter) throws Exception {
-            return Result.get().string();
-        }
-
-        @Override
-        public String homeVideoContent() throws Exception {
-            return Result.get().vod(new ArrayList<Vod>()).string();
-        }
-
-        @Override
-        public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
-            return Result.get().vod(new ArrayList<Vod>()).page().string();
-        }
-
-        @Override
-        public String detailContent(List<String> ids) throws Exception {
-            return Result.get().string();
-        }
-
-        @Override
-        public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
-            return Result.get().string();
-        }
-
-        @Override
-        public String searchContent(String key, boolean quick) throws Exception {
-            return Result.get().vod(new ArrayList<Vod>()).string();
-        }
-    }
-
-    /** Qmdj (七猫短剧) sub-spider stub. */
-    private static class Qmdj extends Spider {
-        @Override
-        public void init(Context context, String extend) throws Exception {
-            super.init(context, extend);
-        }
-
-        @Override
-        public String homeContent(boolean filter) throws Exception {
-            return Result.get().string();
-        }
-
-        @Override
-        public String homeVideoContent() throws Exception {
-            return Result.get().vod(new ArrayList<Vod>()).string();
-        }
-
-        @Override
-        public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
-            return Result.get().vod(new ArrayList<Vod>()).page().string();
-        }
-
-        @Override
-        public String detailContent(List<String> ids) throws Exception {
-            return Result.get().string();
-        }
-
-        @Override
-        public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
-            return Result.get().string();
-        }
-
-        @Override
-        public String searchContent(String key, boolean quick) throws Exception {
-            return Result.get().vod(new ArrayList<Vod>()).string();
-        }
-    }
-
-    /** Xingya (星芽短剧) sub-spider stub. */
-    private static class Xingya extends Spider {
-        @Override
-        public void init(Context context, String extend) throws Exception {
-            super.init(context, extend);
-        }
-
-        @Override
-        public String homeContent(boolean filter) throws Exception {
-            return Result.get().string();
-        }
-
-        @Override
-        public String homeVideoContent() throws Exception {
-            return Result.get().vod(new ArrayList<Vod>()).string();
-        }
-
-        @Override
-        public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
-            return Result.get().vod(new ArrayList<Vod>()).page().string();
-        }
-
-        @Override
-        public String detailContent(List<String> ids) throws Exception {
-            return Result.get().string();
-        }
-
-        @Override
-        public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
-            return Result.get().string();
-        }
-
-        @Override
-        public String searchContent(String key, boolean quick) throws Exception {
-            return Result.get().vod(new ArrayList<Vod>()).string();
-        }
     }
 }
