@@ -356,15 +356,16 @@ public class Jhdjhub extends Spider {
                 String signStr = "operation=1playlet_privacy=1tag_id=" + area + QM_KEY;
                 String sign = Util.md5(signStr);
                 String url = plat.get("host") + plat.get("url1") + "?tag_id=" + area + "&playlet_privacy=1&operation=1&sign=" + sign;
-                
+
                 Map<String, String> headers = new HashMap<>();
                 headers.putAll(getHeaderX());
                 headers.putAll(getDefaultHeaders());
-                
+
                 String response = OkHttp.string(url, headers);
                 JSONObject json = new JSONObject(response);
-                JSONArray list = json.optJSONObject("data").optJSONArray("list");
-                
+                JSONObject data = json.optJSONObject("data");
+                JSONArray list = data != null ? data.optJSONArray("list") : null;
+
                 if (list != null) {
                     for (int i = 0; i < list.length(); i++) {
                         JSONObject item = list.getJSONObject(i);
@@ -399,11 +400,12 @@ public class Jhdjhub extends Spider {
                 body.put("limit", 24);
                 body.put("type_id", area);
                 body.put("keyword", "");
-                
+
                 String response = OkHttp.post(plat.get("host") + plat.get("search"), body.toString(), getDefaultHeaders());
                 JSONObject json = new JSONObject(response);
-                JSONArray list = json.optJSONObject("data").optJSONArray("list");
-                
+                JSONObject data = json.optJSONObject("data");
+                JSONArray list = data != null ? data.optJSONArray("list") : null;
+
                 if (list != null) {
                     for (int i = 0; i < list.length(); i++) {
                         JSONObject item = list.getJSONObject(i);
@@ -418,16 +420,27 @@ public class Jhdjhub extends Spider {
             } else if ("番茄".equals(tid)) {
                 String sessionId = new java.text.SimpleDateFormat("yyyyMMddHHmm").format(new java.util.Date());
                 String url = plat.get("host") + plat.get("url1") + "?change_type=0&selected_items=" + area + "&tab_type=8&cell_id=6952850996422770718&version_tag=video_feed_refactor&device_id=1423244030195267&aid=1967&app_name=novelapp&ssmix=a&session_id=" + sessionId;
-                
+
                 if (page > 1) {
                     url += "&offset=" + ((page - 1) * 12);
                 }
-                
+
                 String response = OkHttp.string(url, getDefaultHeaders());
                 JSONObject json = new JSONObject(response);
-                JSONArray items = json.optJSONObject("data").optJSONArray("cell_view");
-                if (items == null) items = json.optJSONArray("data");
-                
+
+                // 解析数据结构: res.data.cell_view.cell_data 或 res.data (数组)
+                JSONArray items = null;
+                JSONObject data = json.optJSONObject("data");
+                if (data != null) {
+                    JSONObject cellView = data.optJSONObject("cell_view");
+                    if (cellView != null) {
+                        items = cellView.optJSONArray("cell_data");
+                    }
+                }
+                if (items == null) {
+                    items = json.optJSONArray("data");
+                }
+
                 if (items != null) {
                     for (int i = 0; i < items.length(); i++) {
                         JSONObject item = items.getJSONObject(i);
@@ -447,8 +460,9 @@ public class Jhdjhub extends Spider {
                 String url = plat.get("host") + plat.get("url1") + "=" + area + "&type=1&class2_ids=0&page_num=" + page + "&page_size=24";
                 String response = OkHttp.string(url, getXingyaHeaders());
                 JSONObject json = new JSONObject(response);
-                JSONArray list = json.optJSONObject("data").optJSONArray("list");
-                
+                JSONObject data = json.optJSONObject("data");
+                JSONArray list = data != null ? data.optJSONArray("list") : null;
+
                 if (list != null) {
                     for (int i = 0; i < list.length(); i++) {
                         JSONObject item = list.getJSONObject(i);
@@ -467,14 +481,15 @@ public class Jhdjhub extends Spider {
                 String[] areaParts = area.split("@");
                 String typeId = areaParts[0];
                 String typeName = areaParts.length > 1 ? areaParts[1] : "";
-                
+
                 long ts = System.currentTimeMillis() / 1000;
                 String url = plat.get("host") + plat.get("url1") + "?reqType=aggregationPage&offset=" + ((page - 1) * 30) + "&categoryId=" + typeId + "&quickEngineVersion=-1&scene=&categoryNames=" + URLEncoder.encode(typeName, "UTF-8") + "&categoryVersion=1&density=1.5&pageID=page_theater&version=2001001&androidVersionCode=28&requestId=" + ts + "aa498144140ef297&appId=drama&teenMode=false&userBaseMode=false&session=eyJpbmZvIjp7InVpZCI6IiIsInJ0IjoiMTc0MDY1ODI5NCIsInVuIjoiT1BHXzFlZGQ5OTZhNjQ3ZTQ1MjU4Nzc1MTE2YzFkNzViN2QwIiwiZnQiOiIxNzQwNjU4Mjk0In19&feedssession=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1dHlwIjowLCJidWlkIjoxNjMzOTY4MTI2MTQ4NjQxNTM2LCJhdWQiOiJkcmFtYSIsInZlciI6MiwicmF0IjoxNzQwNjU4Mjk0LCJ1bm0iOiJPUEdfMWVkZDk5NmE2NDdlNDUyNTg3NzUxMTZjMWQ3NWI3ZDAiLCJpZCI6IjNiMzViZmYzYWE0OTgxNDQxNDBlZjI5N2JkMDY5NGNhIiwiZXhwIjoxNzQxMjYzMDk0LCJkYyI6Imd6cXkifQ.JS3QY6ER0P2cQSxAE_OGKSMIWNAMsYUZ3mJTnEpf-Rc";
-                
+
                 String response = OkHttp.string(url, getDefaultHeaders());
                 JSONObject json = new JSONObject(response);
-                JSONArray elements = json.optJSONObject("result").optJSONArray("elements");
-                
+                JSONObject result = json.optJSONObject("result");
+                JSONArray elements = result != null ? result.optJSONArray("elements") : null;
+
                 if (elements != null) {
                     for (int i = 0; i < elements.length(); i++) {
                         JSONObject s = elements.getJSONObject(i);
