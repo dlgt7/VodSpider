@@ -1124,7 +1124,7 @@ public class DJHub extends Spider {
             return Result.string(list);
         }
     }
-}
+
     @Override
     public String searchContent(String key, boolean quick) throws Exception {
         return searchContent(key, quick, "1");
