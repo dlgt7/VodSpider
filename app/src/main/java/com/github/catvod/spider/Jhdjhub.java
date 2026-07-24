@@ -310,11 +310,12 @@ public class Jhdjhub extends Spider {
         int randomIndex = (int) (Math.random() * PLATFORM_LIST.size());
         Map<String, String> randomPlat = PLATFORM_LIST.get(randomIndex);
         String platId = randomPlat.get("id");
-        
+
         String area = RULE_FILTER_DEF.get(platId);
         if (TextUtils.isEmpty(area)) area = "";
-        
-        String videos = categoryContent(platId, "1", false, new HashMap<String, String>() {{ put("area", area); }});
+        final String finalArea = area;
+
+        String videos = categoryContent(platId, "1", false, new HashMap<String, String>() {{ put("area", finalArea); }});
         JSONObject json = new JSONObject(videos);
         JSONArray list = json.optJSONArray("list");
         
