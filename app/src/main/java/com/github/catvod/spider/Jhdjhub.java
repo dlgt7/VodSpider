@@ -30,7 +30,7 @@ public class Jhdjhub extends Spider {
 
     // 七猫平台字符映射表
     private static final Map<String, String> CHAR_MAP = new HashMap<String, String>() {{
-        put("+", "P"); put("/",", "X"); put("0", "M"); put("1", "U"); put("2", "l");
+        put("+", "P"); put("/", "X"); put("0", "M"); put("1", "U"); put("2", "l");
         put("3", "E"); put("4", "r"); put("5", "Y"); put("6", "W"); put("7", "b");
         put("8", "d"); put("9", "J"); put("A", "9"); put("B", "s"); put("C", "a");
         put("D", "I"); put("E", "0"); put("F", "o"); put("G", "y"); put("H", "_");
@@ -868,7 +868,7 @@ public class Jhdjhub extends Spider {
                 JSONArray data = null;
                 
                 if ("百度".equals(tid)) {
-                    String url = plat.get("host") + plat.get("search").replace("**, URLEncoder.encode(key, "UTF-8")).replace("fypage", String.valueOf(page));
+                    String url = plat.get("host") + plat.get("search").replace("**", URLEncoder.encode(key, "UTF-8")).replace("fypage", String.valueOf(page));
                     String response = OkHttp.string(url, getDefaultHeaders());
                     data = new JSONObject(response).optJSONArray("data");
                     
