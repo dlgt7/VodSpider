@@ -352,6 +352,8 @@ public class Jhdjhub extends Spider {
         }
         
         try {
+            SpiderDebug.log("CategoryContent - Platform: " + tid + ", Area: " + area + ", Page: " + page);
+
             if ("七猫".equals(tid)) {
                 String signStr = "operation=1playlet_privacy=1tag_id=" + area + QM_KEY;
                 String sign = Util.md5(signStr);
@@ -361,7 +363,9 @@ public class Jhdjhub extends Spider {
                 headers.putAll(getHeaderX());
                 headers.putAll(getDefaultHeaders());
 
+                SpiderDebug.log("七猫 URL: " + url);
                 String response = OkHttp.string(url, headers);
+                SpiderDebug.log("七猫 Response: " + response);
                 JSONObject json = new JSONObject(response);
                 JSONObject data = json.optJSONObject("data");
                 JSONArray list = data != null ? data.optJSONArray("list") : null;
@@ -379,10 +383,12 @@ public class Jhdjhub extends Spider {
                 }
             } else if ("百度".equals(tid)) {
                 String url = plat.get("host") + plat.get("url1").replace("fyclass", area).replace("fypage", String.valueOf(page));
+                SpiderDebug.log("百度 URL: " + url);
                 String response = OkHttp.string(url, getDefaultHeaders());
+                SpiderDebug.log("百度 Response: " + response);
                 JSONObject json = new JSONObject(response);
                 JSONArray data = json.optJSONArray("data");
-                
+
                 if (data != null) {
                     for (int i = 0; i < data.length(); i++) {
                         JSONObject item = data.getJSONObject(i);
@@ -401,7 +407,10 @@ public class Jhdjhub extends Spider {
                 body.put("type_id", area);
                 body.put("keyword", "");
 
-                String response = OkHttp.post(plat.get("host") + plat.get("search"), body.toString(), getDefaultHeaders());
+                String url = plat.get("host") + plat.get("search");
+                SpiderDebug.log("锦鲤 URL: " + url + ", Body: " + body.toString());
+                String response = OkHttp.post(url, body.toString(), getDefaultHeaders());
+                SpiderDebug.log("锦鲤 Response: " + response);
                 JSONObject json = new JSONObject(response);
                 JSONObject data = json.optJSONObject("data");
                 JSONArray list = data != null ? data.optJSONArray("list") : null;
@@ -425,7 +434,9 @@ public class Jhdjhub extends Spider {
                     url += "&offset=" + ((page - 1) * 12);
                 }
 
+                SpiderDebug.log("番茄 URL: " + url);
                 String response = OkHttp.string(url, getDefaultHeaders());
+                SpiderDebug.log("番茄 Response: " + response);
                 JSONObject json = new JSONObject(response);
 
                 // 解析数据结构: res.data.cell_view.cell_data 或 res.data (数组)
@@ -441,6 +452,7 @@ public class Jhdjhub extends Spider {
                     items = json.optJSONArray("data");
                 }
 
+                SpiderDebug.log("番茄 Items count: " + (items != null ? items.length() : 0));
                 if (items != null) {
                     for (int i = 0; i < items.length(); i++) {
                         JSONObject item = items.getJSONObject(i);
@@ -535,11 +547,15 @@ public class Jhdjhub extends Spider {
                 body.put("pageSize", 30);
                 body.put("searchWord", "");
                 body.put("subject", "全部主题");
-                
-                String response = OkHttp.post(plat.get("host") + plat.get("search"), body.toString(), getDefaultHeaders());
+
+                String url = plat.get("host") + plat.get("search");
+                SpiderDebug.log("围观 URL: " + url + ", Body: " + body.toString());
+                String response = OkHttp.post(url, body.toString(), getDefaultHeaders());
+                SpiderDebug.log("围观 Response: " + response);
                 JSONObject json = new JSONObject(response);
                 JSONArray data = json.optJSONArray("data");
-                
+
+                SpiderDebug.log("围观 Items count: " + (data != null ? data.length() : 0));
                 if (data != null) {
                     for (int i = 0; i < data.length(); i++) {
                         JSONObject item = data.getJSONObject(i);
@@ -553,10 +569,13 @@ public class Jhdjhub extends Spider {
                 }
             } else if ("甜圈".equals(tid)) {
                 String url = plat.get("host") + plat.get("url1") + "=" + URLEncoder.encode(area, "UTF-8") + "&offset=" + page;
+                SpiderDebug.log("甜圈 URL: " + url);
                 String response = OkHttp.string(url, getDefaultHeaders());
+                SpiderDebug.log("甜圈 Response: " + response);
                 JSONObject json = new JSONObject(response);
                 JSONArray data = json.optJSONArray("data");
-                
+
+                SpiderDebug.log("甜圈 Items count: " + (data != null ? data.length() : 0));
                 if (data != null) {
                     for (int i = 0; i < data.length(); i++) {
                         JSONObject item = data.getJSONObject(i);
