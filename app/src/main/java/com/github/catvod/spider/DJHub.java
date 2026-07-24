@@ -782,4 +782,118 @@ public class DJHub extends Spider {
         int count = Math.max(1, list.size());
         return result.page(page, 1, count, count).string();
     }
+
+    /** Hema (河马短剧) sub-spider stub. */
+    private static class Hema extends Spider {
+        @Override
+        public void init(Context context, String extend) throws Exception {
+            super.init(context, extend);
+        }
+
+        @Override
+        public String homeContent(boolean filter) throws Exception {
+            return Result.get().string();
+        }
+
+        @Override
+        public String homeVideoContent() throws Exception {
+            return Result.get().vod(new ArrayList<Vod>()).string();
+        }
+
+        @Override
+        public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
+            return Result.get().vod(new ArrayList<Vod>()).page().string();
+        }
+
+        @Override
+        public String detailContent(List<String> ids) throws Exception {
+            return Result.get().string();
+        }
+
+        @Override
+        public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
+            return Result.get().string();
+        }
+
+        @Override
+        public String searchContent(String key, boolean quick) throws Exception {
+            return Result.get().vod(new ArrayList<Vod>()).string();
+        }
+    }
+
+    /** Qmdj (七猫短剧) sub-spider stub. */
+    private static class Qmdj extends Spider {
+        @Override
+        public void init(Context context, String extend) throws Exception {
+            super.init(context, extend);
+        }
+
+        @Override
+        public String homeContent(boolean filter) throws Exception {
+            return Result.get().string();
+        }
+
+        @Override
+        public String homeVideoContent() throws Exception {
+            return Result.get().vod(new ArrayList<Vod>()).string();
+        }
+
+        @Override
+        public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
+            return Result.get().vod(new ArrayList<Vod>()).page().string();
+        }
+
+        @Override
+        public String detailContent(List<String> ids) throws Exception {
+            return Result.get().string();
+        }
+
+        @Override
+        public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
+            return Result.get().string();
+        }
+
+        @Override
+        public String searchContent(String key, boolean quick) throws Exception {
+            return Result.get().vod(new ArrayList<Vod>()).string();
+        }
+    }
+
+    /** Xingya (星芽短剧) sub-spider stub. */
+    private static class Xingya extends Spider {
+        @Override
+        public void init(Context context, String extend) throws Exception {
+            super.init(context, extend);
+        }
+
+        @Override
+        public String homeContent(boolean filter) throws Exception {
+            return Result.get().string();
+        }
+
+        @Override
+        public String homeVideoContent() throws Exception {
+            return Result.get().vod(new ArrayList<Vod>()).string();
+        }
+
+        @Override
+        public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
+            return Result.get().vod(new ArrayList<Vod>()).page().string();
+        }
+
+        @Override
+        public String detailContent(List<String> ids) throws Exception {
+            return Result.get().string();
+        }
+
+        @Override
+        public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
+            return Result.get().string();
+        }
+
+        @Override
+        public String searchContent(String key, boolean quick) throws Exception {
+            return Result.get().vod(new ArrayList<Vod>()).string();
+        }
+    }
 }
