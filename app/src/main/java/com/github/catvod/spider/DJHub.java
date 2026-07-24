@@ -765,36 +765,6 @@ public class DJHub extends Spider {
         }
 
         /**
-         * 字符串拼接辅助方法（替代 merge.a.u.D）
-         * @param s1 第一部分
-         * @param separator 分隔符
-         * @param s2 第二部分
-         * @return 拼接结果
-         */
-        private String joinStrings(String s1, String separator, String s2) {
-            return s1 + separator + s2;
-        }
-
-        /**
-         * 构建 JSON 对象辅助方法（替代 merge.a.u.z）
-         * @param k1 键1
-         * @param v1 值1
-         * @param k2 键2
-         * @param v2 值2
-         * @return JSON 对象
-         */
-        private JSONObject buildJson(String k1, String v1, String k2, String v2) {
-            JSONObject json = new JSONObject();
-            try {
-                json.put(k1, v1);
-                json.put(k2, v2);
-            } catch (Exception e) {
-                // 忽略错误
-            }
-            return json;
-        }
-
-        /**
          * 从 Object 中提取 URL（查找以 "http" 开头的字符串）
          */
         public static String a(Object obj) {
@@ -997,7 +967,7 @@ public class DJHub extends Spider {
                             String subTypeName = subCat.optString("channelName");
 
                             // 使用工具方法构建带 @ 分隔的 ID
-                            String compositeId = joinStrings(subTypeId, "@", subTypeName);
+                            String compositeId = subTypeId + "@" + subTypeName;
 
                             values.add(new Filter.Value(subTypeName, compositeId));
                         }
@@ -1120,7 +1090,7 @@ public class DJHub extends Spider {
                 String episodeId = episode.optString("chapterId");
 
                 // 使用工具方法构建播放 URL
-                String playUrl = joinStrings(vodId, "@", episodeId);
+                String playUrl = vodId + "@" + episodeId;
 
                 StringBuilder sb = new StringBuilder();
                 sb.append(episodeName);
@@ -1158,12 +1128,9 @@ public class DJHub extends Spider {
             String vodId = id.substring(0, atIndex);
             String episodeId = id.substring(atIndex + 1);
 
-            JSONObject params = buildJson(
-                "bookId",
-                vodId,
-                "chapterId",
-                episodeId
-            );
+            JSONObject params = new JSONObject();
+            params.put("bookId", vodId);
+            params.put("chapterId", episodeId);
 
             params.put("unClockType", "load"); // "vod_module_index", "HLS"
             params.put("tierPlaySource", JSONObject.NULL); // "vod_data_collect_cursor"
@@ -1688,19 +1655,19 @@ public class DJHub extends Spider {
             requestBody.put("static_score", "0.8");
             requestBody.put("uuid", "00000000-6f7c-e347-0000-000000000000");
             requestBody.put("device-id", "202504012213236fa2ed536aed584e0cc8a6a09fe2f2d4016cdc5bc74f2d5f");
-            requestBody.put("mac", Str.u(""));
+            requestBody.put("mac", "");
             requestBody.put("sourceuid", "9494817a02a93435");
             requestBody.put("refresh-type", "0");
             requestBody.put("model", "M2012K10C");
-            requestBody.put("wlb-imei", Str.u(""));
+            requestBody.put("wlb-imei", "");
             requestBody.put("AUTHORIZATION", "6bcc46919d10d06a");
             requestBody.put("brand", "Redmi");
-            requestBody.put("oaid", Str.u(""));
-            requestBody.put("oaid-no-cache", Str.u(""));
+            requestBody.put("oaid", "");
+            requestBody.put("oaid-no-cache", "");
             requestBody.put("sys-ver", "11");
-            requestBody.put("trusted-id", Str.u(""));
+            requestBody.put("trusted-id", "");
             requestBody.put("phone-level", "H");
-            requestBody.put("imei", Str.u(""));
+            requestBody.put("imei", "");
             requestBody.put("wlb-uid", "6bcc46919d10d06a");
 
             // 添加时间戳
@@ -1753,7 +1720,7 @@ public class DJHub extends Spider {
             headers.put("platform", "android");
             headers.put("application-id", "com.duoduo.read");
             headers.put("app-version", "10001");
-            headers.put("qm-params", encoded);
+            headers.put("qm-params", encoded.toString());
             headers.put("no-permiss", "3");
 
             // 构建签名 URL
@@ -1862,10 +1829,10 @@ public class DJHub extends Spider {
                     String detail = data.optString("ks");
 
                     if (!TextUtils.isEmpty(url)) {
-                        this.host = url.replaceAll("/$", Str.u(""));
+                        this.host = url.replaceAll("/$", "");
                     }
                     if (!TextUtils.isEmpty(detail)) {
-                        this.detailHost = detail.replaceAll("/$", Str.u(""));
+                        this.detailHost = detail.replaceAll("/$", "");
                     }
                 }
             } catch (Exception e) {
@@ -2035,7 +2002,7 @@ public class DJHub extends Spider {
             }
 
             LinkedHashMap<String, String> params = new LinkedHashMap<>();
-            params.put("extend", Str.u(""));
+            params.put("extend", "");
             params.put("page", TextUtils.isEmpty(pg) ? "1" : pg);
             params.put("wd", key.trim());
             params.put("read_preference", "0");
