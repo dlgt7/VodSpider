@@ -619,6 +619,11 @@ public class YueYue extends Spider {
                     return Proxy.error(502, "悦悦代理获取内容为空: " + realUrl);
                 }
 
+                // 去除 BOM（U+FEFF），某些 CDN 返回的 m3u8 可能包含 BOM 导致播放器解析失败
+                if (content.charAt(0) == '\uFEFF') {
+                    content = content.substring(1);
+                }
+
                 // m3u8 playlist 需重写分片 URL，让 ts 分片也通过本代理带 header 请求
                 if (content.contains("#EXTM3U")) {
                     content = rewriteM3u8(content, domain, path, ck);
@@ -647,7 +652,7 @@ public class YueYue extends Spider {
          * ts 分片请求同样需要 User-Agent: Mozi 和 Badci 签名，因此必须走代理。
          */
         private static String rewriteM3u8(String content, String domain, String path, String ck) {
-            String[] lines = content.split("\n");
+            String[] lines = content.split("\\r?\\n");
             StringBuilder sb = new StringBuilder(content.length() + 256);
             String pathDir = path.contains("/") ? path.substring(0, path.lastIndexOf('/') + 1) : "/";
             String ckEnc;
@@ -658,44 +663,82 @@ public class YueYue extends Spider {
             }
             for (String line : lines) {
                 String trimmed = line.trim();
-                if (trimmed.isEmpty() || trimmed.startsWith("#")) {
-                    sb.append(line).append('\n');
+                if (trimmed.isEmpty()) {
+                    continue;
+                }
+                if (trimmed.startsWith("#")) {
+                    // 重写标签行中的 URI="..." 属性（如 #EXT-X-KEY、#EXT-X-MAP 等）
+                    if (trimmed.contains("URI=\"")) {
+                        trimmed = rewriteTagUris(trimmed, domain, pathDir, ckEnc);
+                    }
+                    sb.append(trimmed).append('\n');
                     continue;
                 }
                 // 分片 URL 行
-                String newDomain;
-                String newPath;
-                if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-                    try {
-                        URL u = new URL(trimmed);
-                        StringBuilder d = new StringBuilder();
-                        d.append(u.getProtocol()).append("://").append(u.getHost());
-                        if (u.getPort() > 0) d.append(":").append(u.getPort());
-                        newDomain = d.toString();
-                        newPath = u.getPath();
-                        String query = u.getQuery();
-                        if (!TextUtils.isEmpty(query)) newPath = newPath + "?" + query;
-                    } catch (Exception e) {
-                        sb.append(line).append('\n');
-                        continue;
-                    }
-                } else if (trimmed.startsWith("/")) {
-                    newDomain = domain;
-                    newPath = trimmed;
-                } else {
-                    newDomain = domain;
-                    newPath = pathDir + trimmed;
-                }
-                sb.append(Proxy.getUrl())
-                        .append("?do=yueyue&type=m3u8&domain=")
-                        .append(Base64.encodeToString(newDomain.getBytes(StandardCharsets.UTF_8), BASE64_URL_FLAGS))
-                        .append("&path=")
-                        .append(Base64.encodeToString(newPath.getBytes(StandardCharsets.UTF_8), BASE64_URL_FLAGS))
-                        .append("&ck=")
-                        .append(ckEnc)
-                        .append('\n');
+                sb.append(buildProxyUrl(trimmed, domain, pathDir, ckEnc)).append('\n');
             }
             return sb.toString();
+        }
+
+        /**
+         * 重写标签行中所有 URI="..." 属性，使其通过本代理请求。
+         * 适用于 #EXT-X-KEY、#EXT-X-MAP、#EXT-X-MEDIA 等标签。
+         */
+        private static String rewriteTagUris(String line, String domain, String pathDir, String ckEnc) {
+            StringBuilder sb = new StringBuilder(line.length() + 256);
+            int i = 0;
+            while (i < line.length()) {
+                int uriIdx = line.indexOf("URI=\"", i);
+                if (uriIdx < 0) {
+                    sb.append(line, i, line.length());
+                    break;
+                }
+                sb.append(line, i, uriIdx + 5);
+                int start = uriIdx + 5;
+                int end = line.indexOf("\"", start);
+                if (end < 0) {
+                    sb.append(line, start, line.length());
+                    break;
+                }
+                String uri = line.substring(start, end);
+                sb.append(buildProxyUrl(uri, domain, pathDir, ckEnc));
+                i = end;
+            }
+            return sb.toString();
+        }
+
+        /**
+         * 将原始 URL 转换为本地代理 URL。
+         */
+        private static String buildProxyUrl(String url, String domain, String pathDir, String ckEnc) {
+            String newDomain;
+            String newPath;
+            if (url.startsWith("http://") || url.startsWith("https://")) {
+                try {
+                    URL u = new URL(url);
+                    StringBuilder d = new StringBuilder();
+                    d.append(u.getProtocol()).append("://").append(u.getHost());
+                    if (u.getPort() > 0) d.append(":").append(u.getPort());
+                    newDomain = d.toString();
+                    newPath = u.getPath();
+                    String query = u.getQuery();
+                    if (!TextUtils.isEmpty(query)) newPath = newPath + "?" + query;
+                } catch (Exception e) {
+                    return url;
+                }
+            } else if (url.startsWith("/")) {
+                newDomain = domain;
+                newPath = url;
+            } else {
+                newDomain = domain;
+                newPath = pathDir + url;
+            }
+            return Proxy.getUrl()
+                    + "?do=yueyue&type=m3u8&domain="
+                    + Base64.encodeToString(newDomain.getBytes(StandardCharsets.UTF_8), BASE64_URL_FLAGS)
+                    + "&path="
+                    + Base64.encodeToString(newPath.getBytes(StandardCharsets.UTF_8), BASE64_URL_FLAGS)
+                    + "&ck=" + ckEnc;
         }
     }
 }
