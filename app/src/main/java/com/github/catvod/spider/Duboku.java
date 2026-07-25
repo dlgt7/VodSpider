@@ -33,7 +33,7 @@ public class Duboku extends Spider {
     private static final String SITE_URL = "https://www.6693.org";
     private static final Pattern DETAIL_ID_PATTERN = Pattern.compile("/detail/(.+?)\\.html");
 
-    private String getHeader() {
+    private Map<String, String> getHeader() {
         Map<String, String> header = new HashMap<>();
         header.put("User-Agent", Util.CHROME);
         header.put("Referer", SITE_URL + "/");
