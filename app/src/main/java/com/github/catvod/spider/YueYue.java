@@ -14,6 +14,7 @@ import com.github.catvod.net.OkHttp;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.ByteArrayInputStream;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -23,6 +24,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Random;
 
 import javax.crypto.Cipher;
@@ -518,6 +520,127 @@ public class YueYue extends Spider {
                 .parse(0)
                 .header(header)
                 .string();
+    }
+
+    /**
+     * 处理本地代理请求（do=yueyue）。
+     * <p>
+     * playerContent 返回的代理 URL 形如：
+     * <pre>http://127.0.0.1:9978/proxy?do=yueyue&type=m3u8&domain={Base64}&path={Base64}&ck={URLEncode}</pre>
+     * 本方法解码 domain/path，拼接真实视频 URL，带签名 header 请求，
+     * 若返回的是 m3u8 playlist 则重写其中的分片 URL 为代理 URL（让 ts 分片也走代理带 header）。
+     *
+     * @param params 代理请求参数（domain/path/ck）
+     * @return Object[]{statusCode, contentType, InputStream}
+     */
+    @Override
+    public Object[] proxy(Map<String, String> params) {
+        try {
+            String domainEnc = params == null ? null : params.get("domain");
+            String pathEnc = params == null ? null : params.get("path");
+            String ck = params == null ? null : params.get("ck");
+            if (TextUtils.isEmpty(domainEnc) || TextUtils.isEmpty(pathEnc)) {
+                return buildProxyResponse(400, "text/plain", "悦悦代理缺少 domain/path 参数");
+            }
+
+            String domain = new String(Base64.decode(domainEnc, BASE64_URL_FLAGS), StandardCharsets.UTF_8);
+            String path = new String(Base64.decode(pathEnc, BASE64_URL_FLAGS), StandardCharsets.UTF_8);
+            String realUrl = domain + path;
+
+            HashMap<String, String> headers = new HashMap<>();
+            headers.put("User-Agent", "Mozi");
+            headers.put("Accept", "*/*");
+            headers.put("Badci", TextUtils.isEmpty(signature) ? generateSignature() : signature);
+
+            String content = OkHttp.string(realUrl, headers);
+            if (TextUtils.isEmpty(content)) {
+                return buildProxyResponse(502, "text/plain", "悦悦代理获取内容为空: " + realUrl);
+            }
+
+            // m3u8 playlist 需重写分片 URL，让 ts 分片也通过本代理带 header 请求
+            if (content.contains("#EXTM3U")) {
+                content = rewriteM3u8(content, domain, path, ck);
+                return buildProxyResponse(200, "application/x-mpegURL", content);
+            }
+
+            // 非 m3u8（如直接 mp4/ts 分片）直接透传字节流
+            byte[] data = content.getBytes(StandardCharsets.UTF_8);
+            return new Object[]{200, "application/octet-stream", new ByteArrayInputStream(data)};
+        } catch (Throwable t) {
+            String msg = t.getMessage();
+            if (msg == null) msg = "悦悦代理内部错误";
+            return buildProxyResponse(500, "text/plain", msg);
+        }
+    }
+
+    /**
+     * 构造代理响应 Object[]。
+     */
+    private Object[] buildProxyResponse(int code, String contentType, String body) {
+        return new Object[]{code, contentType, new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8))};
+    }
+
+    /**
+     * 重写 m3u8 playlist 中的分片 URL 为本代理 URL。
+     * <p>
+     * 处理三种分片 URL 形式：
+     * <ul>
+     *   <li>完整 URL（http/https 开头）：提取新的 domain/path 重新编码</li>
+     *   <li>绝对路径（/ 开头）：拼接原 domain</li>
+     *   <li>相对路径：拼接原 domain + 原 path 的目录部分</li>
+     * </ul>
+     * ts 分片请求同样需要 User-Agent: Mozi 和 Badci 签名，因此必须走代理。
+     */
+    private String rewriteM3u8(String content, String domain, String path, String ck) {
+        String[] lines = content.split("\n");
+        StringBuilder sb = new StringBuilder(content.length() + 256);
+        String pathDir = path.contains("/") ? path.substring(0, path.lastIndexOf('/') + 1) : "/";
+        String ckEnc;
+        try {
+            ckEnc = ck == null ? "" : URLEncoder.encode(ck, "UTF-8");
+        } catch (Exception e) {
+            ckEnc = ck == null ? "" : ck;
+        }
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+                sb.append(line).append('\n');
+                continue;
+            }
+            // 分片 URL 行
+            String newDomain;
+            String newPath;
+            if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+                try {
+                    URL u = new URL(trimmed);
+                    StringBuilder d = new StringBuilder();
+                    d.append(u.getProtocol()).append("://").append(u.getHost());
+                    if (u.getPort() > 0) d.append(":").append(u.getPort());
+                    newDomain = d.toString();
+                    newPath = u.getPath();
+                    String query = u.getQuery();
+                    if (!TextUtils.isEmpty(query)) newPath = newPath + "?" + query;
+                } catch (Exception e) {
+                    sb.append(line).append('\n');
+                    continue;
+                }
+            } else if (trimmed.startsWith("/")) {
+                newDomain = domain;
+                newPath = trimmed;
+            } else {
+                newDomain = domain;
+                newPath = pathDir + trimmed;
+            }
+            sb.append(Proxy.getUrl())
+                    .append("?do=yueyue&type=m3u8&domain=")
+                    .append(Base64.encodeToString(newDomain.getBytes(StandardCharsets.UTF_8), BASE64_URL_FLAGS))
+                    .append("&path=")
+                    .append(Base64.encodeToString(newPath.getBytes(StandardCharsets.UTF_8), BASE64_URL_FLAGS))
+                    .append("&ck=")
+                    .append(ckEnc)
+                    .append('\n');
+        }
+        return sb.toString();
     }
 
     @Override
