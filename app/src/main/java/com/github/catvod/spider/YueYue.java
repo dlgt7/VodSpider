@@ -63,6 +63,12 @@ public class YueYue extends Spider {
     private final Object lock = new Object();
 
     /**
+     * 代理签名缓存（Badci header 值），由 {@link #ensureInitialized()} 写入，
+     * 供 {@link ProxyHandler#c(Map)} 在静态代理分发时读取。
+     */
+    private static String proxySignature = "";
+
+    /**
      * 生成时间戳签名。
      * 格式：10-{rand1}-{seconds}-{millis}-{seconds}-{base}-{seconds}-{base+rand2}
      * 最终返回该字符串的 MD5 哈希。
@@ -216,6 +222,10 @@ public class YueYue extends Spider {
                 // 忽略初始化异常
             }
             signature = generateSignature();
+            // 将签名写入静态字段，供 ProxyHandler 构造 Badci header 使用
+            if (!TextUtils.isEmpty(signature)) {
+                proxySignature = signature.trim();
+            }
         }
     }
 
@@ -522,127 +532,6 @@ public class YueYue extends Spider {
                 .string();
     }
 
-    /**
-     * 处理本地代理请求（do=yueyue）。
-     * <p>
-     * playerContent 返回的代理 URL 形如：
-     * <pre>http://127.0.0.1:9978/proxy?do=yueyue&type=m3u8&domain={Base64}&path={Base64}&ck={URLEncode}</pre>
-     * 本方法解码 domain/path，拼接真实视频 URL，带签名 header 请求，
-     * 若返回的是 m3u8 playlist 则重写其中的分片 URL 为代理 URL（让 ts 分片也走代理带 header）。
-     *
-     * @param params 代理请求参数（domain/path/ck）
-     * @return Object[]{statusCode, contentType, InputStream}
-     */
-    @Override
-    public Object[] proxy(Map<String, String> params) {
-        try {
-            String domainEnc = params == null ? null : params.get("domain");
-            String pathEnc = params == null ? null : params.get("path");
-            String ck = params == null ? null : params.get("ck");
-            if (TextUtils.isEmpty(domainEnc) || TextUtils.isEmpty(pathEnc)) {
-                return buildProxyResponse(400, "text/plain", "悦悦代理缺少 domain/path 参数");
-            }
-
-            String domain = new String(Base64.decode(domainEnc, BASE64_URL_FLAGS), StandardCharsets.UTF_8);
-            String path = new String(Base64.decode(pathEnc, BASE64_URL_FLAGS), StandardCharsets.UTF_8);
-            String realUrl = domain + path;
-
-            HashMap<String, String> headers = new HashMap<>();
-            headers.put("User-Agent", "Mozi");
-            headers.put("Accept", "*/*");
-            headers.put("Badci", TextUtils.isEmpty(signature) ? generateSignature() : signature);
-
-            String content = OkHttp.string(realUrl, headers);
-            if (TextUtils.isEmpty(content)) {
-                return buildProxyResponse(502, "text/plain", "悦悦代理获取内容为空: " + realUrl);
-            }
-
-            // m3u8 playlist 需重写分片 URL，让 ts 分片也通过本代理带 header 请求
-            if (content.contains("#EXTM3U")) {
-                content = rewriteM3u8(content, domain, path, ck);
-                return buildProxyResponse(200, "application/x-mpegURL", content);
-            }
-
-            // 非 m3u8（如直接 mp4/ts 分片）直接透传字节流
-            byte[] data = content.getBytes(StandardCharsets.UTF_8);
-            return new Object[]{200, "application/octet-stream", new ByteArrayInputStream(data)};
-        } catch (Throwable t) {
-            String msg = t.getMessage();
-            if (msg == null) msg = "悦悦代理内部错误";
-            return buildProxyResponse(500, "text/plain", msg);
-        }
-    }
-
-    /**
-     * 构造代理响应 Object[]。
-     */
-    private Object[] buildProxyResponse(int code, String contentType, String body) {
-        return new Object[]{code, contentType, new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8))};
-    }
-
-    /**
-     * 重写 m3u8 playlist 中的分片 URL 为本代理 URL。
-     * <p>
-     * 处理三种分片 URL 形式：
-     * <ul>
-     *   <li>完整 URL（http/https 开头）：提取新的 domain/path 重新编码</li>
-     *   <li>绝对路径（/ 开头）：拼接原 domain</li>
-     *   <li>相对路径：拼接原 domain + 原 path 的目录部分</li>
-     * </ul>
-     * ts 分片请求同样需要 User-Agent: Mozi 和 Badci 签名，因此必须走代理。
-     */
-    private String rewriteM3u8(String content, String domain, String path, String ck) {
-        String[] lines = content.split("\n");
-        StringBuilder sb = new StringBuilder(content.length() + 256);
-        String pathDir = path.contains("/") ? path.substring(0, path.lastIndexOf('/') + 1) : "/";
-        String ckEnc;
-        try {
-            ckEnc = ck == null ? "" : URLEncoder.encode(ck, "UTF-8");
-        } catch (Exception e) {
-            ckEnc = ck == null ? "" : ck;
-        }
-        for (String line : lines) {
-            String trimmed = line.trim();
-            if (trimmed.isEmpty() || trimmed.startsWith("#")) {
-                sb.append(line).append('\n');
-                continue;
-            }
-            // 分片 URL 行
-            String newDomain;
-            String newPath;
-            if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-                try {
-                    URL u = new URL(trimmed);
-                    StringBuilder d = new StringBuilder();
-                    d.append(u.getProtocol()).append("://").append(u.getHost());
-                    if (u.getPort() > 0) d.append(":").append(u.getPort());
-                    newDomain = d.toString();
-                    newPath = u.getPath();
-                    String query = u.getQuery();
-                    if (!TextUtils.isEmpty(query)) newPath = newPath + "?" + query;
-                } catch (Exception e) {
-                    sb.append(line).append('\n');
-                    continue;
-                }
-            } else if (trimmed.startsWith("/")) {
-                newDomain = domain;
-                newPath = trimmed;
-            } else {
-                newDomain = domain;
-                newPath = pathDir + trimmed;
-            }
-            sb.append(Proxy.getUrl())
-                    .append("?do=yueyue&type=m3u8&domain=")
-                    .append(Base64.encodeToString(newDomain.getBytes(StandardCharsets.UTF_8), BASE64_URL_FLAGS))
-                    .append("&path=")
-                    .append(Base64.encodeToString(newPath.getBytes(StandardCharsets.UTF_8), BASE64_URL_FLAGS))
-                    .append("&ck=")
-                    .append(ckEnc)
-                    .append('\n');
-        }
-        return sb.toString();
-    }
-
     @Override
     public String searchContent(String key, boolean quick) throws Exception {
         return searchContent(key, quick, "1");
@@ -672,6 +561,140 @@ public class YueYue extends Spider {
             return Result.get().page(page, page + 1, 20, 0).vod(list).string();
         } catch (Exception e) {
             return Result.string(new ArrayList<>());
+        }
+    }
+
+    /**
+     * 悦悦源本地代理处理器（do=yueyue）。
+     * <p>
+     * 原 smali 中为独立类 {@code Lcom/github/catvod/spider/merge/f/I8;}，
+     * 因其功能仅服务于悦悦源，按项目约定合并为本 Spider 的静态内部类。
+     * <ul>
+     *   <li>解码 Base64 URL-safe 编码的 domain/path 参数</li>
+     *   <li>拼接真实视频 URL，附带 User-Agent: Mozi、Accept: */*、Badci: 签名 header 请求</li>
+     *   <li>m3u8 playlist 重写分片 URL，使 ts 分片也通过本代理带 header 请求</li>
+     *   <li>非 m3u8 内容直接透传字节流</li>
+     * </ul>
+     * 签名由 {@link #ensureInitialized()} 写入 {@link #proxySignature}。
+     * 错误响应复用 {@link Proxy#error(int, String)}。
+     */
+    static class ProxyHandler {
+
+        private ProxyHandler() {
+        }
+
+        /**
+         * 处理 "do=yueyue" 代理请求。
+         * <p>
+         * 参数：domain（Base64 URL-safe）、path（Base64 URL-safe）、ck（URL 编码）。
+         * 返回 Object[]{statusCode, contentType, InputStream}。
+         *
+         * @param params 代理请求参数
+         * @return 响应数组 {code, mimeType, inputStream}
+         */
+        static Object[] c(Map<String, String> params) {
+            if (params == null) {
+                return Proxy.error(400, "悦悦代理参数为空");
+            }
+            try {
+                String domainEnc = params.get("domain");
+                String pathEnc = params.get("path");
+                String ck = params.get("ck");
+                if (TextUtils.isEmpty(domainEnc) || TextUtils.isEmpty(pathEnc)) {
+                    return Proxy.error(400, "悦悦代理缺少 domain/path 参数");
+                }
+
+                String domain = new String(Base64.decode(domainEnc, BASE64_URL_FLAGS), StandardCharsets.UTF_8);
+                String path = new String(Base64.decode(pathEnc, BASE64_URL_FLAGS), StandardCharsets.UTF_8);
+                String realUrl = domain + path;
+
+                HashMap<String, String> headers = new HashMap<>();
+                headers.put("User-Agent", "Mozi");
+                headers.put("Accept", "*/*");
+                headers.put("Badci", TextUtils.isEmpty(proxySignature) ? "" : proxySignature);
+
+                String content = OkHttp.string(realUrl, headers);
+                if (TextUtils.isEmpty(content)) {
+                    return Proxy.error(502, "悦悦代理获取内容为空: " + realUrl);
+                }
+
+                // m3u8 playlist 需重写分片 URL，让 ts 分片也通过本代理带 header 请求
+                if (content.contains("#EXTM3U")) {
+                    content = rewriteM3u8(content, domain, path, ck);
+                    return new Object[]{200, "application/x-mpegURL", new ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8))};
+                }
+
+                // 非 m3u8（如直接 mp4/ts 分片）直接透传字节流
+                byte[] data = content.getBytes(StandardCharsets.UTF_8);
+                return new Object[]{200, "application/octet-stream", new ByteArrayInputStream(data)};
+            } catch (Throwable t) {
+                String msg = t.getMessage();
+                if (msg == null) msg = "悦悦代理内部错误";
+                return Proxy.error(500, msg);
+            }
+        }
+
+        /**
+         * 重写 m3u8 playlist 中的分片 URL 为本代理 URL。
+         * <p>
+         * 处理三种分片 URL 形式：
+         * <ul>
+         *   <li>完整 URL（http/https 开头）：提取新的 domain/path 重新编码</li>
+         *   <li>绝对路径（/ 开头）：拼接原 domain</li>
+         *   <li>相对路径：拼接原 domain + 原 path 的目录部分</li>
+         * </ul>
+         * ts 分片请求同样需要 User-Agent: Mozi 和 Badci 签名，因此必须走代理。
+         */
+        private static String rewriteM3u8(String content, String domain, String path, String ck) {
+            String[] lines = content.split("\n");
+            StringBuilder sb = new StringBuilder(content.length() + 256);
+            String pathDir = path.contains("/") ? path.substring(0, path.lastIndexOf('/') + 1) : "/";
+            String ckEnc;
+            try {
+                ckEnc = ck == null ? "" : URLEncoder.encode(ck, "UTF-8");
+            } catch (Exception e) {
+                ckEnc = ck == null ? "" : ck;
+            }
+            for (String line : lines) {
+                String trimmed = line.trim();
+                if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+                    sb.append(line).append('\n');
+                    continue;
+                }
+                // 分片 URL 行
+                String newDomain;
+                String newPath;
+                if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+                    try {
+                        URL u = new URL(trimmed);
+                        StringBuilder d = new StringBuilder();
+                        d.append(u.getProtocol()).append("://").append(u.getHost());
+                        if (u.getPort() > 0) d.append(":").append(u.getPort());
+                        newDomain = d.toString();
+                        newPath = u.getPath();
+                        String query = u.getQuery();
+                        if (!TextUtils.isEmpty(query)) newPath = newPath + "?" + query;
+                    } catch (Exception e) {
+                        sb.append(line).append('\n');
+                        continue;
+                    }
+                } else if (trimmed.startsWith("/")) {
+                    newDomain = domain;
+                    newPath = trimmed;
+                } else {
+                    newDomain = domain;
+                    newPath = pathDir + trimmed;
+                }
+                sb.append(Proxy.getUrl())
+                        .append("?do=yueyue&type=m3u8&domain=")
+                        .append(Base64.encodeToString(newDomain.getBytes(StandardCharsets.UTF_8), BASE64_URL_FLAGS))
+                        .append("&path=")
+                        .append(Base64.encodeToString(newPath.getBytes(StandardCharsets.UTF_8), BASE64_URL_FLAGS))
+                        .append("&ck=")
+                        .append(ckEnc)
+                        .append('\n');
+            }
+            return sb.toString();
         }
     }
 }
