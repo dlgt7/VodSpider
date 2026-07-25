@@ -62,19 +62,12 @@ public class Duboku extends Spider {
     @Override
     public String homeContent(boolean filter) throws Exception {
         List<Class> classes = new ArrayList<>();
-        classes.add(new Class("dongzuopian", "动作片"));
-        classes.add(new Class("xijupian", "喜剧片"));
-        classes.add(new Class("aiqingpian", "爱情片"));
-        classes.add(new Class("kehuanpian", "科幻片"));
-        classes.add(new Class("kongbupian", "恐怖片"));
-        classes.add(new Class("juqingpian", "剧情片"));
-        classes.add(new Class("fanzuipian", "犯罪片"));
-        classes.add(new Class("zhanzhengpian", "战争片"));
-        classes.add(new Class("jilupian", "纪录片"));
-        classes.add(new Class("xuanyipian", "悬疑片"));
-        classes.add(new Class("donghuapian", "动画片"));
-        classes.add(new Class("qihuanpian", "奇幻片"));
-        classes.add(new Class("shaoshidianying", "邵氏电影"));
+        classes.add(new Class("dianying", "电影"));
+        classes.add(new Class("dianshiju", "电视剧"));
+        classes.add(new Class("zongyi", "综艺"));
+        classes.add(new Class("dongman", "动漫"));
+        classes.add(new Class("duanju", "短剧"));
+        classes.add(new Class("top", "榜单"));
 
         String html = OkHttp.string(SITE_URL, getHeader());
         Document doc = Jsoup.parse(html);
@@ -94,8 +87,13 @@ public class Duboku extends Spider {
     private List<Vod> parseVodList(Document doc) {
         List<Vod> list = new ArrayList<>();
 
-        // 使用准确的选择器：ul.pic-list li
+        // 首先尝试普通列表结构：ul.pic-list li
         Elements items = doc.select("ul.pic-list li");
+
+        // 如果没有找到，尝试榜单页面结构：ul li（但需要过滤导航项）
+        if (items.isEmpty()) {
+            items = doc.select("ul li");
+        }
 
         for (Element item : items) {
             try {
@@ -114,13 +112,21 @@ public class Duboku extends Spider {
                     name = h3.text().trim();
                 }
 
-                // 提取图片（从src属性）
+                // 提取图片（优先懒加载属性）
                 String pic = "";
                 Element img = item.selectFirst("img");
                 if (img != null) {
-                    pic = img.attr("src");
-                    if (TextUtils.isEmpty(pic)) {
+                    // 优先级：data-original > data-src > src
+                    pic = img.attr("data-original");
+                    if (TextUtils.isEmpty(pic) || pic.contains("pic.png")) {
                         pic = img.attr("data-src");
+                    }
+                    if (TextUtils.isEmpty(pic) || pic.contains("pic.png")) {
+                        pic = img.attr("src");
+                    }
+                    // 过滤占位图
+                    if (pic.contains("pic.png") || pic.contains("images/pic")) {
+                        pic = "";
                     }
                     pic = fixUrl(pic);
                 }
@@ -145,14 +151,23 @@ public class Duboku extends Spider {
 
     @Override
     public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
-        // 构建分类URL
         String url;
         int page = Util.toInt(pg, 1);
 
-        if (page == 1) {
-            url = SITE_URL + "/show/" + tid + "-----------.html";
+        // 根据分类类型构建不同的URL
+        if ("top".equals(tid)) {
+            // 榜单：/label/top.html
+            url = SITE_URL + "/label/" + tid + ".html";
+        } else if (tid.contains("pian") || tid.contains("ju") || tid.contains("man") || tid.contains("yi")) {
+            // 子分类（动作片、喜剧片等）：/show/{slug}-----------.html
+            if (page == 1) {
+                url = SITE_URL + "/show/" + tid + "-----------.html";
+            } else {
+                url = SITE_URL + "/show/" + tid + "-------" + page + "-----.html";
+            }
         } else {
-            url = SITE_URL + "/show/" + tid + "-------" + page + "-----.html";
+            // 主分类（电影、电视剧等）：/type/{slug}.html
+            url = SITE_URL + "/type/" + tid + ".html";
         }
 
         String html = OkHttp.string(url, getHeader());
