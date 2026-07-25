@@ -14,8 +14,10 @@ import com.github.catvod.net.OkHttp;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.ByteArrayInputStream;
 import java.net.URLEncoder;
 import java.net.URL;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -23,6 +25,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Random;
 
 import javax.crypto.Cipher;
@@ -39,6 +42,16 @@ public class YueYue extends Spider {
     // AES-CBC 加密密钥与 IV（来自 smali 静态字段 a/b）
     private static final byte[] AES_KEY = "aZ9$kU5%qI7=yC2=zH2#gM0@pX7^wF3a".getBytes(StandardCharsets.UTF_8);
     private static final byte[] AES_IV = "hY2&tN3]kF7,dL7=".getBytes(StandardCharsets.UTF_8);
+
+    // 代理 URL 签名密钥（来自 merge/f/I8 静态字段 a:[B）
+    private static final byte[] WS_SECRET_KEY = "6Jh7hrLCXBrutmJEYpMpvbU3LDEHwUZY".getBytes(StandardCharsets.UTF_8);
+
+    // 代理响应常量
+    private static final String PROXY_CONTENT_TYPE_M3U8 = "application/vnd.apple.mpegurl; charset=utf-8";
+    private static final String PROXY_CONTENT_TYPE_TEXT = "text/plain; charset=utf-8";
+    private static final String PROXY_ERR_PARAMS = "悦悦代理参数错误";
+    private static final String PROXY_ERR_M3U8 = "悦悦 m3u8 拉取失败";
+    private static final String M3U8_HEADER = "#EXTM3U";
 
     // API 基础地址与默认配置
     private static final String DEFAULT_API_URL = "https://u.yyxdmn.com/api";
@@ -695,5 +708,170 @@ public class YueYue extends Spider {
             list.add(new Vod(id, name, pic, remarks));
         }
         return list;
+    }
+
+    /**
+     * 处理本地代理请求（do=yueyue）。
+     * 解析 domain/path/ck 参数，构造带签名的视频 URL，对 m3u8 进行重写后返回。
+     */
+    @Override
+    public Object[] proxy(Map<String, String> params) throws Exception {
+        String domain = decodeBase64(params.get("domain"));
+        String path = decodeBase64(params.get("path"));
+        String ck = params.get("ck");
+        String type = params.get("type");
+        if (TextUtils.isEmpty(type)) {
+            type = "";
+        }
+
+        // ck URL 解码
+        if (!TextUtils.isEmpty(ck)) {
+            try {
+                ck = URLDecoder.decode(ck, "UTF-8");
+            } catch (Exception ignored) {
+            }
+            ck = ck == null ? "" : ck.trim();
+            // 原逻辑兼容：尝试 Base64 解码验证
+            ck = tryDecodeCk(ck);
+        } else {
+            ck = "";
+        }
+
+        if (TextUtils.isEmpty(domain) || TextUtils.isEmpty(path)) {
+            return buildProxyErrorResponse(0x190, PROXY_ERR_PARAMS);
+        }
+
+        String videoUrl = buildVideoUrl(domain, path, ck);
+
+        HashMap<String, String> headers = new HashMap<>();
+        headers.put(HEADER_USER_AGENT, USER_AGENT_MOZI);
+        headers.put(HEADER_ACCEPT, ACCEPT_ALL);
+        if (!TextUtils.isEmpty(signature)) {
+            headers.put(HEADER_BADCI, signature);
+        }
+
+        if (type.contains("m3u8") || path.toLowerCase(Locale.US).contains(".m3u8")) {
+            String content = OkHttp.string(videoUrl, null, headers);
+            if (TextUtils.isEmpty(content) || !content.contains(M3U8_HEADER)) {
+                return buildProxyErrorResponse(0x1f6, PROXY_ERR_M3U8);
+            }
+            // 解析 path 目录前缀
+            String dirPrefix = "";
+            if (path.contains("/")) {
+                dirPrefix = path.substring(0, path.lastIndexOf('/') + 1);
+            }
+            // 重写 m3u8 中的相对路径
+            StringBuilder result = new StringBuilder();
+            String[] lines = content.split("\\r?\\n", -1);
+            for (String line : lines) {
+                String trimmed = line.trim();
+                if (TextUtils.isEmpty(trimmed) || trimmed.startsWith("#") || trimmed.startsWith("http")) {
+                    result.append(line);
+                } else {
+                    String newPath = trimmed.split("\\?")[0];
+                    result.append(buildVideoUrl(domain, dirPrefix + newPath, ck));
+                }
+                result.append('\n');
+            }
+            byte[] bytes = result.toString().getBytes(StandardCharsets.UTF_8);
+            return new Object[]{0xc8, PROXY_CONTENT_TYPE_M3U8, new ByteArrayInputStream(bytes)};
+        } else {
+            // 非 m3u8：返回 Location 重定向
+            HashMap<String, String> responseHeaders = new HashMap<>();
+            responseHeaders.put("Location", videoUrl);
+            return new Object[]{0x12e, PROXY_CONTENT_TYPE_TEXT, new ByteArrayInputStream(new byte[0]), responseHeaders};
+        }
+    }
+
+    /**
+     * Base64 解码：先尝试 URL_SAFE|NO_WRAP，失败则回退 DEFAULT。
+     */
+    private static String decodeBase64(String s) {
+        if (TextUtils.isEmpty(s)) return "";
+        try {
+            return new String(Base64.decode(s, Base64.URL_SAFE | Base64.NO_WRAP), StandardCharsets.UTF_8);
+        } catch (Exception ignored) {
+        }
+        try {
+            return new String(Base64.decode(s, Base64.DEFAULT), StandardCharsets.UTF_8);
+        } catch (Exception ignored) {
+        }
+        return "";
+    }
+
+    /**
+     * 原 smali 中的 ck 特殊处理：尝试两种 Base64 模式解码并验证可打印字符。
+     * 验证通过则使用解码后的值，否则保留原值。
+     */
+    private static String tryDecodeCk(String ck) {
+        if (TextUtils.isEmpty(ck)) return ck;
+        int[] flags = {Base64.URL_SAFE | Base64.NO_WRAP, Base64.DEFAULT};
+        for (int flag : flags) {
+            try {
+                byte[] decoded = Base64.decode(ck, flag | Base64.NO_WRAP);
+                String decodedStr = new String(decoded, StandardCharsets.UTF_8);
+                if (decodedStr.contains("=") && decodedStr.matches("[\\x09\\x0a\\x0d\\x20-\\x7e]+")) {
+                    return decodedStr;
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return ck;
+    }
+
+    /**
+     * 构造带 wsSecret/wsTime 签名的视频 URL。
+     * 算法：MD5(WS_SECRET_KEY + path + hexTime) → wsSecret，URL 拼接 domain/path?ck&wsSecret&wsTime。
+     */
+    private static String buildVideoUrl(String domain, String path, String ck) {
+        // 去掉 path 中的查询参数
+        int queryIdx = path.indexOf('?');
+        if (queryIdx >= 0) {
+            path = path.substring(0, queryIdx);
+        }
+        long seconds = System.currentTimeMillis() / 1000L;
+        String hexTime = Long.toHexString(seconds).toLowerCase(Locale.US);
+        String md5Hex = md5Hex(WS_SECRET_KEY, path + hexTime);
+
+        StringBuilder sb = new StringBuilder(domain);
+        if (!path.startsWith("/")) {
+            if (!domain.endsWith("/")) {
+                sb.append('/');
+            }
+        }
+        sb.append(path);
+        sb.append('?');
+        sb.append(ck);
+        sb.append("&wsSecret=").append(md5Hex);
+        sb.append("&wsTime=").append(hexTime);
+        return sb.toString();
+    }
+
+    /**
+     * 计算 MD5 哈希（先 update key 字节，再 update data 字节），返回小写十六进制字符串。
+     */
+    private static String md5Hex(byte[] key, String data) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("MD5");
+            md.update(key);
+            md.update(data.getBytes(StandardCharsets.UTF_8));
+            byte[] digest = md.digest();
+            StringBuilder sb = new StringBuilder(digest.length * 2);
+            for (byte b : digest) {
+                sb.append(Character.forDigit((b >> 4) & 0xf, 16));
+                sb.append(Character.forDigit(b & 0xf, 16));
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /**
+     * 构造代理错误响应。
+     */
+    private static Object[] buildProxyErrorResponse(int code, String message) {
+        return new Object[]{code, PROXY_CONTENT_TYPE_TEXT,
+                new ByteArrayInputStream(message.getBytes(StandardCharsets.UTF_8))};
     }
 }
