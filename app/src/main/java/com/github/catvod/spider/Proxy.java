@@ -68,13 +68,6 @@ public class Proxy {
                     return video(params);
                 case "audio":
                     return audio(params);
-                case "yueyue":
-                    try {
-                        return YueYue.ProxyHandler.c(params);
-                    } catch (Throwable t) {
-                        String msg = "悦悦代理" + (t.getMessage() != null ? t.getMessage() : t.getClass().getSimpleName());
-                        return error(500, msg);
-                    }
                 default:
                     return null;
             }
@@ -209,7 +202,7 @@ public class Proxy {
         }
     }
 
-    static Object[] error(int code, String message) {
+    private static Object[] error(int code, String message) {
         return new Object[]{code, "text/plain; charset=utf-8", new ByteArrayInputStream(message.getBytes(StandardCharsets.UTF_8))};
     }
 
