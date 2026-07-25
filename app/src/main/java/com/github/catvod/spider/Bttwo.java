@@ -25,7 +25,7 @@ import java.util.Map;
  * 站点：https://bttwo.life/
  * Tailwind+Alpine.js 架构，播放页与详情页合二为一
  * 详情信息在 [x-show*=showDetail] 区域，grid 布局：.text-gray-500 为标签，.text-gray-300 为值
- * 选集链接在 main .grid a[href*=/play/]
+ * 选集链接在 [x-data*=episode] a[href*=/play/]（Alpine.js x-data 含 episode 的容器）
  */
 public class Bttwo extends Spider {
 
@@ -176,17 +176,14 @@ public class Bttwo extends Spider {
             }
         }
 
-        // 提取选集列表：main 内 grid 布局中的 play 链接
+        // 提取选集列表：[x-data*=episode] 容器内的 play 链接（Alpine.js 选集组件）
         ArrayList<String> episodes = new ArrayList<>();
-        Elements playLinks = doc.select("main .grid a[href*=/play/]");
+        Elements playLinks = doc.select("[x-data*=episode] a[href*=/play/]");
 
         for (Element link : playLinks) {
             String href = link.attr("href").trim();
             String epName = link.text().trim();
             if (TextUtils.isEmpty(href) || !href.contains("/play/")) continue;
-
-            // 排除推荐区域（父级含 recommend/related 类名）
-            if (isInRecommendSection(link)) continue;
 
             if (TextUtils.isEmpty(epName)) epName = "正片";
 
@@ -196,15 +193,14 @@ public class Bttwo extends Spider {
             episodes.add(epName + "$" + playId);
         }
 
-        // 如果 main grid 没找到选集，尝试更宽泛的选择器
+        // 兜底：如果 x-data 选择器没匹配到，尝试 main .grid
         if (episodes.isEmpty()) {
-            Elements allPlayLinks = doc.select("a[href*=/play/]");
-            for (Element link : allPlayLinks) {
+            playLinks = doc.select("main .grid a[href*=/play/]");
+            for (Element link : playLinks) {
                 String href = link.attr("href").trim();
+                String epName = link.text().trim();
                 if (TextUtils.isEmpty(href) || !href.contains("/play/")) continue;
                 if (isInRecommendSection(link)) continue;
-
-                String epName = link.text().trim();
                 if (TextUtils.isEmpty(epName)) epName = "正片";
 
                 String playId = extractPlayId(href);
@@ -257,7 +253,15 @@ public class Bttwo extends Spider {
 
     @Override
     public String searchContent(String key, boolean quick) throws Exception {
+        return searchContent(key, quick, "1");
+    }
+
+    @Override
+    public String searchContent(String key, boolean quick, String pg) throws Exception {
         String url = host + "/search?q=" + URLEncoder.encode(key, "UTF-8");
+        if (!TextUtils.isEmpty(pg) && !"1".equals(pg)) {
+            url += "&page=" + pg;
+        }
         Document doc = fetchDocument(url);
         ArrayList<Vod> list = parseSearchList(doc);
         return Result.string(list);
@@ -342,51 +346,41 @@ public class Bttwo extends Spider {
 
     /**
      * 从 HTML Document 解析视频列表（首页/分类页）
+     * 结构：<a href="/play/xxx"><img data-src="..."><h3>标题</h3>...</a>
+     * 图片使用 data-src 懒加载，h3 在 a 标签内部
      */
     private ArrayList<Vod> parseVodList(Document doc) {
         ArrayList<Vod> list = new ArrayList<>();
         HashMap<String, Boolean> idSet = new HashMap<>();
 
-        // 选择含 /play/ 链接的 h3 标题（站点使用 h3 作为视频标题）
-        Elements items = doc.select("h3 a[href*=/play/], h2 a[href*=/play/]");
+        // 优先：首页轮播区 div.slide-inner 含 data-title 属性
+        Elements slides = doc.select("div.slide-inner[data-title]");
+        for (Element slide : slides) {
+            String title = slide.attr("data-title").trim();
+            if (TextUtils.isEmpty(title)) continue;
 
-        // 如果上面没结果，尝试 slide-inner（首页轮播）和更宽泛的选择器
-        if (items.isEmpty()) {
-            // 首页轮播区：div.slide-inner 含 data-id, data-title 属性
-            Elements slides = doc.select("div.slide-inner[data-title]");
-            for (Element slide : slides) {
-                String title = slide.attr("data-title").trim();
-                String dataId = slide.attr("data-id").trim();
-                if (TextUtils.isEmpty(title) || TextUtils.isEmpty(dataId)) continue;
+            Element link = slide.selectFirst("a[href*=/play/]");
+            if (link == null) continue;
 
-                // 从 slide 中找 play 链接
-                Element link = slide.selectFirst("a[href*=/play/]");
-                String playId;
-                if (link != null) {
-                    playId = extractPlayId(link.attr("href"));
-                } else {
-                    // 没有链接时用 data-id 构造（不确定格式，跳过）
-                    continue;
-                }
+            String playId = extractPlayId(link.attr("href"));
+            if (TextUtils.isEmpty(playId) || idSet.containsKey(playId)) continue;
+            idSet.put(playId, true);
 
-                if (TextUtils.isEmpty(playId) || idSet.containsKey(playId)) continue;
-                idSet.put(playId, true);
-
-                // 提取图片
-                String pic = "";
-                Element img = slide.selectFirst("img");
-                if (img != null) {
-                    pic = getFirstNonEmptyAttr(img, "data-original", "data-src", "src");
-                    pic = fixUrl(pic);
-                }
-
-                // 提取备注
-                String remark = slide.attr("data-rating").trim();
-
-                list.add(new Vod(playId, title, pic, remark));
+            String pic = "";
+            Element img = slide.selectFirst("img");
+            if (img != null) {
+                pic = getFirstNonEmptyAttr(img, "data-original", "data-src", "src");
+                pic = fixUrl(pic);
             }
+
+            String remark = slide.attr("data-rating").trim();
+            list.add(new Vod(playId, title, pic, remark));
         }
 
+        // 卡片区：a[href*=/play/] 内含 h3 标题和 img 图片
+        Elements items = doc.select("a[href*=/play/]:has(h3)");
+
+        // 兜底：如果没有 h3 结构，尝试更宽泛的选择器
         if (items.isEmpty()) {
             items = doc.select("a[href*=/play/]");
         }
@@ -399,41 +393,48 @@ public class Bttwo extends Spider {
             if (TextUtils.isEmpty(playId) || idSet.containsKey(playId)) continue;
             idSet.put(playId, true);
 
-            // 提取标题
-            String title = link.text().trim();
+            // 提取标题：优先 h3 子元素文本
+            String title = "";
+            Element h3 = link.selectFirst("h3");
+            if (h3 != null) {
+                title = h3.text().trim();
+            }
+            if (TextUtils.isEmpty(title)) {
+                title = link.text().trim();
+            }
             if (TextUtils.isEmpty(title)) {
                 title = link.attr("title").trim();
             }
             if (TextUtils.isEmpty(title)) continue;
-            // 跳过非标题文本
-            if (title.length() > 30 && title.contains("...")) continue;
 
-            // 提取图片：向上查找最近的 img
+            // 提取图片：a 标签内的 img（优先 data-src 懒加载）
             String pic = "";
-            Element parent = link.parent();
-            int depth = 0;
-            while (parent != null && pic.isEmpty() && depth < 5) {
-                Element img = parent.selectFirst("img");
-                if (img != null) {
-                    pic = getFirstNonEmptyAttr(img, "data-original", "data-src", "data-lazy-src", "src");
-                    pic = fixUrl(pic);
+            Element img = link.selectFirst("img");
+            if (img != null) {
+                pic = getFirstNonEmptyAttr(img, "data-original", "data-src", "data-lazy-src", "src");
+                pic = fixUrl(pic);
+            }
+            // 如果 a 内没有 img，向上查找
+            if (TextUtils.isEmpty(pic)) {
+                Element parent = link.parent();
+                int depth = 0;
+                while (parent != null && pic.isEmpty() && depth < 3) {
+                    img = parent.selectFirst("img");
+                    if (img != null) {
+                        pic = getFirstNonEmptyAttr(img, "data-original", "data-src", "data-lazy-src", "src");
+                        pic = fixUrl(pic);
+                    }
+                    parent = parent.parent();
+                    depth++;
                 }
-                parent = parent.parent();
-                depth++;
             }
 
             // 提取备注
             String remark = "";
-            Element container = link.parent();
-            if (container != null) {
-                container = container.parent();
-                if (container != null) {
-                    Element remarkEl = container.selectFirst(".text-xs, .badge, .hdtag, span.update, .pic-text");
-                    if (remarkEl != null) {
-                        remark = remarkEl.text().trim();
-                        if (remark.length() > 20) remark = "";
-                    }
-                }
+            Element remarkEl = link.selectFirst(".text-xs, .badge, .hdtag, span.update, .pic-text");
+            if (remarkEl != null) {
+                remark = remarkEl.text().trim();
+                if (remark.length() > 20) remark = "";
             }
 
             list.add(new Vod(playId, title, pic, remark));
@@ -443,14 +444,14 @@ public class Bttwo extends Spider {
     }
 
     /**
-     * 从搜索结果页解析视频列表
+     * 从搜索结果页解析视频+视频列表
+     * 结构与分类页相同：a[href*=/play/] 内含 h3 和 img
      */
     private ArrayList<Vod> parseSearchList(Document doc) {
         ArrayList<Vod> list = new ArrayList<>();
         HashMap<String, Boolean> idSet = new HashMap<>();
 
-        // 搜索结果标题链接
-        Elements items = doc.select("h3 a[href*=/play/], h2 a[href*=/play/]");
+        Elements items = doc.select("a[href*=/play/]:has(h3)");
         if (items.isEmpty()) {
             items = doc.select("a[href*=/play/]");
         }
@@ -463,40 +464,47 @@ public class Bttwo extends Spider {
             if (TextUtils.isEmpty(playId) || idSet.containsKey(playId)) continue;
             idSet.put(playId, true);
 
-            // 提取标题
-            String title = link.text().trim();
+            // 提取标题：优先 h3 子元素
+            String title = "";
+            Element h3 = link.selectFirst("h3");
+            if (h3 != null) {
+                title = h3.text().trim();
+            }
+            if (TextUtils.isEmpty(title)) {
+                title = link.text().trim();
+            }
             if (TextUtils.isEmpty(title)) {
                 title = link.attr("title").trim();
             }
             if (TextUtils.isEmpty(title)) continue;
-            if (title.length() > 30 && title.contains("...")) continue;
 
             // 提取图片
             String pic = "";
-            Element parent = link.parent();
-            int depth = 0;
-            while (parent != null && pic.isEmpty() && depth < 5) {
-                Element img = parent.selectFirst("img");
-                if (img != null) {
-                    pic = getFirstNonEmptyAttr(img, "data-original", "data-src", "data-lazy-src", "src");
-                    pic = fixUrl(pic);
+            Element img = link.selectFirst("img");
+            if (img != null) {
+                pic = getFirstNonEmptyAttr(img, "data-original", "data-src", "data-lazy-src", "src");
+                pic = fixUrl(pic);
+            }
+            if (TextUtils.isEmpty(pic)) {
+                Element parent = link.parent();
+                int depth = 0;
+                while (parent != null && pic.isEmpty() && depth < 3) {
+                    img = parent.selectFirst("img");
+                    if (img != null) {
+                        pic = getFirstNonEmptyAttr(img, "data-original", "data-src", "data-lazy-src", "src");
+                        pic = fixUrl(pic);
+                    }
+                    parent = parent.parent();
+                    depth++;
                 }
-                parent = parent.parent();
-                depth++;
             }
 
             // 提取备注
             String remark = "";
-            Element container = link.parent();
-            if (container != null) {
-                container = container.parent();
-                if (container != null) {
-                    Element remarkEl = container.selectFirst(".text-xs, .badge, span");
-                    if (remarkEl != null) {
-                        remark = remarkEl.text().trim();
-                        if (remark.length() > 20) remark = "";
-                    }
-                }
+            Element remarkEl = link.selectFirst(".text-xs, .badge, span.update");
+            if (remarkEl != null) {
+                remark = remarkEl.text().trim();
+                if (remark.length() > 20) remark = "";
             }
 
             list.add(new Vod(playId, title, pic, remark));
