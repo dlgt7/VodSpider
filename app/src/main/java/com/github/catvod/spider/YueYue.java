@@ -471,6 +471,7 @@ public class YueYue extends Spider {
         params.put("nc_token", "");
         params.put("phone", "");
         params.put("session_id", "");
+        params.put("code", "");
         params.put(FIELD_VOD_ID, vodId);
 
         JSONObject result = fetchApi(API_VIDEO_RESULT, params, false);
@@ -536,6 +537,7 @@ public class YueYue extends Spider {
         params.put("nc_token", "");
         params.put("phone", "");
         params.put("session_id", "");
+        params.put("code", "");
         params.put("collection_id", parts[0]);
         params.put(FIELD_VOD_TOKEN, parts[1]);
         params.put(AUTH_CUR_TIME, parts[2]);
