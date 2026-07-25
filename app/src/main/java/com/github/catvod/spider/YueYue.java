@@ -571,7 +571,7 @@ public class YueYue extends Spider {
      * 因其功能仅服务于悦悦源，按项目约定合并为本 Spider 的静态内部类。
      * <ul>
      *   <li>解码 Base64 URL-safe 编码的 domain/path 参数</li>
-     *   <li>拼接真实视频 URL，附带 User-Agent: Mozi、Accept: */*、Badci: 签名 header 请求</li>
+     *   <li>拼接真实视频 URL，附带 User-Agent: Mozi、Accept: 任意类型、Badci: 签名 header 请求</li>
      *   <li>m3u8 playlist 重写分片 URL，使 ts 分片也通过本代理带 header 请求</li>
      *   <li>非 m3u8 内容直接透传字节流</li>
      * </ul>
