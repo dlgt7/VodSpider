@@ -92,14 +92,17 @@ public class Duboku extends Spider {
 
     private List<Vod> parseVodList(Document doc) {
         List<Vod> list = new ArrayList<>();
+
+        // 选择所有包含详情链接的元素
         Elements items = doc.select("a[href*=/detail/]");
-        
+
         for (Element item : items) {
             try {
                 String href = item.attr("href");
                 String vodId = extractVodId(href);
                 if (TextUtils.isEmpty(vodId)) continue;
 
+                // 提取标题
                 String name = item.attr("title");
                 if (TextUtils.isEmpty(name)) {
                     Element titleElem = item.selectFirst("h3, h2, .title");
@@ -107,15 +110,18 @@ public class Duboku extends Spider {
                 }
                 if (TextUtils.isEmpty(name)) name = item.text().trim();
 
+                // 提取图片
                 String pic = "";
                 Element img = item.selectFirst("img");
                 if (img != null) {
+                    // 优先级：data-src > data-original > src
                     pic = img.attr("data-src");
                     if (TextUtils.isEmpty(pic)) pic = img.attr("data-original");
                     if (TextUtils.isEmpty(pic)) pic = img.attr("src");
                     pic = fixUrl(pic);
                 }
 
+                // 提取备注（评分/集数）
                 String remark = "";
                 Element remarkElem = item.selectFirst(".remarks, .tag, .rating");
                 if (remarkElem != null) {
@@ -129,26 +135,27 @@ public class Duboku extends Spider {
                 // 忽略解析错误
             }
         }
+
         return list;
     }
 
     @Override
     public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
-        String url = SITE_URL + "/show/" + tid + "-----------";
-        
-        if (!TextUtils.isEmpty(pg) && !"1".equals(pg)) {
-            url = SITE_URL + "/show/" + tid + "-------" + pg + "-----.html";
+        // 构建分类URL：/show/{type}-----------{page}.html
+        String url;
+        int page = Util.toInt(pg, 1);
+
+        if (page == 1) {
+            url = SITE_URL + "/show/" + tid + "-----------.html";
         } else {
-            url = url + ".html";
+            url = SITE_URL + "/show/" + tid + "-------" + page + "-----.html";
         }
 
         String html = OkHttp.string(url, getHeader());
         Document doc = Jsoup.parse(html);
         List<Vod> list = parseVodList(doc);
 
-        int page = Util.toInt(pg, 1);
-        int pageCount = page + 1;
-        return Result.string(page, pageCount, list.size(), 9999, list);
+        return Result.string(page, page + 1, list.size(), 9999, list);
     }
 
     @Override
@@ -161,13 +168,15 @@ public class Duboku extends Spider {
         Vod vod = new Vod();
         vod.setVodId(vodId);
 
+        // 提取标题
         String name = "";
         Element titleElem = doc.selectFirst("h1, h2, .title");
         if (titleElem != null) name = titleElem.text().trim();
         vod.setVodName(name);
 
+        // 提取图片（支持多个域名）
         String pic = "";
-        Element img = doc.selectFirst(".content .thumb img, .detail img, img[src*='img.jisuimage.com']");
+        Element img = doc.selectFirst(".content img, .detail img, img[src*='img.jisuimage.com'], img[src*='doubaocdn.com']");
         if (img != null) {
             pic = img.attr("data-src");
             if (TextUtils.isEmpty(pic)) pic = img.attr("data-original");
@@ -207,49 +216,57 @@ public class Duboku extends Spider {
         List<String> playFromList = new ArrayList<>();
         List<String> playUrlList = new ArrayList<>();
 
-        Elements sourceElems = doc.select(".playlist li, .sources li");
-        if (sourceElems.isEmpty()) {
-            sourceElems = doc.select("a[href*=/play/]");
-        }
-
-        if (!sourceElems.isEmpty()) {
-            String sourceName = "默认";
-            List<String> episodes = new ArrayList<>();
-
-            for (Element epElem : sourceElems) {
-                String epName = epElem.text().trim();
-                if (TextUtils.isEmpty(epName)) epName = "正片";
-
-                String epUrl = epElem.attr("href");
-                if (TextUtils.isEmpty(epUrl)) continue;
-
-                epUrl = fixUrl(epUrl);
-                episodes.add(epName + "$" + epUrl);
-            }
-
-            if (!episodes.isEmpty()) {
-                playFromList.add(sourceName);
-                playUrlList.add(TextUtils.join("#", episodes));
+        // 提取播放源名称列表（从播放地址区域）
+        List<String> sourceNames = new ArrayList<>();
+        Elements sourceTabs = doc.select("li");
+        for (Element tab : sourceTabs) {
+            String text = tab.text().trim();
+            if (text.contains("云") || text.contains("HD")) {
+                sourceNames.add(text);
             }
         }
 
-        // 检查是否有多个播放源
-        Elements multiSourceElems = doc.select(".tabs li, .sources-list li");
-        for (Element sourceTab : multiSourceElems) {
-            String sourceName = sourceTab.text().trim();
-            if (TextUtils.isEmpty(sourceName)) continue;
+        // 提取所有播放链接并按 source_id 分组
+        Map<Integer, List<String>> sourceEpisodes = new HashMap<>();
+        Pattern playPattern = Pattern.compile("/play/[^-]+-(\\d+)-(\\d+)\\.html");
 
+        Elements playLinks = doc.select("a[href*=/play/]");
+        for (Element playLink : playLinks) {
+            String href = playLink.attr("href");
+            String epName = playLink.text().trim();
+            if (TextUtils.isEmpty(epName)) epName = "正片";
+
+            Matcher matcher = playPattern.matcher(href);
+            if (matcher.find()) {
+                int sourceId = Integer.parseInt(matcher.group(1));
+                String epUrl = fixUrl(href);
+
+                if (!sourceEpisodes.containsKey(sourceId)) {
+                    sourceEpisodes.put(sourceId, new ArrayList<>());
+                }
+                sourceEpisodes.get(sourceId).add(epName + "$" + epUrl);
+            }
+        }
+
+        // 构建播放源和播放链接
+        for (Map.Entry<Integer, List<String>> entry : sourceEpisodes.entrySet()) {
+            int sourceId = entry.getKey();
+            String sourceName = sourceId <= sourceNames.size() ? sourceNames.get(sourceId - 1) : "线路" + sourceId;
+            playFromList.add(sourceName);
+            playUrlList.add(TextUtils.join("#", entry.getValue()));
+        }
+
+        // 如果没有找到播放源，尝试直接提取所有播放链接
+        if (playFromList.isEmpty()) {
             List<String> episodes = new ArrayList<>();
-            Elements epLinks = doc.select("a[href*=/play/]");
-            for (Element epLink : epLinks) {
+            for (Element epLink : playLinks) {
                 String epName = epLink.text().trim();
                 if (TextUtils.isEmpty(epName)) epName = "正片";
                 String epUrl = fixUrl(epLink.attr("href"));
                 episodes.add(epName + "$" + epUrl);
             }
-
             if (!episodes.isEmpty()) {
-                playFromList.add(sourceName);
+                playFromList.add("默认");
                 playUrlList.add(TextUtils.join("#", episodes));
             }
         }
