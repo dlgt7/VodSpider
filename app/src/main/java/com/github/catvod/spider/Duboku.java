@@ -291,7 +291,8 @@ public class Duboku extends Spider {
 
     @Override
     public String searchContent(String key, boolean quick, String pg) throws Exception {
-        String url = SITE_URL + "/search/" + URLEncoder.encode(key, "UTF-8") + ".html";
+        // 正确的搜索URL格式：/search/--------------wd-{关键词}.html
+        String url = SITE_URL + "/search/--------------wd-" + URLEncoder.encode(key, "UTF-8") + ".html";
         String html = OkHttp.string(url, getHeader());
         Document doc = Jsoup.parse(html);
         List<Vod> list = parseVodList(doc);
