@@ -529,6 +529,7 @@ public class YueYue extends Spider {
                 .url(proxyUrl.toString())
                 .parse(0)
                 .header(header)
+                .format("application/x-mpegURL")
                 .string();
     }
 
