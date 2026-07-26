@@ -1,7 +1,6 @@
 package com.github.catvod.spider;
 
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.Intent;
 import android.net.Uri;
 import android.text.TextUtils;
@@ -12,6 +11,8 @@ import com.github.catvod.bean.Result;
 import com.github.catvod.bean.Vod;
 import com.github.catvod.crawler.Spider;
 import com.github.catvod.net.OkHttp;
+import com.github.catvod.utils.Prefers;
+import com.github.catvod.utils.ProxyVideo;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -20,15 +21,21 @@ import java.io.File;
 import java.io.FileWriter;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 
 /**
- * 弹幕管理 Spider。
- * 提供弹幕开关、弹幕源配置、Go 弹幕服务管理等功能。
+ * 弹幕管理 Spider，从 PanSettings.smali 转换。
+ * 仅保留弹幕相关功能 + Go 代理链路，不含网盘直接操作。
  */
 public class DanmuSettings extends Spider {
+
+    // ===== 弹幕配置键 =====
+    private static final String PREF_DANMU = "danmu";
+    private static final String DANMU_ON = "1";
+    private static final String DANMU_OFF = "0";
+    private static final String DANMU_DIR = "danmu";
 
     /** Go 弹幕服务运行状态 */
     private static volatile boolean goServiceRunning = false;
@@ -36,7 +43,7 @@ public class DanmuSettings extends Spider {
     /** 弹幕源状态描述 */
     private static volatile String danmuSourceStatus = "点击管理弹幕源";
 
-    /** 弹幕源平台标识 */
+    /** 弹幕源平台标识数组 */
     private static final String[] DANMU_PLATFORMS = {
         "bilibili", "iqiyi", "tencent", "youku", "mango",
         "hanjutv", "renren", "xigua", "leshi", "maiduidui"
@@ -52,7 +59,7 @@ public class DanmuSettings extends Spider {
     private static final String IMAGE_BASE_URL = "https://jk.catvod.site/jk/assets/";
     private static final String IMAGE_VERSION = "?v=20260720w";
 
-    /** Go 弹幕服务端口和 API 地址 */
+    /** Go 弹幕服务端口 */
     private static final int DANMU_PORT = 5266;
     private static final String DANMU_API_BASE = "http://127.0.0.1:" + DANMU_PORT;
 
@@ -63,17 +70,17 @@ public class DanmuSettings extends Spider {
         Init.run(() -> Toast.makeText(Init.context(), msg, Toast.LENGTH_SHORT).show());
     }
 
-    /** 拼接图片资源 URL */
+    /** 获取图片资源 URL */
     private static String getImageUrl(String filename) {
         return IMAGE_BASE_URL + filename + IMAGE_VERSION;
     }
 
-    /** 创建带矩形样式的弹幕管理列表项 */
+    /** 创建带矩形样式的弹幕管理 Vod 项 */
     private static Vod createDanmakuVod(String vodId, String vodName, String picFile, String vodRemarks) {
         return new Vod(vodId, vodName, getImageUrl(picFile), vodRemarks, Vod.Style.rect(0.68f));
     }
 
-    /** 检查弹幕 API 是否启用（SP: danmu_api_enabled ≠ "0" 即为开启） */
+    /** 检查弹幕 API 是否启用（SP: danmu_api_enabled ≠ "0"） */
     private static boolean isDanmakuApiEnabled() {
         return !"0".equals(Init.getString("danmu_api_enabled", "1"));
     }
@@ -88,7 +95,7 @@ public class DanmuSettings extends Spider {
         Init.put(key, value);
     }
 
-    /** 检查 Go 弹幕服务二进制文件是否存在 */
+    /** 检查 Go 弹幕服务二进制是否存在 */
     private static boolean isGoBinaryAvailable() {
         try {
             File dir = new File(Init.context().getFilesDir(), "fishdanmu");
@@ -96,6 +103,11 @@ public class DanmuSettings extends Spider {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    /** 检查 Go 代理是否可用 */
+    private static boolean isGoProxyAvailable() {
+        return !TextUtils.isEmpty(ProxyVideo.goVer());
     }
 
     /** 在浏览器中打开 URL */
@@ -109,11 +121,11 @@ public class DanmuSettings extends Spider {
         }
     }
 
-    /** 检查 action 是否为 APK 安装动作（JSON 数组格式，首项 name 以 .apk 结尾） */
-    private static boolean isApkInstallAction(String action) {
-        if (TextUtils.isEmpty(action) || !action.startsWith("[")) return false;
+    /** 检测是否为 APK 安装动作（JSON 数组 + 首项 name 以 .apk 结尾） */
+    private static boolean isApkInstallAction(String str) {
+        if (TextUtils.isEmpty(str) || !str.startsWith("[")) return false;
         try {
-            JSONArray array = new JSONArray(action);
+            JSONArray array = new JSONArray(str);
             JSONObject obj = array.optJSONObject(0);
             if (obj == null) return false;
             String name = obj.optString("name", "");
@@ -123,24 +135,44 @@ public class DanmuSettings extends Spider {
         }
     }
 
+    /** 读取弹幕源文件（如果 action 是 URL，则从本地 danmu 目录缓存读取） */
+    private static String readDanmuSources(String action) {
+        if (action != null && action.startsWith("http")) {
+            try {
+                String danmuDir = Init.context().getFilesDir().getAbsolutePath();
+                File file = new File(danmuDir, DANMU_DIR);
+                if (file.exists()) {
+                    String content = com.github.catvod.utils.FileUtil.readFile(file.getAbsolutePath());
+                    if (!TextUtils.isEmpty(content)) return content;
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return action;
+    }
+
     // ===== 弹幕管理主页内容 =====
 
-    /** 获取弹幕管理分类页面内容（弹幕开关、功能配置、弹幕源开关） */
+    /**
+     * 获取弹幕管理分类页面内容。
+     * 包含：弹幕开关、功能配置、弹幕源开关 三个条目。
+     */
     private static String getDanmakuCategoryContent() {
         try {
+            // 后台刷新弹幕源状态
             Init.execute(DanmuSettings::refreshDanmuSourceStatus);
 
             ArrayList<Vod> list = new ArrayList<>();
 
-            // 弹幕开关
+            // 1. 弹幕开关
             String switchRemark = isDanmakuApiEnabled() ? "已开启" : "未开启";
             list.add(createDanmakuVod("danmu_switch", "弹幕开关", "bili_danmaku.jpg", switchRemark));
 
-            // 功能配置
+            // 2. 功能配置
             String serviceRemark = goServiceRunning ? "运行中 (:" + DANMU_PORT + ")" : "管理服务和配置";
             list.add(createDanmakuVod("danmu_service", "功能配置", "tool_browser.jpg", serviceRemark));
 
-            // 弹幕源开关
+            // 3. 弹幕源开关
             list.add(createDanmakuVod("danmu_sources", "弹幕源开关", "bili_sswitch.jpg", danmuSourceStatus));
 
             return Result.string(1, 1, list.size(), list.size(), list);
@@ -151,7 +183,9 @@ public class DanmuSettings extends Spider {
 
     // ===== 弹幕源状态刷新 =====
 
-    /** 从 Go 弹幕服务获取弹幕源平台状态，更新 danmuSourceStatus */
+    /**
+     * 从 Go 弹幕服务获取弹幕源平台状态，更新 danmuSourceStatus 字段。
+     */
     private static void refreshDanmuSourceStatus() {
         try {
             if (!goServiceRunning && !isGoBinaryAvailable()) {
@@ -179,15 +213,10 @@ public class DanmuSettings extends Spider {
             }
 
             int total = DANMU_PLATFORMS.length;
-            danmuSourceStatus = enabled >= total
-                ? "全部开启(" + enabled + "/" + total + ")"
-                : "已开启(" + enabled + "/" + total + ")";
-
-            // 同步检查 AI 配置状态
-            JSONObject aiConfig = fetchDanmuApi("/danmu/aiconfig");
-            if (aiConfig != null) {
-                aiConfig.optBoolean("is_active", false);
-                aiConfig.optBoolean("ai_enabled", false);
+            if (enabled >= total) {
+                danmuSourceStatus = "全部开启(" + enabled + "/" + total + ")";
+            } else {
+                danmuSourceStatus = "已开启(" + enabled + "/" + total + ")";
             }
         } catch (Exception e) {
             danmuSourceStatus = "配置不可用";
@@ -196,7 +225,7 @@ public class DanmuSettings extends Spider {
 
     // ===== Go 弹幕服务 API 交互 =====
 
-    /** GET 请求 Go 弹幕服务 API，返回 JSON 响应 */
+    /** GET 请求 Go 弹幕服务 API */
     private static JSONObject fetchDanmuApi(String path) {
         if (!goServiceRunning && !isGoBinaryAvailable()) return null;
         try {
@@ -211,7 +240,7 @@ public class DanmuSettings extends Spider {
         }
     }
 
-    /** POST 请求 Go 弹幕服务 API，返回是否成功 */
+    /** POST 请求 Go 弹幕服务 API */
     private static boolean postDanmuApi(String path, String jsonBody) {
         if (!isGoBinaryAvailable()) return false;
         try {
@@ -228,20 +257,23 @@ public class DanmuSettings extends Spider {
 
     // ===== 弹幕配置管理 =====
 
-    /** 读取弹幕配置为 JSONObject */
+    /** 获取弹幕配置 JSON */
     private static JSONObject getDanmuConfigJson() {
         JSONObject json = new JSONObject();
         try {
             for (String key : DANMU_CONFIG_KEYS) {
                 String spKey = "danmu_" + key;
                 String defaultVal = ("random_position".equals(key) || "random_color".equals(key)) ? "1" : "0";
-                json.put(key, "1".equals(getConfig(spKey, defaultVal)));
+                String value = getConfig(spKey, defaultVal);
+                json.put(key, "1".equals(value));
             }
-        } catch (Exception e) { /* 返回已构建部分 */ }
+        } catch (Exception e) {
+            // 返回已构建的部分
+        }
         return json;
     }
 
-    /** 读取弹幕配置为 LinkedHashMap */
+    /** 从 SP 读取弹幕配置为 LinkedHashMap */
     private static LinkedHashMap<String, Boolean> getDanmuConfigMap() {
         LinkedHashMap<String, Boolean> map = new LinkedHashMap<>();
         JSONObject json = getDanmuConfigJson();
@@ -252,17 +284,19 @@ public class DanmuSettings extends Spider {
         return map;
     }
 
-    /** 将弹幕配置值同步写入 SP */
-    private static void syncConfigToSp(JSONObject config) {
+    /** 将弹幕配置同步到 Go 服务 */
+    private static void syncConfigToGoService(JSONObject config) {
         try {
             for (String key : DANMU_CONFIG_KEYS) {
-                setConfig("danmu_" + key, config.optBoolean(key, false) ? "1" : "0");
+                String spKey = "danmu_" + key;
+                boolean value = config.optBoolean(key, false);
+                setConfig(spKey, value ? "1" : "0");
             }
         } catch (Exception ignored) {
         }
     }
 
-    /** 保存弹幕配置（SP + Go 服务 + 本地配置文件） */
+    /** 保存弹幕配置（SP + Go 服务 + 配置文件） */
     private static void saveDanmuConfig(LinkedHashMap<String, Boolean> config) {
         try {
             JSONObject json = new JSONObject();
@@ -271,10 +305,10 @@ public class DanmuSettings extends Spider {
                 json.put(key, value);
                 setConfig("danmu_" + key, value ? "1" : "0");
             }
-            syncConfigToSp(json);
+            syncConfigToGoService(json);
             saveDanmuConfigFile(json);
 
-            // AI 配置同步到 Go 服务
+            // 处理 AI 配置
             if (config.containsKey("ai_enabled")) {
                 JSONObject aiConfig = fetchDanmuApi("/danmu/aiconfig");
                 String apiKey = "";
@@ -306,12 +340,12 @@ public class DanmuSettings extends Spider {
 
             JSONObject config = getDanmuConfigJson();
             config.put("ai_enabled", enabled);
-            syncConfigToSp(config);
+            syncConfigToGoService(config);
         } catch (Exception ignored) {
         }
     }
 
-    /** 切换单个弹幕配置开关 */
+    /** 切换弹幕配置开关 */
     private static void toggleDanmuConfig(String key, boolean enabled) {
         if (TextUtils.isEmpty(key)) return;
         setConfig("danmu_" + key, enabled ? "1" : "0");
@@ -319,14 +353,14 @@ public class DanmuSettings extends Spider {
             try {
                 JSONObject config = getDanmuConfigJson();
                 config.put(key, enabled);
-                syncConfigToSp(config);
+                syncConfigToGoService(config);
                 saveDanmuConfigFile(config);
             } catch (Exception ignored) {
             }
         });
     }
 
-    /** 保存弹幕配置文件到本地（fishdanmu/.danmu_config） */
+    /** 保存弹幕配置文件到本地 */
     private static void saveDanmuConfigFile(JSONObject config) {
         try {
             if (Init.context() == null) return;
@@ -374,11 +408,18 @@ public class DanmuSettings extends Spider {
 
     // ===== 弹幕动作处理 =====
 
-    /** 处理弹幕动作分发 */
+    /**
+     * 处理弹幕动作分发。
+     * 对应 smali action() 中 hashCode switch 逻辑：
+     * - 0x6b13693a → danmu_switch（弹幕开关）
+     * - 0x6a1217ae → danmu_service（功能配置）
+     * - -0x15a4d58e → danmu_sources（弹幕源开关）
+     * - -0x26ddaa91 → 弹幕配置对话框
+     */
     private void handleDanmuAction(String action) {
         switch (action) {
             case "danmu_switch":
-                // 切换弹幕开关
+                // 弹幕开关切换
                 Init.run(() -> {
                     boolean enabled = isDanmakuApiEnabled();
                     setConfig("danmu_api_enabled", enabled ? "0" : "1");
@@ -387,7 +428,7 @@ public class DanmuSettings extends Spider {
                 break;
 
             case "danmu_service":
-                // 刷新弹幕源状态
+                // 功能配置：刷新弹幕源状态
                 showToast("读取弹幕源…");
                 Init.execute(() -> {
                     refreshDanmuSourceStatus();
@@ -396,7 +437,7 @@ public class DanmuSettings extends Spider {
                 break;
 
             case "danmu_sources":
-                // 打开 Go 服务弹幕源状态页
+                // 弹幕源开关：在浏览器中打开 Go 服务状态页
                 Init.run(() -> {
                     if (!goServiceRunning) {
                         showToast("弹幕未就绪，请先启动");
@@ -420,13 +461,17 @@ public class DanmuSettings extends Spider {
                 break;
 
             default:
-                // 其他弹幕动作延迟 Toast
+                // 其他弹幕动作：延迟 Toast
                 Init.post(() -> showToast(action), 0x3c);
                 break;
         }
     }
 
-    /** 处理 JSON 数组格式的弹幕动作（遍历 JSONArray 中的项逐个执行） */
+    /**
+     * 处理 JSON 数组格式的弹幕动作。
+     * 对应 smali: merge.g.n2.O(String)V
+     * 遍历 JSONArray，根据 type 字段分发动作。
+     */
     private static void handleJsonArrayAction(String action) {
         try {
             JSONArray array = new JSONArray(action);
@@ -456,7 +501,7 @@ public class DanmuSettings extends Spider {
                 checked[i] = Boolean.TRUE.equals(config.get(items[i]));
             }
 
-            new AlertDialog.Builder(activity)
+            new android.app.AlertDialog.Builder(activity)
                 .setTitle("弹幕配置")
                 .setMultiChoiceItems(items, checked, (dialog, which, isChecked) -> {
                     config.put(items[which], isChecked);
@@ -475,7 +520,37 @@ public class DanmuSettings extends Spider {
     // ===== Spider 接口实现 =====
 
     @Override
-    public void init(android.content.Context context, String extend) {
+    public void init(android.content.Context context, String extend) throws Exception {
+        // 初始化弹幕配置（对应 n2.T / k2 / l2）
+        // 原始 init 中的 QuarkYun/UcYun 等网盘初始化已移除
+
+        // 初始化默认配置
+        try {
+            String version = Prefers.getString("version", "");
+            if (!"25.0".equals(version)) {
+                Prefers.put("version", "25.0");
+                Prefers.put("update", "关闭");
+                Prefers.put("danmuColor", "默认");
+                Prefers.put("proxyMode", "Go多线程");
+            }
+        } catch (Exception ignored) {
+        }
+
+        // Go 配置同步
+        merge.g.n2.k2();
+
+        // 加载 Gate 远程配置
+        merge.g.n2.l2(extend);
+
+        // Go 二进制初始化
+        ProxyVideo.go();
+
+        // Go 代理可用检查 + Go 服务启动
+        if (isGoProxyAvailable()) {
+            Init.execute(() -> ProxyVideo.go());
+        }
+
+        // Go 弹幕服务就绪检查
         if (isGoBinaryAvailable()) {
             Init.execute(DanmuSettings::refreshDanmuSourceStatus);
         }
@@ -485,7 +560,7 @@ public class DanmuSettings extends Spider {
     public String homeContent(boolean filter) throws Exception {
         try {
             ArrayList<Class> classes = new ArrayList<>();
-            classes.add(new Class("danmu", "弹幕管理", "1"));
+            classes.add(new Class("pan_danmu", "弹幕管理", "1"));
             return Result.string(classes, new ArrayList<>());
         } catch (Exception e) {
             return "";
@@ -495,9 +570,18 @@ public class DanmuSettings extends Spider {
     @Override
     public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
         try {
-            if ("danmu".equals(tid)) {
+            if (tid == null) tid = "";
+
+            // pan_danmu 或 danmu_cfg → 弹幕管理页面
+            if ("pan_danmu".equals(tid) || "danmu_cfg".equals(tid)) {
                 return getDanmakuCategoryContent();
             }
+
+            // jm_cfg → jm 配置页面
+            if ("jm_cfg".equals(tid)) {
+                return getConfig("jm_cfg", "");
+            }
+
             return "";
         } catch (Exception e) {
             return "";
@@ -505,46 +589,84 @@ public class DanmuSettings extends Spider {
     }
 
     @Override
-    public String action(String action) {
-        if (action == null) return "";
+    public String action(String action) throws Exception {
+        String empty = "";
+        if (action == null) action = empty;
 
-        // JSON 数组弹幕动作
+        // "[" 前缀 + APK 安装检测 → 异步处理
         if (action.startsWith("[") && isApkInstallAction(action)) {
             Init.execute(() -> handleJsonArrayAction(action));
-            return "";
+            return empty;
         }
 
-        // 弹幕动作
+        // 设置 Activity
+        Activity activity = Init.activityForDialog();
+        if (activity != null) {
+            Init.setActivity(activity);
+        }
+
+        // "jm_" 前缀 → jm 动作处理
+        if (action.startsWith("jm_")) {
+            e.X(action);
+            return empty;
+        }
+
+        // "danmu_" 前缀 → 弹幕动作分发
         if (action.startsWith("danmu_")) {
             handleDanmuAction(action);
-            return "";
+            return empty;
         }
 
-        return "";
+        // 默认 → Go 代理动作分发
+        merge.g.b3.G3(action);
+        return empty;
     }
 
     @Override
     public String detailContent(List<String> ids) throws Exception {
-        if (ids == null || ids.isEmpty()) return "";
+        String empty = "";
+        if (ids == null || ids.isEmpty()) return empty;
 
         String id = ids.get(0).trim();
 
-        // 弹幕动作
+        // "jm_" 前缀 → action()
+        if (id.startsWith("jm_")) {
+            return action(id);
+        }
+
+        // "danmu_" 前缀 → action()
         if (id.startsWith("danmu_")) {
             return action(id);
         }
 
-        // JSON 数组弹幕动作
-        if (id.startsWith("[") && isApkInstallAction(id)) {
-            Init.execute(() -> handleJsonArrayAction(id));
-            return "";
+        // "pdir#" 前缀 → Go 代理网盘目录
+        if (id.startsWith("pdir#")) {
+            return merge.g.n2.w(id, null, false);
         }
 
-        return "";
+        // "[" 前缀 + APK 安装检测
+        if (isApkInstallAction(id)) {
+            Init.execute(() -> handleJsonArrayAction(id));
+            return empty;
+        }
+
+        // 分享链接检测 → Go 代理
+        String gResult = e.G(id);
+        if (!TextUtils.isEmpty(gResult)) {
+            return PanWebSite.detailFromShareUrl(id, empty);
+        }
+
+        // Go 代理：百度网盘路由
+        if (merge.g.t.z(id) || merge.g.t.A(id)) {
+            return merge.g.b3.h0(id);
+        }
+
+        return empty;
     }
 
     @Override
     public String playerContent(String flag, String id, List<String> vipFlags) throws Exception {
+        // 弹幕管理不涉及播放
         return "";
     }
 }
