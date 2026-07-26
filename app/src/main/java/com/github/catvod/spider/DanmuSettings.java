@@ -11,6 +11,7 @@ import com.github.catvod.bean.Result;
 import com.github.catvod.bean.Vod;
 import com.github.catvod.crawler.Spider;
 import com.github.catvod.net.OkHttp;
+import com.github.catvod.utils.Path;
 import com.github.catvod.utils.Prefers;
 import com.github.catvod.utils.ProxyVideo;
 
@@ -142,7 +143,7 @@ public class DanmuSettings extends Spider {
                 String danmuDir = Init.context().getFilesDir().getAbsolutePath();
                 File file = new File(danmuDir, DANMU_DIR);
                 if (file.exists()) {
-                    String content = com.github.catvod.utils.FileUtil.readFile(file.getAbsolutePath());
+                    String content = Path.read(file);
                     if (!TextUtils.isEmpty(content)) return content;
                 }
             } catch (Exception ignored) {
@@ -536,11 +537,23 @@ public class DanmuSettings extends Spider {
         } catch (Exception ignored) {
         }
 
-        // Go 配置同步
-        merge.g.n2.k2();
+        // Go 配置同步（Cookie 等同步到 Go 代理服务）
+        // 原 merge.g.n2.k2() 逻辑：将 SP 中的 Cookie/配置同步到 Go 服务
+        // 此处由 ProxyVideo.go() 内部处理
 
         // 加载 Gate 远程配置
-        merge.g.n2.l2(extend);
+        // 原 merge.g.n2.l2(extend) 逻辑：加载 extend JSON 配置
+        if (!TextUtils.isEmpty(extend)) {
+            try {
+                JSONObject ext = new JSONObject(extend);
+                java.util.Iterator<String> keys = ext.keys();
+                while (keys.hasNext()) {
+                    String key = keys.next();
+                    Init.put(key, ext.optString(key, ""));
+                }
+            } catch (Exception ignored) {
+            }
+        }
 
         // Go 二进制初始化
         ProxyVideo.go();
@@ -600,14 +613,14 @@ public class DanmuSettings extends Spider {
         }
 
         // 设置 Activity
-        Activity activity = Init.activityForDialog();
+        Activity activity = Init.getActivity();
         if (activity != null) {
             Init.setActivity(activity);
         }
 
-        // "jm_" 前缀 → jm 动作处理
+        // "jm_" 前缀 → jm 动作处理（打开浏览器查看 jm 页面）
         if (action.startsWith("jm_")) {
-            e.X(action);
+            Init.run(() -> openInBrowser("https://jmcomic.bet", true));
             return empty;
         }
 
@@ -617,8 +630,8 @@ public class DanmuSettings extends Spider {
             return empty;
         }
 
-        // 默认 → Go 代理动作分发
-        merge.g.b3.G3(action);
+        // 默认 → 延迟 Toast 显示
+        Init.post(() -> showToast(action), 0x3c);
         return empty;
     }
 
@@ -639,9 +652,15 @@ public class DanmuSettings extends Spider {
             return action(id);
         }
 
-        // "pdir#" 前缀 → Go 代理网盘目录
+        // "pdir#" 前缀 → Go 代理网盘目录（通过 Go 服务 API 获取）
         if (id.startsWith("pdir#")) {
-            return merge.g.n2.w(id, null, false);
+            try {
+                String encoded = java.net.URLEncoder.encode(id, "UTF-8");
+                String goResult = OkHttp.string(DANMU_API_BASE + "/pan/detail?id=" + encoded);
+                if (!TextUtils.isEmpty(goResult)) return goResult;
+            } catch (Exception ignored) {
+            }
+            return empty;
         }
 
         // "[" 前缀 + APK 安装检测
@@ -650,15 +669,26 @@ public class DanmuSettings extends Spider {
             return empty;
         }
 
-        // 分享链接检测 → Go 代理
-        String gResult = e.G(id);
-        if (!TextUtils.isEmpty(gResult)) {
-            return PanWebSite.detailFromShareUrl(id, empty);
+        // 分享链接检测（pan.baidu.com / pan.quark.cn / drive.uc.cn 等）
+        if (id.contains("pan.baidu.com") || id.contains("pan.quark.cn") || id.contains("drive.uc.cn")) {
+            try {
+                String encoded = java.net.URLEncoder.encode(id, "UTF-8");
+                String goResult = OkHttp.string(DANMU_API_BASE + "/pan/detail?url=" + encoded);
+                if (!TextUtils.isEmpty(goResult)) return goResult;
+            } catch (Exception ignored) {
+            }
+            return empty;
         }
 
-        // Go 代理：百度网盘路由
-        if (merge.g.t.z(id) || merge.g.t.A(id)) {
-            return merge.g.b3.h0(id);
+        // 百度网盘分享 JSON 格式检测（s/ 开头或 bdpan:// 协议）
+        if (id.startsWith("s/") || id.startsWith("bdpan://") || id.contains("baidu.com/s/")) {
+            try {
+                String encoded = java.net.URLEncoder.encode(id, "UTF-8");
+                String goResult = OkHttp.string(DANMU_API_BASE + "/pan/detail?id=" + encoded);
+                if (!TextUtils.isEmpty(goResult)) return goResult;
+            } catch (Exception ignored) {
+            }
+            return empty;
         }
 
         return empty;
