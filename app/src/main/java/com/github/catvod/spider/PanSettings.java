@@ -418,6 +418,7 @@ public class PanSettings extends Spider {
      * - -0x26ddaa91 → 弹幕配置对话框
      */
     private void handleDanmuAction(String action) {
+        final String finalAction = action;
         switch (action) {
             case "danmu_switch":
                 // 弹幕开关切换
@@ -463,7 +464,7 @@ public class PanSettings extends Spider {
 
             default:
                 // 其他弹幕动作：延迟 Toast
-                Init.post(() -> showToast(action), 0x3c);
+                Init.post(() -> showToast(finalAction), 0x3c);
                 break;
         }
     }
@@ -605,10 +606,11 @@ public class PanSettings extends Spider {
     public String action(String action) throws Exception {
         String empty = "";
         if (action == null) action = empty;
+        final String finalAction = action;
 
         // "[" 前缀 + APK 安装检测 → 异步处理
         if (action.startsWith("[") && isApkInstallAction(action)) {
-            Init.execute(() -> handleJsonArrayAction(action));
+            Init.execute(() -> handleJsonArrayAction(finalAction));
             return empty;
         }
 
@@ -631,7 +633,7 @@ public class PanSettings extends Spider {
         }
 
         // 默认 → 延迟 Toast 显示
-        Init.post(() -> showToast(action), 0x3c);
+        Init.post(() -> showToast(finalAction), 0x3c);
         return empty;
     }
 
