@@ -161,7 +161,7 @@ public class PanSettings extends Spider {
     private static String getDanmakuCategoryContent() {
         try {
             // 后台刷新弹幕源状态
-            Init.execute(DanmuSettings::refreshDanmuSourceStatus);
+            Init.execute(PanSettings::refreshDanmuSourceStatus);
 
             ArrayList<Vod> list = new ArrayList<>();
 
@@ -565,7 +565,7 @@ public class PanSettings extends Spider {
 
         // Go 弹幕服务就绪检查
         if (isGoBinaryAvailable()) {
-            Init.execute(DanmuSettings::refreshDanmuSourceStatus);
+            Init.execute(PanSettings::refreshDanmuSourceStatus);
         }
     }
 
