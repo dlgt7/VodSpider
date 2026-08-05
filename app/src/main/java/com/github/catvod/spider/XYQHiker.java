@@ -755,15 +755,23 @@ public class XYQHiker extends Spider {
                     body.append("=");
                     body.append(URLEncoder.encode(entry.getValue(), charset));
                 }
-                okhttp3.MediaType mediaType = okhttp3.MediaType.parse("application/x-www-form-urlencoded; charset=" + charset);
+                // Content-Type 不带 charset 参数（与浏览器行为一致，服务器根据页面编码解码 body）
+                okhttp3.MediaType mediaType = okhttp3.MediaType.parse("application/x-www-form-urlencoded");
                 okhttp3.RequestBody requestBody = okhttp3.RequestBody.create(mediaType, body.toString());
                 okhttp3.Request.Builder builder = new okhttp3.Request.Builder().url(url);
                 if (headers != null) {
-                    for (String key : headers.keySet()) builder.addHeader(key, headers.get(key));
+                    for (String key : headers.keySet()) {
+                        // 跳过已有的 Content-Type，用 RequestBody 的 MediaType 代替
+                        if (!key.equalsIgnoreCase("Content-Type")) {
+                            builder.addHeader(key, headers.get(key));
+                        }
+                    }
                 }
                 builder.post(requestBody);
                 try (okhttp3.Response response = OkHttp.client().newCall(builder.build()).execute()) {
-                    resp = response.body().string();
+                    byte[] bytes = response.body().bytes();
+                    resp = new String(bytes, charset);
+                    SpiderDebug.log("fetchPostForm response code=" + response.code() + " length=" + resp.length());
                 }
             } else {
                 resp = OkHttp.post(url, params, headers);
@@ -771,6 +779,7 @@ public class XYQHiker extends Spider {
             return resp.replaceAll("\r|\n", "");
         } catch (Throwable e) {
             e.printStackTrace();
+            SpiderDebug.log("fetchPostForm error: " + e.toString());
             return null;
         }
     }
@@ -1532,7 +1541,9 @@ public class XYQHiker extends Spider {
         return lower.startsWith("magnet:")
                 || lower.startsWith("ed2k://")
                 || lower.startsWith("thunder://")
-                || lower.startsWith("ftp://");
+                || lower.startsWith("ftp://")
+                || lower.endsWith(".torrent")
+                || lower.contains(".torrent?");
     }
 
     // ========================================================================
@@ -2026,7 +2037,11 @@ public String homeVideoContent() throws Exception {
         String[] arrParts = arrRule.split(AMP_AMP);
         listNode = getTrueElement(arrParts[0], listNode);
         for (int i = 1; i < arrParts.length - 1; i++) {
-            listNode = getTrueElement(arrParts[i], listNode);
+            // 容错：中间规则不匹配时跳过，保持上一个非空元素继续搜索
+            org.jsoup.nodes.Element next = getTrueElement(arrParts[i], listNode);
+            if (next != null) {
+                listNode = next;
+            }
         }
         org.jsoup.select.Elements outerElements = selectElements(listNode, arrParts[arrParts.length - 1]);
 
@@ -2510,7 +2525,11 @@ private String parseCategoryList(String tid, String pg, boolean filter, HashMap<
             String[] arrRuleParts = arrRule.split(AND_AND);
             baseElement = getTrueElement(arrRuleParts[0], doc);
             for (int j = 1; j < arrRuleParts.length - 1; j++) {
-                baseElement = getTrueElement(arrRuleParts[j], baseElement);
+                // 容错：中间规则不匹配时跳过，保持上一个非空元素继续搜索
+                org.jsoup.nodes.Element next = getTrueElement(arrRuleParts[j], baseElement);
+                if (next != null) {
+                    baseElement = next;
+                }
             }
             String lastSelector = arrRuleParts[arrRuleParts.length - 1];
             org.jsoup.select.Elements elements = selectElements(baseElement, lastSelector);
@@ -2925,7 +2944,7 @@ private String parseSearchContent(String keyword, String page) {
 
             String prefix = EMPTY;
             String prefixConfig = getConfig(prefixKey);
-            if (prefixConfig.contains(DOUBLE_DOLLAR)) {
+            if (prefixConfig.contains(AMP_AMP)) {
                 prefix = getTextByRule(doc, prefixConfig);
                 prefix = prefix.replace(PG_URL, baseUrl);
             } else {
@@ -2938,7 +2957,7 @@ private String parseSearchContent(String keyword, String page) {
 
             String suffix = EMPTY;
             String suffixConfig = getConfig(suffixKey);
-            if (suffixConfig.contains(DOUBLE_DOLLAR)) {
+            if (suffixConfig.contains(AMP_AMP)) {
                 suffix = getTextByRule(doc, suffixConfig);
             } else {
                 suffix = suffixConfig;
@@ -2948,7 +2967,11 @@ private String parseSearchContent(String keyword, String page) {
             String[] ruleParts = listRule.split(AMP_AMP);
             org.jsoup.nodes.Element element = getTrueElement(ruleParts[0], doc);
             for (int j = 1; j < ruleParts.length - 1; j++) {
-                element = getTrueElement(ruleParts[j], element);
+                // 容错：中间规则不匹配时跳过，保持上一个非空元素继续搜索
+                org.jsoup.nodes.Element next = getTrueElement(ruleParts[j], element);
+                if (next != null) {
+                    element = next;
+                }
             }
             String lastRule = ruleParts[ruleParts.length - 1];
             org.jsoup.select.Elements elements = selectElements(element, lastRule);
@@ -3214,7 +3237,12 @@ public String detailContent(List<String> ids) throws Exception {
             // 多段规则：先导航到容器，再在容器内搜索
             org.jsoup.nodes.Element containerElem = getTrueElement(ruleParts[0], doc);
             for (int ri = 1; ri < ruleParts.length - 1; ri++) {
-                containerElem = getTrueElement(ruleParts[ri], containerElem);
+                // 容错：如果中间规则不匹配（如 .content 容器不存在），跳过该规则，
+                // 保持上一个非空元素作为容器继续搜索，避免整个线路解析失败。
+                org.jsoup.nodes.Element next = getTrueElement(ruleParts[ri], containerElem);
+                if (next != null) {
+                    containerElem = next;
+                }
             }
             playlistElems = selectElements(containerElem, ruleParts[ruleParts.length - 1]);
         }
@@ -3234,7 +3262,11 @@ public String detailContent(List<String> ids) throws Exception {
                 String[] epiRuleParts = epiArrRule.split("&&");
                 org.jsoup.nodes.Element epiNode = getTrueElement(epiRuleParts[0], playlistElem);
                 for (int eri = 1; eri < epiRuleParts.length - 1; eri++) {
-                    epiNode = getTrueElement(epiRuleParts[eri], epiNode);
+                    // 容错：中间规则不匹配时跳过，保持上一个非空元素继续搜索
+                    org.jsoup.nodes.Element next = getTrueElement(epiRuleParts[eri], epiNode);
+                    if (next != null) {
+                        epiNode = next;
+                    }
                 }
                 episodeElems = selectElements(epiNode, epiRuleParts[epiRuleParts.length - 1]);
             } else if (epiArrRule != null && !epiArrRule.isEmpty()) {
@@ -3362,7 +3394,11 @@ public String detailContent(List<String> ids) throws Exception {
                 // 多段规则：先导航到容器，再在容器内搜索
                 org.jsoup.nodes.Element tabContainer = getTrueElement(tabRuleParts[0], doc);
                 for (int ti = 1; ti < tabRuleParts.length - 1; ti++) {
-                    tabContainer = getTrueElement(tabRuleParts[ti], tabContainer);
+                    // 容错：中间规则不匹配时跳过，保持上一个非空元素继续搜索
+                    org.jsoup.nodes.Element next = getTrueElement(tabRuleParts[ti], tabContainer);
+                    if (next != null) {
+                        tabContainer = next;
+                    }
                 }
                 tabElems = selectElements(tabContainer, tabRuleParts[tabRuleParts.length - 1]);
             }
