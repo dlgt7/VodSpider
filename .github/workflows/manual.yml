@@ -37,12 +37,21 @@ jobs:
             ./jar/custom_spider.jar
             ./jar/custom_spider.jar.md5
 
+      - name: Pull latest before commit
+        shell: bash
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git stash
+          git pull --rebase origin main
+          # 恢复新构建的 jar；若与远程冲突（二进制），始终保留本地最新构建
+          git stash pop || { git checkout stash@{0} -- ./jar/custom_spider.jar ./jar/custom_spider.jar.md5; git stash drop; }
+
       - name: Commit and push updated jar
         uses: EndBug/add-and-commit@v9
         with:
           default_author: github_actions
           message: 'update spider jar'
-          pull: '--rebase'
           add: |
             ./jar/custom_spider.jar
             ./jar/custom_spider.jar.md5
