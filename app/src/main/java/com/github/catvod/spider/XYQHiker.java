@@ -1431,7 +1431,9 @@ public class XYQHiker extends Spider {
 
     /** 判断 URL 是否为绝对 URL（以 http:// 或 https:// 开头）。 */
     private static boolean isAbsoluteUrl(String url) {
-        return url != null && (url.startsWith("http://") || url.startsWith("https://"));
+        if (url == null) return false;
+        return url.startsWith("http://") || url.startsWith("https://")
+                || url.startsWith("magnet:") || url.startsWith("ed2k://") || url.startsWith("thunder://");
     }
 
     /**
@@ -1492,6 +1494,19 @@ public class XYQHiker extends Spider {
             if (lower.contains(ext)) return true;
         }
         return false;
+    }
+
+    /**
+     * 判断 URL 是否为 P2P 协议链接（磁力/ed2k/迅雷）。
+     * <p>此类链接不能通过 HTTP 解析器抓取，需以 parse(0) 直接交给支持 P2P 的播放器处理，
+     * 否则 HTTP 客户端会因无法建立连接而超时。</p>
+     */
+    private static boolean isP2PUrl(String url) {
+        if (url == null || url.isEmpty()) return false;
+        String lower = url.toLowerCase();
+        return lower.startsWith("magnet:")
+                || lower.startsWith("ed2k://")
+                || lower.startsWith("thunder://");
     }
 
     // ========================================================================
@@ -3549,6 +3564,12 @@ public String playerContent(String flag, String id, List<String> vipFlags) throw
     try {
         if (flag.contains("Ali转码") || flag.contains("Open原画") || flag.contains("Open转码")) {
             return this.pushAgent.playerContent(flag, id, vipFlags);
+        }
+
+        // P2P 协议链接（magnet/ed2k/thunder）不能走 HTTP 解析器，否则会连接超时。
+        // 直接以 parse(0) 返回，交给支持 P2P 的播放器（如迅雷内核）处理。
+        if (isP2PUrl(id)) {
+            return Result.get().url(id).parse(0).string();
         }
 
         ensureSiteConfig();
