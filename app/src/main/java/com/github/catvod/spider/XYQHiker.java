@@ -743,7 +743,31 @@ public class XYQHiker extends Spider {
     protected String fetchPostForm(String url, Map<String, String> params, String charset, Map<String, String> headers) {
         try {
             SpiderDebug.log(url);
-            String resp = OkHttp.post(url, params, headers);
+            String resp;
+            if (charset != null && !charset.equalsIgnoreCase("UTF-8") && !charset.equalsIgnoreCase("UTF8")
+                    && params != null && !params.isEmpty()) {
+                // 非 UTF-8 编码（如 gb2312/gbk）：手动构造 URL-encoded body，
+                // 因为 OkHttp FormBody.Builder 默认用 UTF-8，会导致中文关键词乱码
+                StringBuilder body = new StringBuilder();
+                for (Map.Entry<String, String> entry : params.entrySet()) {
+                    if (body.length() > 0) body.append("&");
+                    body.append(URLEncoder.encode(entry.getKey(), charset));
+                    body.append("=");
+                    body.append(URLEncoder.encode(entry.getValue(), charset));
+                }
+                okhttp3.MediaType mediaType = okhttp3.MediaType.parse("application/x-www-form-urlencoded; charset=" + charset);
+                okhttp3.RequestBody requestBody = okhttp3.RequestBody.create(mediaType, body.toString());
+                okhttp3.Request.Builder builder = new okhttp3.Request.Builder().url(url);
+                if (headers != null) {
+                    for (String key : headers.keySet()) builder.addHeader(key, headers.get(key));
+                }
+                builder.post(requestBody);
+                try (okhttp3.Response response = OkHttp.client().newCall(builder.build()).execute()) {
+                    resp = response.body().string();
+                }
+            } else {
+                resp = OkHttp.post(url, params, headers);
+            }
             return resp.replaceAll("\r|\n", "");
         } catch (Throwable e) {
             e.printStackTrace();
@@ -2904,6 +2928,8 @@ private String parseSearchContent(String keyword, String page) {
             if (prefixConfig.contains(DOUBLE_DOLLAR)) {
                 prefix = getTextByRule(doc, prefixConfig);
                 prefix = prefix.replace(PG_URL, baseUrl);
+            } else {
+                prefix = prefixConfig;
             }
             if (prefix.contains(PG_URL)) {
                 prefix = prefix.replace(PG_URL, baseUrl);
@@ -2914,6 +2940,8 @@ private String parseSearchContent(String keyword, String page) {
             String suffixConfig = getConfig(suffixKey);
             if (suffixConfig.contains(DOUBLE_DOLLAR)) {
                 suffix = getTextByRule(doc, suffixConfig);
+            } else {
+                suffix = suffixConfig;
             }
 
             String listRule = getConfig(listArrKey);
