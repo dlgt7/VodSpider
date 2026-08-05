@@ -1319,9 +1319,8 @@ public class XYQHiker extends Spider {
         } catch (JSONException e) {
             // smali 原为空 catch，此处增加日志辅助排查（不影响功能行为）
             SpiderDebug.log(e);
-            if (this.debugFlag) {
-                Notify.show("站点配置解析失败：" + e.toString());
-            }
+            // 强制显示解析错误（不依赖 debugFlag，因为 debugFlag 在配置解析失败时无法读取）
+            Notify.show("站点配置解析失败：" + e.toString());
         }
     }
 
@@ -3218,6 +3217,8 @@ public String detailContent(List<String> ids) throws Exception {
 
         html = decodeHtml(html);
         org.jsoup.nodes.Document doc = org.jsoup.Jsoup.parse(html);
+        // 调试：输出详情页解析关键信息
+        Notify.show("详情页URL=" + url + " HTML长度=" + (html != null ? html.length() : 0));
 
         String epiurlPrefixKey = getConfig("选集链接加前缀").isEmpty() ? "epiurl_prefix" : "选集链接加前缀";
         String epiurlPrefix = getConfig(epiurlPrefixKey);
@@ -3269,6 +3270,8 @@ public String detailContent(List<String> ids) throws Exception {
             }
             playlistElems = selectElements(containerElem, ruleParts[ruleParts.length - 1]);
         }
+        // 调试：输出播放列表解析结果
+        Notify.show("播放列表规则=" + listRule + " 数量=" + playlistElems.size());
 
         // 选集数组规则：用于在每个线路容器内选取选集元素
         String epiArrRule = getConfig(epiArrKey);
