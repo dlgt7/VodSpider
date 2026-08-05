@@ -723,7 +723,7 @@ public class XYQHiker extends Spider {
                 url = url.replace("clan://", proxyBase);
                 return OkHttp.string(url, null);
             }
-            return new String(OkHttp.bytes(url, headers), charset).replaceAll("\r|\n", "");
+            return new String(OkHttp.bytes(url, headers, 30000), charset).replaceAll("\r|\n", "");
         } catch (Throwable e) {
             e.printStackTrace();
             return null;
@@ -1433,7 +1433,8 @@ public class XYQHiker extends Spider {
     private static boolean isAbsoluteUrl(String url) {
         if (url == null) return false;
         return url.startsWith("http://") || url.startsWith("https://")
-                || url.startsWith("magnet:") || url.startsWith("ed2k://") || url.startsWith("thunder://");
+                || url.startsWith("magnet:") || url.startsWith("ed2k://")
+                || url.startsWith("thunder://") || url.startsWith("ftp://");
     }
 
     /**
@@ -1497,16 +1498,17 @@ public class XYQHiker extends Spider {
     }
 
     /**
-     * 判断 URL 是否为 P2P 协议链接（磁力/ed2k/迅雷）。
+     * 判断 URL 是否为 P2P/非 HTTP 协议链接（磁力/ed2k/迅雷/FTP）。
      * <p>此类链接不能通过 HTTP 解析器抓取，需以 parse(0) 直接交给支持 P2P 的播放器处理，
      * 否则 HTTP 客户端会因无法建立连接而超时。</p>
      */
     private static boolean isP2PUrl(String url) {
-        if (url == null || url.isEmpty()) return false;
-        String lower = url.toLowerCase();
+        if (url == null || url.trim().isEmpty()) return false;
+        String lower = url.trim().toLowerCase();
         return lower.startsWith("magnet:")
                 || lower.startsWith("ed2k://")
-                || lower.startsWith("thunder://");
+                || lower.startsWith("thunder://")
+                || lower.startsWith("ftp://");
     }
 
     // ========================================================================
