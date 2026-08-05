@@ -2917,7 +2917,7 @@ private String parseSearchContent(String keyword, String page) {
             }
 
             String listRule = getConfig(listArrKey);
-            String[] ruleParts = listRule.split(DOUBLE_DOLLAR);
+            String[] ruleParts = listRule.split(AMP_AMP);
             org.jsoup.nodes.Element element = getTrueElement(ruleParts[0], doc);
             for (int j = 1; j < ruleParts.length - 1; j++) {
                 element = getTrueElement(ruleParts[j], element);
@@ -2936,7 +2936,7 @@ private String parseSearchContent(String keyword, String page) {
                         name = getTextByRule(item, titleRule);
                     } else {
                         String html = item.outerHtml();
-                        String[] titleParts = titleRule.split(DOUBLE_DOLLAR);
+                        String[] titleParts = titleRule.split(AMP_AMP);
                         name = ParseUtils.regexExtract(html, titleParts[0], titleParts[1]).get(0);
                         name = cleanHtml(name);
                     }
@@ -2950,7 +2950,7 @@ private String parseSearchContent(String keyword, String page) {
                                 pic = getTextByRule(item, picConfig).trim();
                             } else {
                                 String html = item.outerHtml();
-                                String[] picParts = picConfig.split(DOUBLE_DOLLAR);
+                                String[] picParts = picConfig.split(AMP_AMP);
                                 pic = ParseUtils.regexExtract(html, picParts[0], picParts[1]).get(0);
                             }
                             pic = ParseUtils.urlCombine(baseUrl, pic);
@@ -2980,7 +2980,7 @@ private String parseSearchContent(String keyword, String page) {
                             subtitle = getTextByRule(item, subtitleRule);
                         } else {
                             String html = item.outerHtml();
-                            String[] subParts = subtitleRule.split(DOUBLE_DOLLAR);
+                            String[] subParts = subtitleRule.split(AMP_AMP);
                             subtitle = ParseUtils.regexExtract(html, subParts[0], subParts[1]).get(0);
                         }
                         subtitle = cleanHtml(subtitle);
@@ -2993,7 +2993,7 @@ private String parseSearchContent(String keyword, String page) {
                         urlValue = getTextByRule(item, urlRulePart);
                     } else {
                         String html = item.outerHtml();
-                        String[] urlRuleParts = urlRulePart.split(DOUBLE_DOLLAR);
+                        String[] urlRuleParts = urlRulePart.split(AMP_AMP);
                         urlValue = ParseUtils.regexExtract(html, urlRuleParts[0], urlRuleParts[1]).get(0);
                     }
 
