@@ -114,6 +114,12 @@ public class OkHttp {
         return client().newCall(builder.build()).execute();
     }
 
+    public static Response newCall(String url, Map<String, String> header, long timeout) throws IOException {
+        Request.Builder builder = new Request.Builder().url(url);
+        if (header != null) for (String key : header.keySet()) builder.addHeader(key, header.get(key));
+        return client(timeout).newCall(builder.build()).execute();
+    }
+
     public static Response newCall(String url, Map<String, String> header, String tag) throws IOException {
         Request.Builder builder = new Request.Builder().url(url).tag(tag);
         if (header != null) for (String key : header.keySet()) builder.addHeader(key, header.get(key));
@@ -154,8 +160,12 @@ public class OkHttp {
     }
 
     public static byte[] bytes(String url, Map<String, String> header) {
+        return bytes(url, header, 0);
+    }
+
+    public static byte[] bytes(String url, Map<String, String> header, long timeout) {
         try {
-            Response response = newCall(url, header);
+            Response response = timeout > 0 ? newCall(url, header, timeout) : newCall(url, header);
             if (!response.isSuccessful()) {
                 response.close();
                 return new byte[0];
