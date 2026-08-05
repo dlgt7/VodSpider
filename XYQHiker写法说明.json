@@ -1,0 +1,432 @@
+//写法思路来自biubiu影院，海阔视界，xpath筛选，XYQHiker 演进版。
+//项目魔改至github开源仓库https://github.com/Tangsan99999/TvJar中的XBiubiu.java文件，
+//本文档基于 XYQHiker.java（com.github.catvod.spider.XYQHiker）源码还原整理，
+//所有配置键均已与代码实现逐一核对，含中英文双键、Jsoup 写法、新增扩展用法。
+//实际情况可按规则写法删去不需要的。
+//
+//与 XYQBiu 的主要差异：
+//1. 中英文双键配置（中文键优先，例如 "分类链接" 与 "class_url" 等价）
+//2. 新增 cat_is_jsoup / sea_is_jsoup / epi_is_jsoup / proj_is_jsoup / home_is_jsoup
+//   五个开关，启用 Jsoup CSS 选择器写法（推荐）
+//3. 数组规则统一为 cat_arr_rule / sea_arr_rule / list_arr_rule / epi_arr_rule /
+//   tab_arr_rule / home_arr_rule（单段 CSS 或多段 && 导航）
+//4. 详情页字段细分：新增 proj_cover / proj_cate / proj_year / proj_area
+//5. 首页推荐独立字段：home_title / home_url / home_pic / home_subtitle 等
+//6. 筛选扩展：新增 fcatelog_name / fcatelog_value（筛选类型）
+//7. 新增 DEBUG / OCR_API 调试与 OCR 接口配置
+{
+    //==================== 一、基础信息 ====================
+
+    //规则名（必填）
+    "title": "XYQHiker模板",
+    //作者
+    "author": "聆听优美旋律",
+
+    //请求头参数（中文键，英文键 Headers）。
+    //1) 不填则默认 "okhttp/3.12.11"
+    //2) 可填内置简写：MOBILE_UA / PC_UA / IOS_UA / MAC_UA
+    //   中文别名同样支持：手机 / 电脑 / 苹果手机 / 苹果电脑
+    //3) 可填完整 UA 字符串
+    //4) 复合请求头写法（推荐）：用 # 分隔多组，每组用 $ 分隔 key/value
+    //   示例："User-Agent$MOBILE_UA#Referer$WebView"
+    //   其中 Referer$WebView 会被自动替换为当前播放页链接作为嗅探 Referer 参数
+    //5) Cookie 自动累加：验证码刷新后 accCookie 自动追加到 Cookie 头
+    "请求头参数": "PC_UA",
+    // Headers 与 "请求头参数" 等价，二者同时存在时 "请求头参数" 优先
+    "Headers": "PC_UA",
+
+    //搜索请求头参数（中文键，英文键 SHeaders）。仅搜索请求使用。
+    //留空且不含 $ 时回退到 请求头参数 / Headers。格式与请求头参数完全相同。
+    "搜索请求头参数": "User-Agent$MOBILE_UA",
+    "SHeaders": "User-Agent$MOBILE_UA",
+
+    //网页编码格式（中文键，英文键 Coding_format）。默认 UTF-8。少数 GBK 站点可填 "GBK"。
+    "网页编码格式": "UTF-8",
+    "Coding_format": "UTF-8",
+
+    //OCR 验证码识别接口。默认 https://ddddocr--lineagett.repl.co/ocr/b64/text
+    //生产环境建议覆盖为自建 API
+    "OCR_API": "https://ddddocr--lineagett.repl.co/ocr/b64/text",
+
+    //调试开关。值为 "是" 或 "1" 时启用，启用后异常会通过 Notify.show 弹 Toast
+    "DEBUG": "0",
+
+    //图片是否需要代理（中文键，英文键 PicNeedProxy，"0"/"1" 或 "是"/"否"）。
+    //注意：当前版本仅预留常量，未实际实现代理逻辑，填 "0" 即可。
+    "图片是否需要代理": "0",
+    "PicNeedProxy": "0",
+
+    //==================== 二、分类配置 ====================
+
+    //分类起始页码（中文键，英文键 firstpage）。禁止负数和含小数点。
+    "分类起始页码": "1",
+    "firstpage": "1",
+
+    //分类链接（中文键，英文键 class_url）。
+    //{cateId} 是分类，{catePg} 是页码。
+    //第一页没有页码的可以这样写：在链接末尾追加 [firstPage=第一页的链接]
+    //示例："http://xxx.com/list/{cateId}/page/{catePg}.html[firstPage=http://xxx.com/list/{cateId}]"
+    //也支持 {class} {area} {year} {lang} {by} 筛选占位符（配合 filterdata 使用）
+    //支持时间戳占位符："时间戳"=秒级，"时间标"=毫秒级
+    //支持 md5 表达式：md5(待哈希内容) 会被替换为实际 MD5 值
+    //全角 ｛｝ 自动转半角 {}，全角 ？？ 自动转半角 ?
+    "分类链接": "http://www.lezhutv.com/vodshow/{cateId}--------{catePg}---.html[firstPage=第一页不含页码的链接]",
+    "class_url": "http://www.lezhutv.com/vodshow/{cateId}--------{catePg}---.html",
+
+    //分类名称（中文键，英文键 class_name），分类1&分类2&分类3
+    "分类名称": "电影&电视剧&综艺&动漫",
+    "class_name": "电影&电视剧&综艺&动漫",
+
+    //分类名称替换词（中文键，英文键 class_value），替换词1&替换词2&替换词3
+    //替换词包含英文 & 的用两个中文 ＆＆ 代替，示例：＆＆id=0&＆＆id=1
+    "分类名称替换词": "1&2&3&4",
+    "class_value": "1&2&3&4",
+
+    //分类截取模式（中文键，英文键 cat_mode）。
+    //"0" / "否" = JSON 接口模式（配合 cat_arr_rule + cat_title 等键）
+    //"1" / 其它 = 普通网页模式（配合 cat_arr_rule + cat_title 等键）
+    "分类截取模式": "1",
+    "cat_mode": "1",
+
+    //分类片单是否Jsoup写法（中文键，英文键 cat_is_jsoup）。
+    //"1" / "是" = Jsoup CSS 选择器写法（默认，推荐）
+    //"0" = 旧版 && 正则截取写法（兼容 XYQBiu）
+    "分类片单是否Jsoup写法": "1",
+    "cat_is_jsoup": "1",
+
+    //----- 分类 JSON 模式（cat_mode="0" 时使用）-----
+    //分类Json数据二次截取（中文键，英文键 catjson_twice）。格式 "前缀&&后缀"。
+    "分类Json数据二次截取": "",
+    "catjson_twice": "",
+
+    //分类列表数组规则（中文键，英文键 cat_arr_rule）。
+    //支持点号多层路径，最多 4 层。示例："data.list" / "data.live_list"
+    //（XYQBiu 旧版使用 catjsonlist，XYQHiker 统一用 cat_arr_rule）
+    "分类列表数组规则": "data.list",
+    "cat_arr_rule": "data.list",
+
+    //分类片单标题（中文键，英文键 cat_title）。
+    //JSON 模式：填 JSON 字段名
+    //网页 Jsoup 模式：填 CSS 选择器规则，如 ".title&&Text"
+    //网页正则模式：填 "前缀&&后缀"，如 "title=\"&&\""
+    "分类片单标题": "roomName",
+    "cat_title": "title=\"&&\"",
+
+    //分类片单链接（中文键，英文键 cat_url）。写法同上。
+    "分类片单链接": "rid",
+    "cat_url": "href=\"&&\"",
+
+    //分类片单图片（中文键，英文键 cat_pic）。
+    //若值以 http 开头则作为固定图片 URL（适合直播站统一 logo）
+    //图片含 url(...) 时自动提取并清理 &quot; 转义
+    "分类片单图片": "roomSrc",
+    "cat_pic": "data-original=\"&&\"",
+
+    //分类片单副标题（中文键，英文键 cat_subtitle）。支持 [替换:旧@新] 标记
+    "分类片单副标题": "nickname",
+    "cat_subtitle": "",
+
+    //分类片单链接加前缀（中文键，英文键 cat_prefix）
+    "分类片单链接加前缀": "http://www.lezhutv.com",
+    "cat_prefix": "http://www.lezhutv.com",
+
+    //分类片单链接加后缀（中文键，英文键 cat_suffix）
+    "分类片单链接加后缀": "",
+    "cat_suffix": "",
+
+    //==================== 三、筛选配置（filterdata="EXT" 时生效）====================
+
+    //筛选数据（中文键，英文键 filterdata）。
+    //1) 直写：标准 json 格式，参考 xpath 的筛选写法
+    //2) clan 本地路径：clan://xxx/xxx.json
+    //3) http 云端链接
+    //4) "EXT"：触发 fclass_*/fcatelog_*/farea_*/fyear_*/flang_*/fsort_* 手动子分类配置
+    "筛选数据": {},
+    "filterdata": {},
+
+    //子分类配置（仅 filterdata 为 "EXT" 时生效，用 || 分隔大分类组，组内用 & 分隔子项）
+    "筛选子分类名称": "梦幻西游&永劫无间",
+    "fclass_name": "梦幻西游&永劫无间",
+    "筛选子分类替换词": "1&2||3&4",
+    "fclass_value": "1&2||3&4",
+
+    //筛选类型（XYQHiker 新增，XYQBiu 无此字段）
+    "筛选类型名称": "",
+    "fcatelog_name": "",
+    "筛选类型替换词": "",
+    "fcatelog_value": "",
+
+    "筛选地区名称": "大陆&香港",
+    "farea_name": "大陆&香港",
+    "筛选地区替换词": "大陆&香港",
+    "farea_value": "大陆&香港",
+
+    //年份默认值：不填则自动生成 (当前年-20)~当前年 的降序列表
+    "筛选年份名称": "",
+    "fyear_name": "",
+    "筛选年份替换词": "*",
+    "fyear_value": "*",
+
+    "筛选语言名称": "国语&粤语",
+    "flang_name": "国语&粤语",
+    "筛选语言替换词": "国语&粤语",
+    "flang_value": "国语&粤语",
+
+    "筛选排序名称": "时间&人气&评分",
+    "fsort_name": "时间&人气&评分",
+    "筛选排序替换词": "time&hits&score",
+    "fsort_value": "time&hits&score",
+
+    //==================== 四、首页推荐配置（XYQHiker 新增独立字段）====================
+
+    //是否开启获取首页数据（中文键，英文键 homeContent，"0"/"1" 或 "是"/"否"）
+    //开启后会遍历 class_value 各分类抓取首页推荐，或使用 首页推荐链接
+    "是否开启获取首页数据": "0",
+    "homeContent": "0",
+
+    //首页推荐链接（中文键，英文键 rcmed_url）。配置后优先于此 URL 抓取首页数据
+    "首页推荐链接": "",
+    "rcmed_url": "",
+
+    //首页列表数组规则（中文键，英文键 home_arr_rule）。单段 CSS 或多段 && 导航
+    "首页列表数组规则": ".stui-vodlist&&li",
+    "home_arr_rule": ".stui-vodlist&&li",
+
+    //首页片单列表数组规则（中文键，英文键 hmepi_arr_rule）
+    "首页片单列表数组规则": "",
+    "hmepi_arr_rule": "",
+
+    //首页片单是否Jsoup写法（中文键，英文键 home_is_jsoup，"1"/"是"=Jsoup，默认 "是"）
+    "首页片单是否Jsoup写法": "1",
+    "home_is_jsoup": "1",
+
+    //首页片单标题（中文键，英文键 home_title）
+    "首页片单标题": ".title&&Text",
+    "home_title": ".title&&Text",
+
+    //首页片单链接（中文键，英文键 home_url）
+    "首页片单链接": "a&&href",
+    "home_url": "a&&href",
+
+    //首页片单图片（中文键，英文键 home_pic）
+    "首页片单图片": ".lazyload&&data-original",
+    "home_pic": ".lazyload&&data-original",
+
+    //首页片单副标题（中文键，英文键 home_subtitle）
+    "首页片单副标题": ".pic-text&&Text",
+    "home_subtitle": ".pic-text&&Text",
+
+    //首页片单链接加前缀（中文键，英文键 home_prefix）
+    "首页片单链接加前缀": "https://shdy2.com",
+    "home_prefix": "https://shdy2.com",
+
+    //首页片单链接加后缀（中文键，英文键 home_suffix）
+    "首页片单链接加后缀": "",
+    "home_suffix": "",
+
+    //==================== 五、搜索配置 ====================
+
+    //搜索链接（中文键，英文键 search_url）。
+    //搜索关键字用 {wd} 表示，页码用 {SearchPg} 表示。
+    //POST 请求在最后面加 ;post
+    //POST 链接示例：http://www.lezhutv.com/index.php?m=vod-search;post
+    //支持时间戳占位符："时间戳"=秒级，"时间标"=毫秒级
+    //支持 md5 表达式：md5(待哈希内容) 会被替换为实际 MD5 值
+    //支持 [firstPage=...] 首页特殊链接
+    "搜索链接": "http://www.lezhutv.com/index.php/vod/search/page/1/wd/{wd}.html",
+    "search_url": "http://www.lezhutv.com/index.php/vod/search/page/1/wd/{wd}.html",
+
+    //POST请求数据（中文键，英文键 sea_PtBody）。
+    //1) 留空：仅 POST 表单请求
+    //2) JSON body：以 { 开头、} 结尾，如 {"wd":"{wd}","page":"{SearchPg}"}
+    //3) 表单 body：k=v&k=v 格式，如 wd={wd}&search=
+    //其中 {wd} 和 {SearchPg} 会被自动替换
+    "POST请求数据": "wd={wd}&search=",
+    "sea_PtBody": "wd={wd}&search=",
+
+    //搜索截取模式（中文键，英文键 search_mode）。
+    //"0" / "否" = JSON 搜索（配合 sea_arr_rule + sea_title 等键）
+    //其它值 = 网页截取
+    "搜索截取模式": "0",
+    "search_mode": "0",
+
+    //搜索起始页码（中文键，英文键 sea_firstpage）。不填默认 "1"
+    "搜索起始页码": "1",
+    "sea_firstpage": "1",
+
+    //搜索片单是否Jsoup写法（中文键，英文键 sea_is_jsoup，"1"/"是"=Jsoup，默认 "1"）
+    "搜索片单是否Jsoup写法": "1",
+    "sea_is_jsoup": "1",
+
+    //----- 搜索 JSON 模式（search_mode="0" 时使用）-----
+    //搜索Json数据二次截取（中文键，英文键 seajson_twice）。格式 "前缀&&后缀"。
+    "搜索Json数据二次截取": "",
+    "seajson_twice": "",
+
+    //搜索列表数组规则（中文键，英文键 sea_arr_rule）。
+    //不填默认 "list"，支持点号多层路径，最多 4 层
+    "搜索列表数组规则": "list",
+    "sea_arr_rule": "list",
+
+    //搜索片单图片（中文键，英文键 sea_pic，JSON 模式填字段名）
+    "搜索片单图片": "pic",
+    "sea_pic": "data-original=\"&&\"",
+
+    //搜索片单标题（中文键，英文键 sea_title）
+    "搜索片单标题": "name",
+    "sea_title": "title=\"&&\"",
+
+    //搜索片单链接（中文键，英文键 sea_url）
+    "搜索片单链接": "id",
+    "sea_url": "href=\"&&\"",
+
+    //搜索片单副标题（中文键，英文键 sea_subtitle）
+    "搜索片单副标题": "",
+    "sea_subtitle": "",
+
+    //搜索片单链接加前缀（中文键，英文键 search_prefix）
+    "搜索片单链接加前缀": "http://www.lezhutv.com",
+    "search_prefix": "http://www.lezhutv.com",
+
+    //搜索片单链接加后缀（中文键，英文键 search_suffix）
+    "搜索片单链接加后缀": "",
+    "search_suffix": "",
+
+    //==================== 六、播放配置 ====================
+
+    //链接是否直接播放（中文键，英文键 force_play）。
+    //"0" / "否" = 否（走详情页解析线路/集数）
+    //"1" / "是" = 分类片单链接直接播放（play_prefix + id + play_suffix）
+    //"2" = 详情选集链接直接播放
+    //设置成直接播放后，后面 play_* 参数才生效，详情页的线路/集数解析配置请留空。
+    "链接是否直接播放": "0",
+    "force_play": "0",
+
+    //直接播放链接加前缀（中文键，英文键 play_prefix）
+    "直接播放链接加前缀": "https://live.52sf.ga/huya/",
+    "play_prefix": "https://live.52sf.ga/huya/",
+
+    //直接播放链接加后缀（中文键，英文键 play_suffix）。
+    //设置为 #isVideo=true# 可强制识别为视频链接
+    "直接播放链接加后缀": "#isVideo=true#",
+    "play_suffix": "#isVideo=true#",
+
+    //直接播放直链视频请求头（中文键，英文键 play_header）。
+    //只对直链视频有效。
+    //1) JSON 对象写法：{"authority":"xxx.online","Referer":"https://play.xxx.online"}
+    //2) key$value#key$value 字符串写法："authority$ku.peizq.online#Referer$https://play.peizq.online"
+    "直接播放直链视频请求头": "authority$ku.peizq.online#Referer$https://play.peizq.online",
+    "play_header": "authority$ku.peizq.online#Referer$https://play.peizq.online",
+
+    //==================== 七、详情页配置 ====================
+
+    //详情是否Jsoup写法（中文键，英文键 proj_is_jsoup，"1"/"是"=Jsoup，"0"=正则）
+    //不填则不解析对应字段
+    "详情是否Jsoup写法": "1",
+    "proj_is_jsoup": "1",
+
+    //封面详情（中文键，英文键 proj_cover）。XYQHiker 新增
+    "封面详情": ".vodlist_thumb&&data-original",
+    "proj_cover": ".vodlist_thumb&&data-original",
+
+    //类型详情（中文键，英文键 proj_cate）。XYQHiker 新增
+    "类型详情": ".data--span:matches(类型)&&Text",
+    "proj_cate": "",
+
+    //年代详情（中文键，英文键 proj_year）。XYQHiker 新增
+    "年代详情": ".data--span:matches(年份)&&Text",
+    "proj_year": "",
+
+    //地区详情（中文键，英文键 proj_area）。XYQHiker 新增
+    "地区详情": ".data--span:matches(地区)&&Text",
+    "proj_area": "",
+
+    //演员详情（中文键，英文键 proj_actor）。
+    //Jsoup 模式：自动清理 &nbsp; / HTML 实体 / 标签 / 多余空白
+    "演员详情": ".data--span:matches(主演)&&Text",
+    "proj_actor": "主演：</span>&&</p>",
+
+    //简介详情（中文键，英文键 proj_plot）
+    "简介详情": ".content--span&&Text",
+    "proj_plot": "简介：</span>&&</p>",
+
+    //----- 线路截取区域 -----
+    //如果不需要线路解析，请把 线路标题 或 线路列表数组规则 置空或者全部不要填。
+    //线路列表数组规则（中文键，英文键 tab_arr_rule）。单段 CSS 或多段 && 导航
+    "线路列表数组规则": ".stui-pannel__head&&h3",
+    "tab_arr_rule": ".stui-pannel__head&&h3",
+
+    //线路标题（中文键，英文键 tab_title）。截取前缀&&截取后缀，或 CSS 选择器规则
+    //支持三种标记语法（可叠加）：
+    //  [不包含:关键词1,关键词2]  排除包含指定关键词的线路
+    //  [排序:关键词1,关键词2]    按关键词顺序重排线路
+    //  [替换:旧@新,旧@新]        替换线路名称中的文本
+    "线路标题": "Text[不包含:网盘,备用][排序:金鹰,高清,云播][替换:金鹰@播放]",
+    "tab_title": ">&&</h3>[不包含:网盘]",
+
+    //----- 列表截取区域（每条线路包含的剧集列表区块）-----
+    //播放列表数组规则（中文键，英文键 list_arr_rule）。单段或多段 && 导航
+    "播放列表数组规则": ".stui-content__playlist&&ul",
+    "list_arr_rule": ".stui-content__playlist&&ul",
+
+    //----- 集数截取区域 -----
+    //选集列表数组规则（中文键，英文键 epi_arr_rule）。
+    //在每条线路容器内选取选集元素，单段或多段 && 导航
+    "选集列表数组规则": "li",
+    "epi_arr_rule": "li",
+
+    //选集标题链接是否Jsoup写法（中文键，英文键 epi_is_jsoup，"1"/"是"=Jsoup，默认 "1"）
+    "选集标题链接是否Jsoup写法": "1",
+    "epi_is_jsoup": "1",
+
+    //选集标题（中文键，英文键 epi_title）。
+    //支持 ed2k:// 和 magnet:// 链接的文件名自动提取：
+    //  ed2k: 提取 |file|文件名| 中的文件名
+    //  magnet: 提取 dn=参数 中的文件名
+    "选集标题": "a&&Text",
+    "epi_title": ">&&<",
+
+    //选集链接（中文键，英文键 epi_url）
+    "选集链接": "a&&href",
+    "epi_url": "href=\"&&\"",
+
+    //选集链接加前缀（中文键，英文键 epiurl_prefix）。
+    //支持含 && 的规则（动态提取），含 PG_URL 时替换为当前详情页 URL
+    "选集链接加前缀": "http://www.lezhutv.com",
+    "epiurl_prefix": "http://www.lezhutv.com",
+
+    //选集链接加后缀（中文键，英文键 epiurl_suffix）。支持含 && 的规则
+    "选集链接加后缀": "",
+    "epiurl_suffix": "",
+
+    //是否反转选集序列（中文键，英文键 epi_reverse，"0"/"1" 或 "是"/"否"）。"1"=倒序
+    "是否反转选集序列": "0",
+    "epi_reverse": "0",
+
+    //==================== 八、嗅探与解析配置 ====================
+
+    //下面几个参数请勿乱用。否则可能会有副作用。
+
+    //分析MacPlayer（中文键，英文键 Anal_MacPlayer）。
+    //分析网页源码中有 var player_aaaa={"flag":"play","encrypt"... 这种源码的链接解析。
+    //"0" = 关闭
+    //"1" / "是" = 开启（解析 player_ JSON 获取真实 URL）
+    //"2" = 增强模式（同 "1"，并自动把当前页 URL 作为 Referer 注入请求头）
+    "分析MacPlayer": "0",
+    "Anal_MacPlayer": "0",
+
+    //是否开启手动嗅探（中文键，英文键 ManualSniffer，"0"/"1" 或 "是"/"否"）。
+    //只对网页嗅探有效
+    "是否开启手动嗅探": "0",
+    "ManualSniffer": "0",
+
+    //手动嗅探视频链接关键词（中文键，英文键 VideoFormat）。每个用 # 隔开
+    //默认 ".m3u8#.mp4#.flv#video/tos#.mp3#.m4a"
+    "手动嗅探视频链接关键词": ".mp4#.m3u8#.flv",
+    "VideoFormat": ".mp4#.m3u8#.flv",
+
+    //手动嗅探视频链接过滤词（中文键，英文键 VideoFilter）。每个用 # 隔开
+    //默认 "=http#.html"
+    "手动嗅探视频链接过滤词": ".html#=http",
+    "VideoFilter": ".html#=http"
+}

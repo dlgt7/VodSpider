@@ -1,0 +1,542 @@
+================================================================================
+                         XYQHiker 插件调用示例
+================================================================================
+
+目前提供 TVBox / 海阔视界 外挂调用，如果你有能力可以合入你的 jar 包里。
+
+XYQHiker 是 XYQBiu 的演进版，支持中英文双键配置、Jsoup CSS 选择器规则、
+首页推荐独立字段、详情页字段细分等增强特性。旧版 XYQBiu 规则可直接复用
+（推荐显式将 is_jsoup 系列字段设为 "0" 以保持兼容）。
+
+================================================================================
+一、TVBox 外挂调用基本格式
+================================================================================
+
+在 TVBox 配置 JSON 的 sites 数组中添加：
+
+{
+    "key": "csp_XYQHiker_站点名",
+    "name": "站点显示名(XYQHiker)",
+    "type": 3,
+    "api": "csp_XYQHiker",
+    "searchable": 1,
+    "quickSearch": 1,
+    "filterable": 1,
+    "ext": "站点配置JSON的路径或URL",
+    "jar": "XYQHiker.jar 的路径或URL"
+}
+
+参数说明：
+- key：唯一标识，建议 csp_XYQHiker_ 开头
+- name：显示名称，建议带 (XYQHiker) 后缀便于识别
+- type：固定 3（Spider 类型）
+- api：固定 "csp_XYQHiker"
+- searchable：1=支持搜索，0=不支持
+- quickSearch：1=支持快搜，0=不支持
+- filterable：1=支持筛选，0=不支持
+- ext：站点规则 JSON，支持以下形式：
+    * clan://TVBox/MaoXYQ/xxx.json   （clan 本地路径）
+    * http://xxx.com/xxx.json        （网络 URL）
+    * ./xxx.json                     （相对路径）
+    * 直接 JSON 字符串                （内联配置）
+- jar：XYQHiker.jar 的位置，支持 clan:// / http:// / 相对路径
+
+================================================================================
+二、ext 配置的三种写法
+================================================================================
+
+1. 外部文件引用（推荐）
+   "ext": "clan://TVBox/MaoXYQ/影视工场.json"
+   "ext": "http://xxx.com/影视工场.json"
+
+2. 内联 JSON（适合简短配置）
+   "ext": "{\"title\":\"测试\",\"分类链接\":\"http://xxx.com/{cateId}-{catePg}.html\",\"分类名称\":\"电影\",\"分类名称替换词\":\"1\",\"分类截取模式\":\"1\",\"分类列表数组规则\":\".stui-vodlist__box\",\"分类片单标题\":\".title&&Text\",\"分类片单链接\":\"a&&href\",\"分类片单图片\":\".lazyload&&data-original\",\"链接是否直接播放\":\"0\",\"搜索链接\":\"http://xxx.com/search?wd={wd}\",\"搜索截取模式\":\"0\",\"搜索列表数组规则\":\"list\",\"搜索片单标题\":\"name\",\"搜索片单链接\":\"id\",\"搜索片单图片\":\"pic\"}"
+
+3. 网络云端配置
+   "ext": "http://xxx.com/configs/影视工场.json"
+
+================================================================================
+三、典型场景调用示例
+================================================================================
+
+────────────────────────────────────────────────────────────────
+场景 1：标准影视站（Jsoup 网页截取模式，推荐写法）
+────────────────────────────────────────────────────────────────
+
+sites 数组项：
+{"key":"csp_XYQHiker_影视工场","name":"影视工场(XYQHiker)","type":3,"api":"csp_XYQHiker","searchable":1,"quickSearch":1,"filterable":1,"ext":"clan://TVBox/MaoXYQ/影视工场.json","jar":"clan://TVBox/XYQHiker.jar"}
+
+对应 ext 规则 JSON 关键配置（中文键 + Jsoup 写法）：
+{
+    "title": "影视工场",
+    "请求头参数": "User-Agent$PC_UA",
+    "分类起始页码": "1",
+    "分类链接": "http://www.ysgc.tv/vodshow/{cateId}--------{catePg}---.html",
+    "分类名称": "电影&电视剧&综艺&动漫",
+    "分类名称替换词": "1&2&3&4",
+    "分类截取模式": "1",
+    "分类片单是否Jsoup写法": "1",
+    "分类列表数组规则": "ul.stui-vodlist.clearfix&&li",
+    "分类片单标题": ".title&&Text",
+    "分类片单链接": "a&&href",
+    "分类片单图片": ".lazyload&&data-original",
+    "分类片单副标题": ".pic-text&&Text",
+    "分类片单链接加前缀": "http://www.ysgc.tv",
+    "链接是否直接播放": "0",
+    "搜索链接": "http://www.ysgc.tv/index.php/ajax/suggest?mid=1&wd={wd}&limit=50",
+    "搜索截取模式": "0",
+    "搜索列表数组规则": "list",
+    "搜索片单标题": "name",
+    "搜索片单链接": "id",
+    "搜索片单图片": "pic",
+    "详情是否Jsoup写法": "1",
+    "演员详情": ".data--span:matches(主演)&&Text",
+    "简介详情": ".detail-content&&Text",
+    "线路列表数组规则": ".stui-pannel__head&&h3",
+    "线路标题": "Text[不包含:网盘]",
+    "播放列表数组规则": ".stui-content__playlist&&ul",
+    "选集列表数组规则": "li",
+    "选集标题": "a&&Text",
+    "选集链接": "a&&href",
+    "选集链接加前缀": "http://www.ysgc.tv",
+    "是否开启手动嗅探": "0",
+    "手动嗅探视频链接关键词": ".mp4#.m3u8#.flv"
+}
+
+说明：
+- 中文键写法，与 XYQHiker 命名风格一致
+- cat_is_jsoup="1"（默认）启用 Jsoup CSS 选择器写法
+- 数组规则用 && 分段导航（容器定位 + 列表选择）
+- 字段用 "选择器&&模式" 提取（如 ".title&&Text"）
+- 线路标题用 [不包含:网盘] 排除网盘线路
+
+────────────────────────────────────────────────────────────────
+场景 2：直播站（force_play 直接播放）
+────────────────────────────────────────────────────────────────
+
+sites 数组项：
+{"key":"csp_XYQHiker_310直播","name":"310直播(XYQHiker)","type":3,"api":"csp_XYQHiker","searchable":0,"quickSearch":0,"filterable":0,"ext":"clan://TVBox/MaoXYQ/310直播.json","jar":"clan://TVBox/XYQHiker.jar"}
+
+对应 ext 规则 JSON 关键配置：
+{
+    "title": "310直播",
+    "请求头参数": "User-Agent$MOBILE_UA",
+    "分类起始页码": "1",
+    "分类链接": "http://www.310.tv/{cateId}",
+    "分类名称": "全部",
+    "分类名称替换词": "all",
+    "分类截取模式": "1",
+    "分类片单是否Jsoup写法": "1",
+    "分类列表数组规则": ".list-group&&li.group-game-item",
+    "分类片单标题": ".text-center&&Text",
+    "分类片单链接": "a&&href",
+    "分类片单图片": "http://www.310.tv/logo.png",
+    "分类片单链接加前缀": "http://www.310.tv/live/",
+    "分类片单链接加后缀": "/play-url",
+    "链接是否直接播放": "1",
+    "直接播放链接加前缀": "",
+    "直接播放链接加后缀": "#isVideo=true#",
+    "是否开启手动嗅探": "1",
+    "手动嗅探视频链接关键词": ".mp4#.m3u8#.flv",
+    "手动嗅探视频链接过滤词": ".html#=http"
+}
+
+说明：
+- force_play="1" 分类片单链接直接播放
+- 分类片单图片用 http 固定 URL（直播站统一 logo）
+- play_suffix="#isVideo=true#" 强制识别为视频
+- ManualSniffer="1" 开启手动嗅探
+
+────────────────────────────────────────────────────────────────
+场景 3：JSON 接口站（cat_mode="0"）
+────────────────────────────────────────────────────────────────
+
+sites 数组项：
+{"key":"csp_XYQHiker_虎牙直播","name":"虎牙直播(XYQHiker)","type":3,"api":"csp_XYQHiker","searchable":1,"quickSearch":1,"filterable":1,"ext":"clan://TVBox/MaoXYQ/虎牙直播.json","jar":"clan://TVBox/XYQHiker.jar"}
+
+对应 ext 规则 JSON 关键配置：
+{
+    "title": "虎牙直播",
+    "请求头参数": "User-Agent$手机",
+    "分类起始页码": "1",
+    "分类链接": "https://www.huya.com/{cateId}",
+    "分类名称": "网游&单机&手游",
+    "分类名称替换词": "1&2&3",
+    "分类截取模式": "0",
+    "分类列表数组规则": "data.live_list",
+    "分类片单标题": "title",
+    "分类片单链接": "channelid",
+    "分类片单图片": "cover",
+    "分类片单副标题": "nickname",
+    "分类片单链接加前缀": "https://www.huya.com/",
+    "链接是否直接播放": "1",
+    "直接播放链接加前缀": "https://m.huya.com/",
+    "直接播放链接加后缀": "#isVideo=true#",
+    "搜索链接": "https://search.cdn.huya.com/?q={wd}",
+    "搜索截取模式": "0",
+    "搜索列表数组规则": "response.3.docs",
+    "搜索片单标题": "game_nick",
+    "搜索片单链接": "room_id",
+    "搜索片单图片": "roomImg",
+    "是否开启手动嗅探": "0"
+}
+
+说明：
+- cat_mode="0" JSON 模式
+- cat_arr_rule="data.live_list" 支持点号多层路径（最多 4 层）
+- 字段名为 JSON key（title/channelid/cover/nickname）
+- 请求头参数中文别名 "手机" 等同 MOBILE_UA
+
+────────────────────────────────────────────────────────────────
+场景 4：POST 搜索站（POST请求数据）
+────────────────────────────────────────────────────────────────
+
+对应 ext 规则 JSON 关键配置：
+{
+    "title": "花猫TV",
+    "请求头参数": "User-Agent$PC_UA",
+    "搜索链接": "http://www.huamaotv.com/index.php?m=vod-search;post",
+    "POST请求数据": "wd={wd}&submit=",
+    "搜索截取模式": "1",
+    "搜索片单是否Jsoup写法": "1",
+    "搜索列表数组规则": ".v_list&&li",
+    "搜索片单标题": ".title&&Text",
+    "搜索片单链接": "a&&href",
+    "搜索片单图片": ".lazyload&&data-original",
+    "搜索片单链接加前缀": "http://www.huamaotv.com",
+    "链接是否直接播放": "0",
+    "是否反转选集序列": "1"
+}
+
+说明：
+- 搜索链接末尾 ;post 表示 POST 请求
+- POST请求数据支持三种格式：空 / JSON / 表单 k=v&k=v
+- {wd} 自动替换为搜索关键词
+
+────────────────────────────────────────────────────────────────
+场景 5：带 MacPlayer 解析的站点（分析MacPlayer）
+────────────────────────────────────────────────────────────────
+
+对应 ext 规则 JSON 关键配置：
+{
+    "title": "libvio",
+    "请求头参数": "User-Agent$MOBILE_UA#Referer$WebView",
+    "链接是否直接播放": "0",
+    "分析MacPlayer": "2",
+    "线路列表数组规则": ".stui-pannel__head&&h3",
+    "线路标题": "Text[不包含:网盘]",
+    "播放列表数组规则": ".stui-content__playlist&&ul",
+    "选集列表数组规则": "li",
+    "选集标题": "a&&Text",
+    "选集链接": "a&&href",
+    "选集链接加前缀": "https://libvio.com",
+    "是否开启手动嗅探": "1",
+    "手动嗅探视频链接关键词": ".mp4#.m3u8#.flv"
+}
+
+说明：
+- 分析MacPlayer="2" 自动注入 Referer=播放页URL
+- 请求头参数复合写法同时设置 UA 和 Referer
+- Referer$WebView 在播放时自动替换为播放页 URL
+
+────────────────────────────────────────────────────────────────
+场景 6：带子分类的站点（筛选数据="EXT"）
+────────────────────────────────────────────────────────────────
+
+对应 ext 规则 JSON 关键配置：
+{
+    "title": "网易CC直播",
+    "请求头参数": "",
+    "分类起始页码": "1",
+    "分类链接": "https://api.cc.163.com/v1/activitylives?liverooms={cateId}",
+    "分类名称": "梦幻西游&永劫无间",
+    "分类名称替换词": "1&2",
+    "筛选数据": "EXT",
+    "筛选子分类名称": "梦幻西游电脑版&永劫无间||梦幻西游手游&第五人格",
+    "筛选子分类替换词": "1&2||3&4",
+    "分类截取模式": "0",
+    "分类列表数组规则": "data.live_list",
+    "分类片单标题": "title",
+    "分类片单链接": "channelid",
+    "分类片单图片": "cover",
+    "分类片单副标题": "nickname",
+    "链接是否直接播放": "1",
+    "直接播放链接加前缀": "https://cc.163.com/live/",
+    "直接播放链接加后缀": "/"
+}
+
+说明：
+- 筛选数据="EXT" 触发手动子分类配置
+- 筛选子分类名称/替换词用 || 分隔大分类组，组内用 & 分隔子项
+- 分类列表数组规则="data.live_list" 支持多层路径
+
+────────────────────────────────────────────────────────────────
+场景 7：带首页推荐的站点（是否开启获取首页数据="1"）
+────────────────────────────────────────────────────────────────
+
+对应 ext 规则 JSON 关键配置：
+{
+    "title": "骚火电影网",
+    "是否开启获取首页数据": "1",
+    "首页推荐链接": "https://shdy2.com/index.html",
+    "首页列表数组规则": ".stui-vodlist&&li",
+    "首页片单是否Jsoup写法": "1",
+    "首页片单标题": ".title&&Text",
+    "首页片单链接": "a&&href",
+    "首页片单图片": ".lazyload&&data-original",
+    "首页片单副标题": ".pic-text&&Text",
+    "首页片单链接加前缀": "https://shdy2.com",
+    "分类起始页码": "1",
+    "分类链接": "https://shdy2.com/list/{cateId}-{catePg}.html",
+    "分类名称": "电影&电视剧&动漫",
+    "分类名称替换词": "1&2&4",
+    "分类截取模式": "1",
+    "分类片单是否Jsoup写法": "1",
+    "分类列表数组规则": ".v_list&&li",
+    "分类片单标题": ".title&&Text",
+    "分类片单链接": "a&&href",
+    "分类片单图片": ".lazyload&&data-original",
+    "分类片单链接加前缀": "https://shdy2.com",
+    "链接是否直接播放": "0",
+    "请求头参数": "Referer$WebView"
+}
+
+说明：
+- 是否开启获取首页数据="1" 开启首页推荐
+- 首页推荐链接优先于分类遍历
+- 首页字段独立配置（home_*），与分类字段分离
+- 请求头参数="Referer$WebView" 嗅探时引用播放页链接
+
+────────────────────────────────────────────────────────────────
+场景 8：带 [firstPage=...] 语法的站点
+────────────────────────────────────────────────────────────────
+
+对应 ext 规则 JSON 关键配置：
+{
+    "title": "分享短视频",
+    "分类起始页码": "1",
+    "分类链接": "http://www.sharenice.net/{cateId}?page={catePg}[firstPage=http://www.sharenice.net/{cateId}]",
+    "分类名称": "全部",
+    "分类名称替换词": "tags/t-5L2T6IKy.html",
+    "链接是否直接播放": "1",
+    "直接播放链接加前缀": "",
+    "直接播放链接加后缀": "#isVideo=true#"
+}
+
+说明：
+- 第一页 URL 结构与其他页不同时使用 [firstPage=...] 语法
+- firstpage="1" 且当前页码=1 时使用中括号内的链接
+- 其他页码使用中括号前的链接
+
+────────────────────────────────────────────────────────────────
+场景 9：旧版 XYQBiu 规则兼容写法（&& 正则截取）
+────────────────────────────────────────────────────────────────
+
+对应 ext 规则 JSON 关键配置（英文键 + is_jsoup="0"）：
+{
+    "title": "影视工场",
+    "UserAgent": "MOBILE_UA",
+    "firstpage": "1",
+    "class_url": "http://www.ysgc.tv/vodshow/{cateId}--------{catePg}---.html",
+    "class_name": "电影&电视剧&综艺&动漫",
+    "class_value": "1&2&3&4",
+    "cat_mode": "1",
+    "cat_is_jsoup": "0",
+    "cat_arr_pre": "ul.stui-vodlist",
+    "cat_arr_suf": "</ul>",
+    "cat_arr_rule": "ul.stui-vodlist&&li",
+    "cat_pic": "data-original=\"&&\"",
+    "cat_title": "title=\"&&\"",
+    "cat_url": "href=\"&&\"",
+    "cat_prefix": "http://www.ysgc.tv",
+    "force_play": "0",
+    "search_url": "http://www.ysgc.tv/index.php/ajax/suggest?mid=1&wd={wd}&limit=50",
+    "search_mode": "0",
+    "sea_is_jsoup": "0",
+    "sea_arr_rule": "list",
+    "jsonpic": "pic",
+    "jsonname": "name",
+    "jsonid": "id",
+    "tab_arr_pre": "href=\"#playlist",
+    "tab_arr_suf": "/a>",
+    "tab_title": ">&&</h3>[不包含:网盘]",
+    "list_arr_pre": "class=\"stui-content__playlist",
+    "list_arr_suf": "</ul>",
+    "epi_arr_pre": "<a",
+    "epi_arr_suf": "/a>",
+    "epi_is_jsoup": "0",
+    "epi_title": ">&&<",
+    "epi_url": "href=\"&&\"",
+    "epiurl_prefix": "http://www.ysgc.tv",
+    "ManualSniffer": "0",
+    "VideoFormat": ".mp4#.m3u8#.flv"
+}
+
+说明：
+- 旧版 XYQBiu 规则可直接复用
+- 显式将 cat_is_jsoup / sea_is_jsoup / epi_is_jsoup 设为 "0" 保持兼容
+- && 正则写法："前缀&&后缀" 截取
+- cat_arr_pre / cat_arr_suf 旧式二段截取仍可用，但推荐迁移到 cat_arr_rule
+
+────────────────────────────────────────────────────────────────
+场景 10：详情页字段完整配置
+────────────────────────────────────────────────────────────────
+
+对应 ext 规则 JSON 关键配置（详情字段细分）：
+{
+    "title": "完整详情示例",
+    "链接是否直接播放": "0",
+    "详情是否Jsoup写法": "1",
+    "封面详情": ".vodlist_thumb&&data-original",
+    "类型详情": ".data--span:matches(类型)&&Text",
+    "年代详情": ".data--span:matches(年份)&&Text",
+    "地区详情": ".data--span:matches(地区)&&Text",
+    "演员详情": ".data--span:matches(主演)&&Text",
+    "简介详情": ".content--span&&Text",
+    "线路列表数组规则": ".stui-pannel__head&&h3",
+    "线路标题": "Text[排序:金鹰,高清,云播][不包含:网盘,备用][替换:金鹰@播放,云播@线路2]",
+    "播放列表数组规则": ".stui-content__playlist&&ul",
+    "选集列表数组规则": "li",
+    "选集标题链接是否Jsoup写法": "1",
+    "选集标题": "a&&Text",
+    "选集链接": "a&&href",
+    "选集链接加前缀": "http://xxx.com",
+    "选集链接加后缀": "",
+    "是否反转选集序列": "0"
+}
+
+说明：
+- 6 个详情字段独立配置：封面/类型/年代/地区/演员/简介
+- 线路标题三种标记叠加：[排序]+[不包含]+[替换]
+- 选集链接加前缀支持含 && 的规则（动态提取）
+
+────────────────────────────────────────────────────────────────
+场景 11：ed2k/磁力链站点
+────────────────────────────────────────────────────────────────
+
+对应 ext 规则 JSON 关键配置：
+{
+    "title": "磁力站",
+    "链接是否直接播放": "0",
+    "选集标题链接是否Jsoup写法": "0",
+    "选集标题": "magnet:&&\"",
+    "选集链接": "magnet:&&\"",
+    "选集链接加前缀": "",
+    "选集链接加后缀": ""
+}
+
+说明：
+- 选集标题以 ed2k: 或 magnet: 开头时自动提取文件名
+  * ed2k: 提取 |file|文件名| 中的文件名
+  * magnet: 提取 dn=参数 中的文件名
+- 链接本身保留完整地址，不补前后缀
+
+================================================================================
+四、批量调用示例（多站点）
+================================================================================
+
+在 TVBox 配置 JSON 的 sites 数组中添加多项：
+
+[
+    {"key":"csp_XYQHiker_影视工场","name":"影视工场(XYQHiker)","type":3,"api":"csp_XYQHiker","searchable":1,"quickSearch":1,"filterable":1,"ext":"clan://TVBox/MaoXYQ/影视工场.json","jar":"clan://TVBox/XYQHiker.jar"},
+    {"key":"csp_XYQHiker_310直播","name":"310直播(XYQHiker)","type":3,"api":"csp_XYQHiker","searchable":0,"quickSearch":0,"filterable":0,"ext":"clan://TVBox/MaoXYQ/310直播.json","jar":"clan://TVBox/XYQHiker.jar"},
+    {"key":"csp_XYQHiker_虎牙直播","name":"虎牙直播(XYQHiker)","type":3,"api":"csp_XYQHiker","searchable":1,"quickSearch":1,"filterable":1,"ext":"clan://TVBox/MaoXYQ/虎牙直播.json","jar":"clan://TVBox/XYQHiker.jar"},
+    {"key":"csp_XYQHiker_花猫TV","name":"花猫TV(XYQHiker)","type":3,"api":"csp_XYQHiker","searchable":1,"quickSearch":1,"filterable":1,"ext":"clan://TVBox/MaoXYQ/花猫TV.json","jar":"clan://TVBox/XYQHiker.jar"},
+    {"key":"csp_XYQHiker_libvio","name":"libvio(XYQHiker)","type":3,"api":"csp_XYQHiker","searchable":1,"quickSearch":1,"filterable":1,"ext":"clan://TVBox/MaoXYQ/libvio.json","jar":"clan://TVBox/XYQHiker.jar"}
+]
+
+================================================================================
+五、阿里云盘调用示例
+================================================================================
+
+XYQHiker 内置阿里云盘链接检测，详情页 id 中包含 alipan.com 或
+aliyundrive.com 分享链接时，自动委托 PushAgent 处理。
+
+需在 TVBox 中配置阿里云盘 token（通过 SharedPreferences 的
+PublicRefreshToken），或在本机代理目录放置 alitoken.txt（32 位 token）。
+
+flag 包含以下关键词时触发阿里云盘解析：
+- Ali转码
+- Open原画
+- Open转码
+
+ALIYUN_PATTERN: (https://www.(alipan|aliyundrive).com/s[^"]+)
+
+================================================================================
+六、规则写法迁移指南（XYQBiu → XYQHiker）
+================================================================================
+
+1. 数组规则统一
+   XYQBiu：cat_arr_pre + cat_arr_suf 二段截取
+   XYQHiker：cat_arr_rule 单段或多段 && 导航（推荐）
+   迁移示例：
+     旧："cat_arr_pre":"ul.vodlist", "cat_arr_suf":"</ul>"
+     新："分类列表数组规则":"ul.vodlist&&li"
+
+2. Jsoup 写法切换
+   XYQBiu：仅支持 && 正则截取
+   XYQHiker：cat_is_jsoup="1" 启用 Jsoup CSS 选择器（推荐）
+   迁移示例：
+     旧："cat_title":"title=\"&&\""
+     新："分类片单标题":".title&&Text" 或 "a&&Text"
+
+3. 详情字段细分
+   XYQBiu：只有 proj_actor / proj_plot
+   XYQHiker：新增 proj_cover / proj_cate / proj_year / proj_area
+   迁移示例：
+     新增："封面详情":".vodlist_thumb&&data-original"
+     新增："类型详情":".data--span:matches(类型)&&Text"
+
+4. 首页字段独立
+   XYQBiu：首页复用 cat_* 字段
+   XYQHiker：home_* 独立字段，可与 cat_* 不同
+   迁移示例：
+     新增："首页片单标题":".title&&Text"
+     新增："首页列表数组规则":".stui-vodlist&&li"
+
+5. 中英文键混用
+   XYQHiker 支持中英文键混用，中文键优先。
+   迁移时无需一次性全部替换，可逐步迁移。
+
+================================================================================
+七、注意事项
+================================================================================
+
+1. jar 包路径
+   - 所有站点共用同一个 XYQHiker.jar
+   - jar 可放在本地（clan://）或网络（http://）
+   - 升级 jar 后所有站点同步生效
+
+2. 规则 JSON 路径
+   - 推荐使用 clan:// 本地路径，加载快且稳定
+   - 网络路径需确保服务器可访问且 CORS 配置正确
+
+3. searchable / quickSearch / filterable
+   - 直播站通常 searchable=0
+   - 无筛选配置的站点 filterable=0
+   - quickSearch=1 会调用 searchContent(key, true) 快搜
+
+4. 编码问题
+   - 规则 JSON 文件建议保存为 UTF-8 编码
+   - 站点编码通过 网页编码格式 / Coding_format 配置（默认 UTF-8）
+
+5. 调试
+   - DEBUG="1" 开启 Toast 异常提示
+   - 通过 SpiderDebug.log 查看异常堆栈
+   - 单条片单解析失败不影响整体列表
+   - 验证码 / 频率限制 / btwaf 等异常自动处理
+
+6. 配置值约定
+   - 留空 / "空" / "&&" 均视为无效值
+   - 布尔型统一用 "0"/"1" 或 "是"/"否"
+   - & 分隔列表；包含 & 的值用 ＆＆ 代替
+   - || 分隔大分类组（filterdata="EXT" 时）
+
+7. is_jsoup 默认值
+   - 新建规则推荐使用 Jsoup 写法（is_jsoup="1"，默认值）
+   - 旧版 XYQBiu 规则迁移时显式设为 "0" 保持兼容
+
+8. 数组规则迁移
+   - 旧版 cat_arr_pre/cat_arr_suf 仍可使用
+   - 推荐迁移到 cat_arr_rule 单段或多段 && 写法
+   - 多段写法："容器选择器&&列表选择器"

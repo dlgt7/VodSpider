@@ -1,0 +1,695 @@
+================================================================================
+                         XYQHiker 影视源 Spider 使用说明
+================================================================================
+
+XYQHiker 是 XYQBiu 的后继演进版（XBPQ / XYQHiker 系列），从 XYQHiker.smali
+反编译还原而来。在保留 XYQBiu 全部能力的基础上，新增中英文双语配置键、Jsoup
+CSS 选择器规则、首页推荐独立字段、详情页字段细分、数组规则统一等增强特性。
+
+本文档基于 com.github.catvod.spider.XYQHiker.java 源码还原整理，与代码实现
+逐一核对，涵盖类结构、方法说明、配置项总览、规则语法、特殊功能与注意事项。
+
+================================================================================
+一、类结构
+================================================================================
+
+1. 主类
+   com.github.catvod.spider.XYQHiker
+   └─ 继承自 com.github.catvod.crawler.Spider
+   └─ 所有 @Override 方法均声明 throws Exception，与基类签名一致
+
+2. 辅助类
+   com.github.catvod.spider.PushAgent
+   └─ 阿里云盘推送代理 Spider（处理 Ali转码 / Open原画 / Open转码 flag）
+
+3. 子包工具类
+   com.github.catvod.bean.xyqbiu.ParseUtils
+   └─ 提供 regexExtract / urlCombine / md5Hex / escapeRegex 等正则与 URL 工具
+
+4. 依赖
+   ├─ com.github.catvod.net.OkHttp            网络请求（GET / POST Form / POST JSON）
+   ├─ org.jsoup.Jsoup                         HTML 解析与 CSS 选择器
+   ├─ org.json.JSONObject / JSONArray         JSON 解析
+   ├─ android.content.SharedPreferences        Token 持久化
+   ├─ com.github.catvod.bean.Result / Vod / Class / Filter  结果构建
+   ├─ com.github.catvod.utils.Notify          Toast 提示（调试用）
+   └─ com.github.catvod.crawler.SpiderDebug   日志输出
+
+================================================================================
+二、与 XYQBiu 的主要差异（重要）
+================================================================================
+
+1. 中英文双键配置
+   ─────────────────────
+   XYQHiker 的所有配置项均支持中文键和英文键两种写法，**中文键优先**。
+   例如 "分类链接" 与 "class_url" 等价，"分类名称" 与 "class_name" 等价。
+   若中文键有值则采用中文键值，否则回退到英文键值。
+   本文档后续统一以 "中文键 / 英文键" 形式标注。
+
+2. Jsoup CSS 选择器规则（核心新增）
+   ─────────────────────────────────
+   引入 cat_is_jsoup / sea_is_jsoup / epi_is_jsoup / proj_is_jsoup / home_is_jsoup
+   五个开关，值为 "1" 或 "是" 时启用 Jsoup 写法，"0" 时使用旧版 && 正则截取写法。
+   Jsoup 写法支持 CSS 选择器 + 模式提取 + 分段拼接 + 链式导航 + 索引选择，
+   表达力远超 && 正则，是 XYQHiker 推荐的写法。
+
+3. 数组规则统一
+   ─────────────
+   XYQBiu 的 cat_arr_pre / cat_arr_suf 二段截取，在 XYQHiker 中统一为
+   cat_arr_rule（分类列表数组规则），支持单段 CSS 选择器或多段 && 导航。
+   类似的还有 sea_arr_rule / list_arr_rule / epi_arr_rule / tab_arr_rule /
+   home_arr_rule / hmepi_arr_rule。
+
+4. 详情页字段细分
+   ───────────────
+   XYQBiu 只有 proj_actor / proj_plot 两个字段；XYQHiker 扩展为：
+   proj_cover（封面）/ proj_cate（类型）/ proj_year（年代）/ proj_area（地区）
+   / proj_actor（演员）/ proj_plot（简介），并新增 proj_is_jsoup 开关。
+
+5. 首页推荐独立字段
+   ─────────────────
+   XYQBiu 首页推荐复用分类字段；XYQHiker 独立出 home_title / home_url / home_pic
+   / home_subtitle / home_prefix / home_suffix / home_arr_rule / home_is_jsoup
+   / hmepi_arr_rule / rcmed_url 等键，首页与分类可分别配置。
+
+6. 筛选类型扩展
+   ─────────────
+   新增 fcatelog_name / fcatelog_value（筛选类型），共 7 组筛选字段：
+   cateId / class / catelog / area / year / lang / by。
+
+7. 调试开关
+   ─────────
+   新增 DEBUG 配置项（值为 "是" 或 "1" 时启用），启用后异常会通过 Notify.show
+   弹出 Toast，便于排错。
+
+8. OCR 接口可配置
+   ───────────────
+   新增 OCR_API 配置项，默认 https://ddddocr--lineagett.repl.co/ocr/b64/text
+   可覆盖为自建 OCR 服务。
+
+================================================================================
+三、Spider 标准 @Override 方法说明
+================================================================================
+
+1. init(Context ctx, String extend)
+   ─────────────────────────────────
+   初始化入口。
+   - 调用 super.init 完成 Spider 基类初始化
+   - 创建 PushAgent 实例（阿里云盘）
+   - 初始化 SharedPreferences（包名 + "_preferences"）
+   - 读取 PublicRefreshToken；为空时尝试从本地代理
+     /file/XYQTVBox/alitoken.txt 拉取 32 位 token
+   - 调用 pushAgent.init(ctx, token) 完成阿里云盘初始化
+
+2. homeContent(boolean filter)
+   ───────────────────────────
+   首页：返回分类列表 + 筛选器。
+   - 读取 分类名称 / class_name 和 分类名称替换词 / class_value 构建分类数组
+     （class_value 中的 ＆＆ 会被还原为 &）
+   - 读取 筛选数据 / filterdata 构建筛选器：
+     * 以 { 开头的 JSON 字符串或标准对象：直接使用
+     * clan:// / http:// / ./ 前缀：拉取远程 JSON
+     * "EXT"：触发 buildFilter，由 fclass_* / fcatelog_* / farea_* /
+              fyear_* / flang_* / fsort_* 配置自动生成
+     * 空值或其它：从 siteConfig 中按 filterdata 键取对象
+   - buildFilter 自动生成的 7 组筛选：cateId / class / catelog / area / year
+     / lang / by，每组支持 & 分隔列表，name=="*" 时用 value 作显示名，
+     name/value 均含 "||" 时按分类索引分割（不同分类显示不同子项）
+   - fyear_name 不填时自动生成 (当前年-20)~当前年 的降序年份列表
+   - filter=true 且筛选非空时返回 Result.string(classes, filters)
+   - filter=false 时仅返回分类 Result.get().classes(classes).string()
+
+3. homeVideoContent()
+   ──────────────────
+   首页推荐视频。
+   - 仅当 是否开启获取首页数据 / homeContent == "1" / "是" 时启用
+   - 优先使用 首页推荐链接 / rcmed_url（若配置）抓取首页数据
+   - 否则遍历 class_value 各分类，每分类请求首页取前 5 条，累计最多 20 条
+   - 解析字段：首页片单标题 / home_title、首页片单链接 / home_url、
+     首页片单图片 / home_pic、首页片单副标题 / home_subtitle
+   - 支持 首页片单是否Jsoup写法 / home_is_jsoup（默认 "是"）
+   - 支持 首页列表数组规则 / home_arr_rule 和 首页片单列表数组规则 / hmepi_arr_rule
+   - 支持 首页片单链接加前缀 / home_prefix 和 首页片单链接加后缀 / home_suffix
+   - 图片是否需要代理 / PicNeedProxy == "1" / "是" 时图片走代理
+
+4. categoryContent(String tid, String pg, boolean filter, HashMap extend)
+   ──────────────────────────────────────────────────────────────────────
+   分类内容列表。委托给 parseCategoryList。
+   - 页码计算：分类起始页码 / firstpage 决定起始页（默认 "1"），
+     firstpage=0 时 pageStr = pg - 1，否则 pageStr = pg - 1 + firstpage
+   - [firstPage=...] 首页特殊链接：
+     * 当前页码等于 firstpage 时使用中括号内的链接
+     * 否则使用中括号前的链接
+   - 筛选占位符替换：{cateId} {class} {area} {year} {lang} {by}
+     （extend 参数优先替换，未提供则清空对应占位符及 /xxx/ 路径段）
+   - {catePg} 替换为页码字符串
+   - 时间戳替换："时间戳"=秒级，"时间标"=毫秒级
+   - md5 表达式：md5(内容) 自动计算替换
+   - 全角 ｛｝ → 半角 {}，全角 ？？ → 半角 ?
+   - 请求方式：URL 含 ;post 为 POST，否则 GET
+     * POST body 三种：空 / JSON {..} / 表单 k=v&k=v
+     * POST JSON 走 fetchPostJson；POST 表单走 fetchPostForm
+   - GET 模式自动检测：
+     * btwaf 防火墙："检测中" + "btwaf" → 提取 btwaf cookie 重试
+     * 嗅探页面：/huadong_ 或 /renji_ → 自动嗅探
+     * 验证码：检查 VERIFY_PATHS 四个路径 → OCR 流程
+   - POST 表单模式：检测"输入验证码"触发 OCR
+   - 解析模式：分类截取模式 / cat_mode == "0" / "否" 为 JSON，其它为网页
+   - JSON 模式：
+     * 分类Json数据二次截取 / catjson_twice（"前缀&&后缀"）先截取响应
+     * 分类列表数组规则 / cat_arr_rule 支持点号多层路径（最多 4 层）
+     * 字段：分类片单标题 / cat_title、分类片单链接 / cat_url、
+             分类片单图片 / cat_pic、分类片单副标题 / cat_subtitle
+     * 图片字段值以 http 开头时作为固定 URL
+     * 分类片单链接加前缀 / cat_prefix、分类片单链接加后缀 / cat_suffix
+     * vodId 含 'input' 占位符时替换为 urlValue
+   - 网页模式：
+     * 分类片单是否Jsoup写法 / cat_is_jsoup（默认 "1"）
+     * 分类列表数组规则 / cat_arr_rule：单段 CSS 选择器或多段 && 导航
+     * Jsoup 模式：通过 getTextByRule 提取字段
+     * 正则模式：split("&&") 取前后缀，ParseUtils.regexExtract 截取
+     * 字段为空且 cat_is_jsoup == home_is_jsoup 时回退到首页字段配置
+     * 图片含 url(...) 时提取并处理 &quot; 转义
+     * 副标题含 [替换:...] 标记时执行 applyReplace
+   - 返回 Result.string(pageStr, MAX_INT, list.size, MAX_INT, videos)
+
+5. detailContent(List<String> ids)
+   ────────────────────────────────
+   详情页内容。
+   - id 格式：vod_name$$$vod_pic$$$detail_url（$$$ 三美元符分隔）
+   - 阿里云盘检测：ALIYUN_PATTERN 匹配 alipan.com / aliyundrive.com 分享链接
+     → 委托 pushAgent.detailContent，结果中 vod_id 改回原 ids.get(0)
+   - 链接是否直接播放 / force_play == "1" / "是"：
+     * 直接拼接 vodId$url 返回，跳过详情页解析
+   - 详情页请求：URL 含 ;post 走 POST（JSON 或表单），否则 GET
+   - GET 模式同样处理 btwaf / 嗅探 / 验证码
+   - 选集链接加前缀 / epiurl_prefix 和 选集链接加后缀 / epiurl_suffix：
+     * 含 && 时通过 getTextByRule 在 doc 上提取
+     * 含 PG_URL 时替换为当前详情页 URL
+   - 播放列表数组规则 / list_arr_rule：
+     * 单段规则：selectElements(doc, rule)
+     * 多段规则：先 getTrueElement 导航到容器，再 selectElements 选最后一项
+   - 选集列表数组规则 / epi_arr_rule：在每条线路容器内选集
+     * 含 && 时多段导航
+     * 单段直接 selectElements
+     * 未配置时将线路容器自身作为单集
+   - 选集标题链接是否Jsoup写法 / epi_is_jsoup（默认 "1"）
+     * Jsoup：getTextByRule(episodeElem, epiTitleRule)
+     * 正则：split("&&") + ParseUtils.regexExtract
+   - 选集标题 / epi_title 支持 ed2k:// 和 magnet:// 链接文件名自动提取
+     * ed2k: 提取 |file|文件名| 中的文件名
+     * magnet: 提取 dn=参数 中的文件名
+   - 选集链接 / epi_url 同样支持 Jsoup / 正则两种模式
+   - 特殊 URL（ed2k/magnet/thunder/magnet/http 直接链接）不补前后缀
+   - 是否反转选集序列 / epi_reverse == "1" / "是" 时集数倒序
+   - 线路列表数组规则 / tab_arr_rule：单段 CSS 或多段 && 导航
+   - 线路标题 / tab_title：
+     * Jsoup：getTextByRule
+     * 正则：split("&&") 截取
+     * 支持 [不包含:词1,词2] [排序:词1,词2] [替换:旧@新,旧@新] 三种标记
+   - 详情字段独立提取（详情是否Jsoup写法 / proj_is_jsoup 控制）：
+     * 封面详情 / proj_cover
+     * 类型详情 / proj_cate
+     * 年代详情 / proj_year
+     * 地区详情 / proj_area
+     * 演员详情 / proj_actor（自动清理 &nbsp; / HTML 实体 / 标签 / 多余空白）
+     * 简介详情 / proj_plot
+   - 返回 Result.string(vod)（含 vod_play_from 和 vod_play_url）
+
+6. searchContent(String wd, boolean filter) / searchContent(wd, filter, pg)
+   ─────────────────────────────────────────────────────────────────────────
+   搜索内容。委托给 parseSearchContent。
+   - 支持分页：{SearchPg} 占位符
+   - 搜索起始页码 / sea_firstpage 控制搜索起始页（默认 "1"）
+   - 支持 [firstPage=...] 首页特殊链接
+   - 占位符：{wd} 关键词（按 charset URL 编码）、{SearchPg} 页码
+   - 时间戳 / md5 表达式替换同分类
+   - 全角 ｛｝ → 半角 {}
+   - 请求方式：URL 含 ;post 为 POST，否则 GET
+   - POST body 三种格式（POST请求数据 / sea_PtBody）：
+     * 空：仅 POST 表单请求
+     * JSON：以 { 开头，fetchPostJson
+     * 表单：k=v&k=v，fetchPostForm
+   - GET / POST 均处理 btwaf / 嗅探 / 验证码 / 频率限制
+   - 频率限制：检测"不要频繁操作，搜索时间间隔为"自动等待 6 秒重试
+   - 搜索截取模式 / search_mode == "0" / "否" 为 JSON，其它为网页
+   - 搜索Json数据二次截取 / seajson_twice（"前缀&&后缀"）先截取
+   - JSON 模式：搜索列表数组规则 / sea_arr_rule 默认 "list"，
+     支持点号多层路径（最多 4 层），字段名默认 name / id / pic
+   - 网页模式：搜索片单是否Jsoup写法 / sea_is_jsoup（默认 "1"）
+     * Jsoup：getTextByRule 提取
+     * 正则：split("&&") 截取
+     * 搜索列表数组规则 / sea_arr_rule：单段或多段 &&
+     * 字段：搜索片单标题 / sea_title、搜索片单链接 / sea_url、
+             搜索片单图片 / sea_pic、搜索片单副标题 / sea_subtitle
+     * 链接补全：搜索片单链接加前缀 / search_prefix、
+                  搜索片单链接加后缀 / search_suffix
+   - 搜索结果过滤：标题必须包含搜索关键词（不区分大小写）
+   - 返回 Result.string(list)
+
+7. manualVideoCheck()
+   ──────────────────
+   是否手动嗅探。返回 是否开启手动嗅探 / ManualSniffer == "1" / "是"。
+
+8. isVideoFormat(String url)
+   ──────────────────────────
+   判断 URL 是否为视频格式。
+   - 读取 手动嗅探视频链接关键词 / VideoFormat（默认 ".m3u8#.mp4#.flv#video/tos#.mp3#.m4a"）
+   - 读取 手动嗅探视频链接过滤词 / VideoFilter（默认 "=http#.html"）
+   - URL 含 =http 或 .html 且不命中 checkstring 黑名单时视为非视频
+   - 黑名单：m3u8.pw/Cache、from=https://banyung.pw、getm3u8?url=http
+   - 命中 format 关键词且不命中 filter 过滤词时为视频
+
+9. playerContent(String flag, String id, List<String> vipFlags)
+   ─────────────────────────────────────────────────────────────
+   播放内容。
+   - 阿里云盘 flag（Ali转码 / Open原画 / Open转码）委托 pushAgent.playerContent
+   - 构建 headers：
+     * 请求头参数 / Headers 支持简写 / 完整 UA / 复合 key$value#key$value 格式
+     * UA 别名：PC_UA / 电脑、MOBILE_UA / 手机、IOS_UA / 苹果手机、MAC_UA / 苹果电脑
+     * referer/WebView 自动替换为播放页 id
+     * 分析MacPlayer / Anal_MacPlayer == "2" 时自动注入 Referer=id
+     * Cookie 自动累加 accCookie
+   - 链接是否直接播放 / force_play == "1" / "2"：
+     * 直接拼接 直接播放链接加前缀 / play_prefix + id + 直接播放链接加后缀 / play_suffix
+     * 直接播放直链视频请求头 / play_header：JSON 对象或 key$value#key$value 字符串
+     * 特殊分享 URL（vip.ffzy / vip.lz / hd.lz / suonizy + /share/）自动嗅探
+     * #isVideo=true# 强制识别为视频，返回 parse=0
+     * 可播放视频 URL（isPlayableVideoUrl）返回 parse=0
+     * 普通视频 URL（isVideoUrl）返回 parse=1 + jx()
+     * 其它返回 parse=1
+   - 分析MacPlayer / Anal_MacPlayer == "1" / "2" / "是"：
+     * 解析页面 var player_ JSON 获取真实 URL
+     * 字段：url / from / link_next / key / tm / id / nid / vod_pic_thumb
+       / vod_title / vod_title_name / encrypt
+     * encrypt=1：URLDecoder.decode
+     * encrypt=2：Base64.decode + URLDecoder.decode
+     * vip.ffzy 等特殊分享 URL 自动嗅探
+     * 有 tm 或 key 时：可播放视频返回 parse=0，否则返回原 id + parse=1
+     * 解析 playerconfig.js 获取 parse.js / from.js
+     * MacPlayerConfig.player_list 正则抓取（macPlayerRegex）
+     * 根据 ps 字段决定走 parse.js 还是 from.js
+     * 默认返回 parse=1，由播放器解析
+
+================================================================================
+四、配置项分类总览（共 90+ 键，中英双键）
+================================================================================
+
+【基础信息】
+  title / 标题                         规则名（必填）
+  author / 作者                       作者
+  请求头参数 / Headers                 请求头配置（UA / Referer / Cookie 复合写法）
+  搜索请求头参数 / SHeaders            搜索专用请求头（空则回退到 Headers）
+  网页编码格式 / Coding_format         页面编码（默认 UTF-8，少数 GBK 站填 "GBK"）
+  OCR_API                             OCR 接口（默认 ddddocr--lineagett.repl.co）
+  DEBUG                               调试开关（"是" 或 "1" 启用 Toast 异常提示）
+  图片是否需要代理 / PicNeedProxy      图片是否走代理（"1" / "是" 启用，当前版本预留）
+
+【分类配置】
+  分类链接 / class_url                 分类 URL 模板（含 {cateId} {catePg} 等占位符）
+  分类名称 / class_name                分类显示名（& 分隔）
+  分类名称替换词 / class_value         分类值（& 分隔，＆＆ 转义 &）
+  分类起始页码 / firstpage             起始页码（默认 "1"，禁止负数和小数）
+  分类截取模式 / cat_mode              "0"/"否"=JSON，"1"/其它=网页
+  分类片单是否Jsoup写法 / cat_is_jsoup "1"/"是"=Jsoup，"0"=正则（默认 "1"）
+  分类列表数组规则 / cat_arr_rule      列表定位规则（单段 CSS 或多段 && 导航）
+  分类片单标题 / cat_title             标题字段（Jsoup 规则或 && 正则）
+  分类片单链接 / cat_url               链接字段
+  分类片单图片 / cat_pic               图片字段（http 开头为固定 URL）
+  分类片单副标题 / cat_subtitle        副标题字段
+  分类片单链接加前缀 / cat_prefix      链接补前缀
+  分类片单链接加后缀 / cat_suffix      链接补后缀
+  分类Json数据二次截取 / catjson_twice JSON 二次截取（"前缀&&后缀"）
+
+【筛选配置（filterdata="EXT" 时生效）】
+  筛选子分类名称 / fclass_name         类型名称（& 分隔，|| 分组）
+  筛选子分类替换词 / fclass_value      类型值
+  筛选类型名称 / fcatelog_name         分类名称
+  筛选类型替换词 / fcatelog_value      分类值
+  筛选地区名称 / farea_name            地区名称
+  筛选地区替换词 / farea_value         地区值
+  筛选年份名称 / fyear_name            年份名称（不填自动生成近 20 年降序）
+  筛选年份替换词 / fyear_value         年份值（默认 "*"）
+  筛选语言名称 / flang_name            语言名称
+  筛选语言替换词 / flang_value         语言值
+  筛选排序名称 / fsort_name            排序名称（默认 "时间&人气&评分"）
+  筛选排序替换词 / fsort_value         排序值（默认 "time&hits&score"）
+
+【首页推荐配置】
+  是否开启获取首页数据 / homeContent   "1"/"是" 启用首页推荐
+  首页推荐链接 / rcmed_url             首页推荐 URL（优先于分类遍历）
+  首页列表数组规则 / home_arr_rule     首页列表定位规则
+  首页片单列表数组规则 / hmepi_arr_rule 首页片单定位规则
+  首页片单是否Jsoup写法 / home_is_jsoup "1"/"是"=Jsoup（默认 "是"）
+  首页片单标题 / home_title            标题字段
+  首页片单链接 / home_url              链接字段
+  首页片单图片 / home_pic              图片字段
+  首页片单副标题 / home_subtitle       副标题字段
+  首页片单链接加前缀 / home_prefix     链接补前缀
+  首页片单链接加后缀 / home_suffix     链接补后缀
+
+【搜索配置】
+  搜索链接 / search_url                搜索 URL（含 {wd} {SearchPg}，;post 表 POST）
+  POST请求数据 / sea_PtBody            POST body（空 / JSON / 表单 k=v&k=v）
+  搜索截取模式 / search_mode           "0"/"否"=JSON，其它=网页
+  搜索起始页码 / sea_firstpage         搜索起始页（默认 "1"）
+  搜索片单是否Jsoup写法 / sea_is_jsoup "1"/"是"=Jsoup（默认 "1"）
+  搜索列表数组规则 / sea_arr_rule      列表定位规则（默认 "list"）
+  搜索片单标题 / sea_title             标题字段
+  搜索片单链接 / sea_url               链接字段
+  搜索片单图片 / sea_pic               图片字段
+  搜索片单副标题 / sea_subtitle        副标题字段
+  搜索片单链接加前缀 / search_prefix   链接补前缀
+  搜索片单链接加后缀 / search_suffix   链接补后缀
+  搜索Json数据二次截取 / seajson_twice JSON 二次截取（"前缀&&后缀"）
+
+【详情页配置】
+  链接是否直接播放 / force_play        "0"=否，"1"=分类直接播，"2"=详情直接播
+  详情是否Jsoup写法 / proj_is_jsoup    "1"/"是"=Jsoup，"0"=正则
+  封面详情 / proj_cover                封面字段
+  类型详情 / proj_cate                 类型字段
+  年代详情 / proj_year                 年代字段
+  地区详情 / proj_area                 地区字段
+  演员详情 / proj_actor                演员字段
+  简介详情 / proj_plot                 简介字段
+  选集标题链接是否Jsoup写法 / epi_is_jsoup "1"/"是"=Jsoup（默认 "1"）
+  播放列表数组规则 / list_arr_rule     线路容器定位规则
+  选集列表数组规则 / epi_arr_rule      选集元素定位规则
+  选集标题 / epi_title                 选集标题字段
+  选集链接 / epi_url                   选集链接字段
+  选集链接加前缀 / epiurl_prefix       链接补前缀（可含 && 规则）
+  选集链接加后缀 / epiurl_suffix       链接补后缀（可含 && 规则）
+  是否反转选集序列 / epi_reverse       "1"/"是"=倒序
+  线路列表数组规则 / tab_arr_rule      线路定位规则
+  线路标题 / tab_title                 线路标题字段（支持 [不包含] [排序] [替换]）
+
+【播放与嗅探配置】
+  直接播放链接加前缀 / play_prefix     force_play 直链补前缀
+  直接播放链接加后缀 / play_suffix     force_play 直链补后缀
+  直接播放直链视频请求头 / play_header force_play 直链请求头
+                                       （JSON 对象或 key$value#key$value）
+  分析MacPlayer / Anal_MacPlayer       "0"=关闭，"1"=解析 var player_，
+                                       "2"=同 1 并注入 Referer=id
+  是否开启手动嗅探 / ManualSniffer     "1"/"是"=开启手动嗅探
+  手动嗅探视频链接关键词 / VideoFormat  关键词列表（# 分隔）
+                                       默认 ".m3u8#.mp4#.flv#video/tos#.mp3#.m4a"
+  手动嗅探视频链接过滤词 / VideoFilter  过滤词列表（# 分隔）
+                                       默认 "=http#.html"
+
+================================================================================
+五、规则语法详解
+================================================================================
+
+XYQHiker 的规则分为两大类：&& 正则截取写法 和 Jsoup CSS 选择器写法。
+通过 cat_is_jsoup / sea_is_jsoup / epi_is_jsoup / proj_is_jsoup / home_is_jsoup
+切换。数组规则（cat_arr_rule / sea_arr_rule / list_arr_rule / epi_arr_rule /
+tab_arr_rule / home_arr_rule）始终支持两种语法的混合（按 && 分段）。
+
+────────────────────────────────────────────────────────────────
+1. && 正则截取写法（is_jsoup="0"）
+────────────────────────────────────────────────────────────────
+
+格式："前缀&&后缀"
+  → 在元素 outerHtml 中正则截取前缀和后缀之间的内容
+
+格式："前缀&&中缀&&后缀"（多段导航）
+  → 第 1 段通过 getTrueElement 导航到子元素
+  → 中间段继续导航
+  → 最后一段通过 getText 提取
+
+示例（cat_title）：
+  "title=\"&&\""            → 截取 title="..." 中的内容
+  "data-original=\"&&\""    → 截取 data-original="..." 中的内容
+
+────────────────────────────────────────────────────────────────
+2. Jsoup CSS 选择器写法（is_jsoup="1"，推荐）
+────────────────────────────────────────────────────────────────
+
+通过 getTextByRule(element, rule) 提取。规则支持以下语法（可组合）：
+
+(1) 模式提取
+    ─────────
+    Text               → element.text()
+    B64Dec             → Base64.decode(element.text())
+    Html               → element.html()
+    Attr<key>          → element.attr("<key>")（如 Attrhref → attr("href")）
+    <key>              → element.attr("<key>")（如 href → attr("href")）
+    .js:<expr>         → 取 .js: 前的部分（兼容 Xpath 写法）
+
+(2) + / ＋ 分段拼接
+    ─────────────────
+    rule1+rule2           → 两段结果直接拼接
+    rule1＋'静态文本'      → 第二段为字面量（单/双引号包裹，\n 转换行）
+    示例：".title+a&&Text" → 先选 .title，再选 a，取 Text，最后拼接
+
+(3) || 回退
+    ────────
+    rule1||rule2||rule3   → 依次尝试，返回首个非空结果
+    示例：".title||.name||Text"
+
+(4) ! 删除子串
+    ───────────
+    mode!remove1!remove2  → 提取后删除指定的子串
+    示例："Text!HD!720P"   → 取 text()，再删除 HD 和 720P
+
+(5) -- 链式提取
+    ─────────────
+    rule1--rule2--rule3   → 每步将后续元素 outerHtml 从前一步文本中移除
+    示例：".list--.ad--.footer"
+
+(6) ,index 索引选择
+    ────────────────
+    selector,index        → select(selector) 后取第 index 个
+                           负数从末尾算（-1 = 最后一个）
+    示例："li,0"          → 第一个 li
+    示例："li,-1"         → 最后一个 li
+
+(7) 默认 select
+    ────────────
+    无特殊标记时按 CSS 选择器处理：element.select(rule).first()
+    若后代无匹配但元素自身匹配（标签名 / .class / #id）则返回元素自身
+
+────────────────────────────────────────────────────────────────
+3. 数组规则（cat_arr_rule / sea_arr_rule / list_arr_rule 等）
+────────────────────────────────────────────────────────────────
+
+支持单段或多段 && 组合：
+
+单段："li.vodlist_item"
+  → selectElements(doc, "li.vodlist_item")
+
+多段："class=v_list&&li"
+  → 第 1 段 getTrueElement 导航到 .v_list 容器
+  → 中间段继续导航
+  → 最后一段 selectElements 选出列表
+
+────────────────────────────────────────────────────────────────
+4. tab_title 标记语法（可叠加）
+────────────────────────────────────────────────────────────────
+
+[不包含:关键词1,关键词2]  排除包含指定关键词的线路
+[排序:关键词1,关键词2]    按关键词顺序重排线路（匹配的排前面）
+[替换:旧1@新1,旧2@新2]    替换线路名称中的文本
+
+示例：">&&</h3>[不包含:网盘,备用]"
+示例：">&&</a>[排序:金鹰,高清,云播][替换:金鹰@播放,云播@线路2]"
+
+────────────────────────────────────────────────────────────────
+5. 链接占位符
+────────────────────────────────────────────────────────────────
+
+PG_URL           → 替换为当前页 URL（去单引号）
+'input'          → 替换为截取到的 urlValue（用于 cat_prefix/cat_suffix）
+
+================================================================================
+六、特殊功能与扩展语法
+================================================================================
+
+1. [firstPage=...] 首页特殊链接
+   ────────────────────────────
+   用于 class_url 和 search_url 中第一页 URL 结构不同的情况。
+   当 firstpage="1" 且当前页码=1 时，使用中括号内的链接；否则使用前面的链接。
+   示例："http://xxx.com/{cateId}?page={catePg}[firstPage=http://xxx.com/{cateId}]"
+
+2. 时间戳占位符
+   ────────────
+   "时间戳" → 当前 Unix 秒时间戳
+   "时间标" → 当前毫秒时间戳
+   可用于 search_url 和 class_url 中。
+
+3. md5() 表达式
+   ─────────────
+   md5(待哈希内容) 会被自动替换为内容的 MD5 哈希值。
+   示例："http://xxx.com/search?key=md5({wd}salt123)"
+
+4. 全角半角自动转换
+   ────────────────
+   全角 ｛ → 半角 {
+   全角 ｝ → 半角 }
+   全角 ？？ → 半角 ?
+   便于规则编写时避免输入法切换问题。
+
+5. ed2k:// 和 magnet:// 链接处理
+   ──────────────────────────────
+   epi_title 截取到的内容若以 ed2k: 或 magnet: 开头，会自动提取文件名：
+   - ed2k: 提取 |file|文件名| 中的文件名
+   - magnet: 提取 dn=参数 中的文件名
+   链接本身保留完整地址，不补前后缀。
+
+6. 验证码自动处理
+   ───────────────
+   支持四种验证码路径自动识别（VERIFY_PATHS）：
+   - ajax/verify_check
+   - ajax.php?ac=code_check
+   - /verify/index.html
+   - ?scheckAC=check
+   检测到"输入验证码"/"输入正确的验证码"时自动触发 OCR 流程。
+   OCR 接口由 OCR_API 配置，默认 ddddocr 服务。
+
+7. btwaf 防火墙处理
+   ─────────────────
+   检测到"检测中"且包含"btwaf"时，自动提取 btwaf cookie 并重试请求。
+
+8. 频率限制处理
+   ─────────────
+   搜索时检测到"不要频繁操作，搜索时间间隔为"时，自动等待 6 秒后重试一次。
+
+9. 嗅探页面处理
+   ─────────────
+   检测到 /huadong_ 或 /renji_ 时，自动嗅探页面获取真实内容。
+
+10. 阿里云盘链接检测
+   ─────────────────
+   详情页 id 中检测到 alipan.com 或 aliyundrive.com 分享链接时，
+   自动委托 PushAgent 处理（需配置阿里云盘 token）。
+   ALIYUN_PATTERN: (https://www.(alipan|aliyundrive).com/s[^"]+)
+
+11. 特殊分享 URL 嗅探
+   ───────────────────
+   force_play 模式或 Anal_MacPlayer 解析时，URL 含 vip.ffzy / vip.lz /
+   hd.lz / suonizy 且含 /share/ 时，自动嗅探获取真实播放链接。
+
+12. Unicode \uXXXX 转义解码
+   ────────────────────────
+   响应内容中的 \uXXXX 转义序列会自动解码为对应 Unicode 字符（decodeHtml）。
+
+13. UserAgent 复合请求头
+   ─────────────────────
+   请求头参数 / Headers 字段支持 key$value#key$value 格式，可同时设置多个请求头：
+   "User-Agent$MOBILE_UA#Referer$WebView#Cookie$xxx"
+   其中 Referer$WebView 会自动替换为当前播放页 URL。
+   UA 简写：MOBILE_UA / PC_UA / IOS_UA / MAC_UA
+   中文别名：手机 / 电脑 / 苹果手机 / 苹果电脑
+
+14. 搜索请求头参数 / SHeaders
+   ────────────────────────
+   独立于 Headers，仅搜索请求使用（buildPostHeaders）。留空且不含 $ 时
+   回退到 buildShowHeaders（即 Headers 配置）。格式与 Headers 完全相同。
+
+15. 图片 URL 处理
+   ───────────────
+   cat_pic / sea_pic / home_pic / proj_cover 值以 http 开头时，作为固定图片
+   URL 使用（不进行截取），适合直播站统一 logo 场景。
+   图片含 url(...) 时自动提取并清理 &quot; 转义。
+   PicNeedProxy="1" 时图片走代理（当前版本预留，未实际实现）。
+
+16. accCookie 累加
+   ────────────────
+   验证码刷新后写入 accCookie，后续请求自动追加到 Cookie 头。
+   若 Headers 中已有 Cookie$/cookie$，则追加到现有值；否则单独写入。
+
+17. DEBUG 调试开关
+   ────────────────
+   DEBUG="1" 或 "是" 时启用 debugFlag，异常通过 Notify.show 弹出 Toast：
+   - 站点配置解析失败
+   - homeContent 各阶段错误
+   - buildFilter 错误
+   - 主页列表遍历错误
+   - 分类解析 JSON / HTML 错误
+   - 搜索解析错误
+   - 详情获取线路错误
+   - 选集 / MacPlayer 解析错误
+
+================================================================================
+七、注意事项
+================================================================================
+
+1. 配置值约定
+   - 留空 / "空" / "&&" 均视为无效值，使用默认值
+   - 布尔型配置统一用 "0"/"1" 或 "是"/"否" 字符串
+   - & 分隔列表；包含 & 的值用 ＆＆ 代替；|| 分隔大分类组
+
+2. 中英文双键优先级
+   - 同一含义的中文键和英文键同时存在时，中文键优先
+   - 推荐统一使用中文键（与 XYQHiker 命名风格一致），或保留英文键兼容旧规则
+
+3. force_play 与详情页配置互斥
+   - force_play="1" 或 "2" 时，详情页的 tab_*/list_*/epi_*/proj_* 配置不生效
+   - 直播类站点推荐 force_play="1"，影视类站点用 "0" 走详情页解析
+
+4. cat_mode 与 cat_* 配置互斥
+   - cat_mode="0" 时，cat_arr_rule/cat_title 等网页键不生效，使用 catjson_* 隐式字段
+   - cat_mode="1" 时，JSON 字段不生效
+   - 注意：XYQHiker JSON 模式下使用 cat_arr_rule 定位数组（XYQBiu 用 catjsonlist）
+
+5. Anal_MacPlayer 取值
+   - "0"：关闭
+   - "1"：解析 var player_ JSON
+   - "2"：同 "1" 并自动注入 Referer=id（适合需要 Referer 的站点）
+   - "是"：等同 "1"
+
+6. is_jsoup 默认值
+   - cat_is_jsoup：默认 "1"（Jsoup）
+   - home_is_jsoup：默认 "是"（Jsoup）
+   - sea_is_jsoup：默认 "1"（Jsoup）
+   - epi_is_jsoup：默认 "1"（Jsoup）
+   - proj_is_jsoup：无默认（不填则不解析对应字段）
+   - 旧版 XYQBiu 规则迁移时建议显式设为 "0" 以保持兼容
+
+7. 字段回退机制
+   - 分类网页模式中，cat_title/cat_url/cat_pic/cat_subtitle 为空且
+     cat_is_jsoup == home_is_jsoup 时，回退到 home_title/home_url/home_pic
+     /home_subtitle
+   - 分类列表数组规则为空且 cat_is_jsoup == home_is_jsoup 时，回退到
+     home_arr_rule
+   - 搜索请求头为空且不含 $ 时，回退到 buildShowHeaders
+
+8. OCR_API
+   - 默认 https://ddddocr--lineagett.repl.co/ocr/b64/text（免费 repl.co 服务）
+   - 生产环境建议通过 OCR_API 配置项覆盖为自建 API
+
+9. 编码
+   - 默认 UTF-8，少数 GBK 站点通过 网页编码格式 / Coding_format 配置
+   - 搜索关键词 {wd} 会按 charset 进行 URL 编码
+
+10. 页码
+   - firstpage 和 sea_firstpage 决定起始页码
+   - 禁止负数和含小数点
+   - URL 不含 {catePg} / {SearchPg} 时，仅请求第一页
+
+11. 筛选器（filterdata）
+   - {} / 标准 JSON 对象：直接使用
+   - clan:// / http:// / ./ 前缀：请求获取
+   - "EXT"：触发 fclass_* / fcatelog_* / farea_* / fyear_* / flang_* / fsort_*
+     手动子分类配置，由 buildFilter 自动生成
+   - 其它字符串：作为 siteConfig 中的键名取对象
+
+12. 阿里云盘 token
+   - 优先从 SharedPreferences 的 PublicRefreshToken 读取
+   - 为空时尝试从本地代理 /file/XYQTVBox/alitoken.txt 拉取 32 位 token
+   - flag 包含 Ali转码 / Open原画 / Open转码 时触发阿里云盘解析
+
+13. 日志
+   - 所有异常通过 SpiderDebug.log(e) 记录
+   - 单条片单解析失败不影响整体列表
+   - DEBUG="1" 时异常会通过 Notify.show 弹 Toast
+
+================================================================================
+八、版本信息
+================================================================================
+
+源文件：com.github.catvod.spider.XYQHiker.java
+来源：XYQHiker.smali 反编译还原
+辅助包：com.github.catvod.bean.xyqbiu.ParseUtils
+依赖：OkHttp / Jsoup / org.json / Spider 基类 / Gson
+前序版本：XYQBiu（XYQHiker 是其演进版，向后兼容大部分规则）
