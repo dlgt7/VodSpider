@@ -2933,12 +2933,12 @@ private String parseSearchContent(String keyword, String page) {
                     String titleRule = getConfig(titleKey);
                     String name;
                     if (isJsoup) {
-                        name = getTextByRule(item, titleRule);
+                        name = getTextByRule(item, titleRule).trim();
                     } else {
                         String html = item.outerHtml();
                         String[] titleParts = titleRule.split(AMP_AMP);
-                        name = ParseUtils.regexExtract(html, titleParts[0], titleParts[1]).get(0);
-                        name = cleanHtml(name);
+                        ArrayList<String> titleMatches = ParseUtils.regexExtract(html, titleParts[0], titleParts[1]);
+                        name = cleanHtml(titleMatches.get(0));
                     }
 
                     String picConfig = getConfig(picKey);
@@ -2951,7 +2951,8 @@ private String parseSearchContent(String keyword, String page) {
                             } else {
                                 String html = item.outerHtml();
                                 String[] picParts = picConfig.split(AMP_AMP);
-                                pic = ParseUtils.regexExtract(html, picParts[0], picParts[1]).get(0);
+                                ArrayList<String> picMatches = ParseUtils.regexExtract(html, picParts[0], picParts[1]);
+                                pic = picMatches.get(0);
                             }
                             pic = ParseUtils.urlCombine(baseUrl, pic);
                         }
@@ -2977,24 +2978,32 @@ private String parseSearchContent(String keyword, String page) {
                     String subtitleRule = getConfig(subtitleKey);
                     if (!subtitleRule.isEmpty()) {
                         if (isJsoup) {
-                            subtitle = getTextByRule(item, subtitleRule);
+                            subtitle = getTextByRule(item, subtitleRule).trim();
                         } else {
                             String html = item.outerHtml();
                             String[] subParts = subtitleRule.split(AMP_AMP);
-                            subtitle = ParseUtils.regexExtract(html, subParts[0], subParts[1]).get(0);
+                            ArrayList<String> subMatches = ParseUtils.regexExtract(html, subParts[0], subParts[1]);
+                            subtitle = cleanHtml(subMatches.get(0));
                         }
-                        subtitle = cleanHtml(subtitle);
+                        if (subtitleRule.contains(REPLACE_PREFIX)) {
+                            subtitle = applyReplace(subtitle, subtitleRule);
+                        }
                     }
 
                     String urlRule = getConfig(urlKey);
                     String urlRulePart = urlRule.split(REPLACE_PREFIX)[0];
                     String urlValue;
                     if (isJsoup) {
-                        urlValue = getTextByRule(item, urlRulePart);
+                        urlValue = getTextByRule(item, urlRulePart).trim();
                     } else {
                         String html = item.outerHtml();
                         String[] urlRuleParts = urlRulePart.split(AMP_AMP);
-                        urlValue = ParseUtils.regexExtract(html, urlRuleParts[0], urlRuleParts[1]).get(0);
+                        ArrayList<String> urlMatches = ParseUtils.regexExtract(html, urlRuleParts[0], urlRuleParts[1]);
+                        urlValue = cleanHtml(urlMatches.get(0));
+                    }
+
+                    if (urlValue.contains(PG_URL)) {
+                        urlValue = urlValue.replace(PG_URL, baseUrl).replaceAll(SINGLE_QUOTE, EMPTY);
                     }
 
                     String fullUrlRule = getConfig(urlKey);
