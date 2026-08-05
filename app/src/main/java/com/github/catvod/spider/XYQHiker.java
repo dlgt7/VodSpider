@@ -14,6 +14,7 @@ import com.github.catvod.crawler.Spider;
 import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.net.OkHttp;
 import com.github.catvod.spider.Init;
+import com.github.catvod.utils.Notify;
 import com.github.catvod.spider.Proxy;
 import com.github.catvod.spider.PushAgent;
 import com.google.gson.Gson;
@@ -1024,7 +1025,7 @@ public class XYQHiker extends Spider {
             } catch (Exception e) {
                 SpiderDebug.log(e);
                 if (debugFlag) {
-                    Init.show("ocr验证出错：" + e.toString());
+                    Notify.show("ocr验证出错：" + e.toString());
                 }
             }
         }
@@ -1283,7 +1284,7 @@ public class XYQHiker extends Spider {
             // smali 原为空 catch，此处增加日志辅助排查（不影响功能行为）
             SpiderDebug.log(e);
             if (this.debugFlag) {
-                Init.show("站点配置解析失败：" + e.toString());
+                Notify.show("站点配置解析失败：" + e.toString());
             }
         }
     }
@@ -1532,7 +1533,7 @@ public class XYQHiker extends Spider {
         } catch (Exception e) {
             SpiderDebug.log(e);
             if (debugFlag) {
-                Init.show("筛选getRType部分出错：" + e.toString());
+                Notify.show("筛选getRType部分出错：" + e.toString());
             }
             return null;
         }
@@ -1669,7 +1670,7 @@ public class XYQHiker extends Spider {
                 } catch (Exception e) {
                     SpiderDebug.log(e);
                     if (debugFlag) {
-                        Init.show("buildFilter详细筛选生成出错：" + e.toString());
+                        Notify.show("buildFilter详细筛选生成出错：" + e.toString());
                     }
                 }
             }
@@ -1677,7 +1678,7 @@ public class XYQHiker extends Spider {
         } catch (Exception e) {
             SpiderDebug.log(e);
             if (debugFlag) {
-                Init.show("buildFilter全局出错：" + e.toString());
+                Notify.show("buildFilter全局出错：" + e.toString());
             }
             return null;
         }
@@ -1736,7 +1737,7 @@ public String homeContent(boolean filter) throws Exception {
     } catch (Exception e) {
         SpiderDebug.log(e);
         if (debugFlag) {
-            Init.show("homeContent全局出错：" + e.toString());
+            Notify.show("homeContent全局出错：" + e.toString());
         }
         return empty;
     }
@@ -1769,7 +1770,7 @@ public String homeContent(boolean filter) throws Exception {
     } catch (Exception e) {
         SpiderDebug.log(e);
         if (debugFlag) {
-            Init.show("homeContent筛选部分出错：" + e.toString());
+            Notify.show("homeContent筛选部分出错：" + e.toString());
         }
     }
 
@@ -1781,7 +1782,7 @@ public String homeContent(boolean filter) throws Exception {
     } catch (Exception e) {
         SpiderDebug.log(e);
         if (debugFlag) {
-            Init.show("homeContent全局出错：" + e.toString());
+            Notify.show("homeContent全局出错：" + e.toString());
         }
         return empty;
     }
@@ -2141,7 +2142,7 @@ public String homeVideoContent() throws Exception {
                 } catch (Exception itemEx) {
                     SpiderDebug.log(itemEx);
                     if (debugFlag) {
-                        Init.show("主页历遍列表出错：" + itemEx.toString());
+                        Notify.show("主页历遍列表出错：" + itemEx.toString());
                     }
                     continue;
                 }
@@ -2153,7 +2154,7 @@ public String homeVideoContent() throws Exception {
     } catch (Exception e) {
         SpiderDebug.log(e);
         if (debugFlag) {
-            Init.show("主页全局出错：" + e.toString());
+            Notify.show("主页全局出错：" + e.toString());
         }
         return emptyResult;
     }
@@ -2438,7 +2439,7 @@ private String parseCategoryList(String tid, String pg, boolean filter, HashMap<
                     } catch (Exception e) {
                         SpiderDebug.log(e);
                         if (debugFlag) {
-                            Init.show("分类解析json出错：" + e.toString());
+                            Notify.show("分类解析json出错：" + e.toString());
                         }
                     }
                 }
@@ -2566,7 +2567,7 @@ private String parseCategoryList(String tid, String pg, boolean filter, HashMap<
                 } catch (Exception e) {
                     SpiderDebug.log(e);
                     if (debugFlag) {
-                        Init.show("分类解析html出错：" + e.toString());
+                        Notify.show("分类解析html出错：" + e.toString());
                     }
                 }
             }
@@ -2579,7 +2580,7 @@ private String parseCategoryList(String tid, String pg, boolean filter, HashMap<
     } catch (Exception e) {
         SpiderDebug.log(e);
         if (debugFlag) {
-            Init.show("分类网页全局出错：" + e.toString());
+            Notify.show("分类网页全局出错：" + e.toString());
         }
         return null;
     }
@@ -2873,7 +2874,7 @@ private String parseSearchContent(String keyword, String page) {
                     } catch (Exception e) {
                         SpiderDebug.log(e);
                         if (debugFlag) {
-                            Init.show("搜索解析json区域出错：" + e.toString());
+                            Notify.show("搜索解析json区域出错：" + e.toString());
                         }
                     }
                 }
@@ -2997,7 +2998,7 @@ private String parseSearchContent(String keyword, String page) {
                 } catch (Exception e) {
                     SpiderDebug.log(e);
                     if (debugFlag) {
-                        Init.show("搜索解析html区域出错：" + e.toString());
+                        Notify.show("搜索解析html区域出错：" + e.toString());
                     }
                 }
             }
@@ -3008,7 +3009,7 @@ private String parseSearchContent(String keyword, String page) {
     } catch (Exception e) {
         SpiderDebug.log(e);
         if (debugFlag) {
-            Init.show("搜索全局出错：" + e.toString());
+            Notify.show("搜索全局出错：" + e.toString());
         }
         return EMPTY;
     }
@@ -3329,7 +3330,7 @@ public String detailContent(List<String> ids) throws Exception {
                 } catch (Exception e) {
                     SpiderDebug.log(e);
                     if (debugFlag) {
-                        Init.show("详情获取线路出错：" + e.toString());
+                        Notify.show("详情获取线路出错：" + e.toString());
                     }
                 }
             }
@@ -3534,7 +3535,7 @@ public String detailContent(List<String> ids) throws Exception {
     } catch (Exception e) {
         SpiderDebug.log(e);
         if (debugFlag) {
-            Init.show("详情全局出错：" + e.toString());
+            Notify.show("详情全局出错：" + e.toString());
         }
         return emptyStr;
     }
@@ -3783,7 +3784,7 @@ public String playerContent(String flag, String id, List<String> vipFlags) throw
                 }
 
                 if (this.debugFlag && playerUrl != null) {
-                    Init.show("视频链接：" + playerUrl);
+                    Notify.show("视频链接：" + playerUrl);
                 }
 
                 if (playerUrl != null && (hasTm || hasKey)) {
@@ -3796,7 +3797,7 @@ public String playerContent(String flag, String id, List<String> vipFlags) throw
             } catch (Exception e) {
                 SpiderDebug.log(e);
                 if (this.debugFlag) {
-                    Init.show("分析var plays部分出错：" + e.toString());
+                    Notify.show("分析var plays部分出错：" + e.toString());
                 }
             }
         }
@@ -3855,7 +3856,7 @@ public String playerContent(String flag, String id, List<String> vipFlags) throw
             } catch (Exception e) {
                 SpiderDebug.log(e);
                 if (this.debugFlag) {
-                    Init.show("分析playerconfig区域出错：" + e.toString());
+                    Notify.show("分析playerconfig区域出错：" + e.toString());
                 }
             }
         }
@@ -3867,7 +3868,7 @@ public String playerContent(String flag, String id, List<String> vipFlags) throw
                 } catch (Exception e) {
                     SpiderDebug.log(e);
                     if (this.debugFlag) {
-                        Init.show("Mac分析2播放区域出错：" + e.toString());
+                        Notify.show("Mac分析2播放区域出错：" + e.toString());
                     }
                 }
             }
@@ -3904,7 +3905,7 @@ public String playerContent(String flag, String id, List<String> vipFlags) throw
                     } catch (Exception e) {
                         SpiderDebug.log(e);
                         if (this.debugFlag) {
-                            Init.show("直链视频与zxzj部分出错：" + e.toString());
+                            Notify.show("直链视频与zxzj部分出错：" + e.toString());
                         }
                     }
                 } else {
@@ -3913,7 +3914,7 @@ public String playerContent(String flag, String id, List<String> vipFlags) throw
                     } catch (Exception e) {
                         SpiderDebug.log(e);
                         if (this.debugFlag) {
-                            Init.show("Mac分析2播放区域出错：" + e.toString());
+                            Notify.show("Mac分析2播放区域出错：" + e.toString());
                         }
                     }
                 }
@@ -3971,7 +3972,7 @@ public String playerContent(String flag, String id, List<String> vipFlags) throw
                     } catch (Exception e) {
                         SpiderDebug.log(e);
                         if (this.debugFlag) {
-                            Init.show("Mac分析2播放区域出错：" + e.toString());
+                            Notify.show("Mac分析2播放区域出错：" + e.toString());
                         }
                     }
                 }
@@ -3983,7 +3984,7 @@ public String playerContent(String flag, String id, List<String> vipFlags) throw
     } catch (Exception e) {
         SpiderDebug.log(e);
         if (this.debugFlag) {
-            Init.show("播放类全局区域出错：" + e.toString());
+            Notify.show("播放类全局区域出错：" + e.toString());
         }
         return resultStr;
     }

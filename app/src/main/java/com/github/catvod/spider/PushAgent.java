@@ -9,6 +9,7 @@ import com.github.catvod.crawler.Spider;
 import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.net.OkHttp;
 import com.github.catvod.utils.Misc;
+import com.github.catvod.utils.Notify;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -1001,10 +1002,10 @@ public class PushAgent extends Spider {
             String resp = postJson("https://api.aliyundrive.com/adrive/v3/share_link/get_share_by_anonymous",
                     shareBody.toString(), headers);
             if (resp.contains("share_link is forbidden")) {
-                Init.show("文件违规，根据相关法律法规要求，该文件已禁止访问。");
+                Notify.show("文件违规，根据相关法律法规要求，该文件已禁止访问。");
             }
             if (resp.contains("share_link is cancelled") || resp.contains("share_link is expired")) {
-                Init.show("来晚啦，该分享已失效。");
+                Notify.show("来晚啦，该分享已失效。");
             }
             JSONObject shareJson = new JSONObject(resp);
             JSONArray fileInfos = shareJson.getJSONArray("file_infos");
@@ -1281,9 +1282,9 @@ public class PushAgent extends Spider {
                     sharedPrefs.edit().remove(tokenKey).apply();
                 }
                 if (usePublicToken) {
-                    Init.show("Token失效，请使用海阔视界 alitoken验证 小程序推送设置Token后再使用。");
+                    Notify.show("Token失效，请使用海阔视界 alitoken验证 小程序推送设置Token后再使用。");
                 } else {
-                    Init.show("Token失效，请尝试重新使用海阔视界推送。");
+                    Notify.show("Token失效，请尝试重新使用海阔视界推送。");
                 }
                 return;
             }
@@ -1348,7 +1349,7 @@ public class PushAgent extends Spider {
                 sharedPrefs.edit().remove(tokenKey).apply();
                 sharedPrefs.edit().remove(accessKey).apply();
             }
-            Init.show("当前账号可用空间已满，请尝试清理网盘后重试。");
+            Notify.show("当前账号可用空间已满，请尝试清理网盘后重试。");
         }
         JSONObject json = new JSONObject(response);
         JSONArray responses = json.getJSONArray("responses");
