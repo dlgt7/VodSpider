@@ -1303,12 +1303,15 @@ public class XYQHiker extends Spider {
         if (this.siteConfig != null) return;
         if (this.extend == null) return;
         try {
+            String configStr;
             if (this.extend.startsWith("http")) {
-                String resp = OkHttp.string(this.extend, null);
-                this.siteConfig = new JSONObject(resp);
+                configStr = OkHttp.string(this.extend, null);
             } else {
-                this.siteConfig = new JSONObject(this.extend);
+                configStr = this.extend;
             }
+            // 去除行首 // 注释（忽略前导空格/制表符），不影响 JSON 字符串值中的 http://
+            configStr = configStr.replaceAll("(?m)^[ \\t]*//[^\\n]*$", "");
+            this.siteConfig = new JSONObject(configStr);
             // 默认 OCR 接口为 repl.co 免费服务，生产环境建议通过 OCR_API 配置项覆盖为自建 API
             this.ocrApi = getConfig("OCR_API", "https://ddddocr--lineagett.repl.co/ocr/b64/text");
             String debugCfg = getConfig("DEBUG", "0");
@@ -3114,6 +3117,26 @@ public String detailContent(List<String> ids) throws Exception {
         String url = parts[2].trim();
         String vodName = parts[0];
         String vodId = parts[0];
+
+        // 相对 URL 补全：如果 url 不以 http:// 或 https:// 开头（且非 P2P 链接），
+        // 从配置的"首页推荐链接"/"搜索链接"中提取站点 host 补全为绝对 URL。
+        // 这解决了 prefix 为空导致 vod_id 为相对路径、detailContent 无法请求详情页的问题。
+        if (!url.startsWith("http://") && !url.startsWith("https://") && !isP2PUrl(url) && !url.contains(";post")) {
+            String siteUrl = getConfig("首页推荐链接");
+            if (siteUrl.isEmpty()) {
+                siteUrl = getConfig("搜索链接");
+            }
+            if (!siteUrl.isEmpty()) {
+                String tempUrl = siteUrl.split("\\{")[0].split("\\?")[0];
+                if (tempUrl.startsWith("https://")) {
+                    String host = tempUrl.substring(8).split("/")[0];
+                    url = "https://" + host + (url.startsWith("/") ? url : "/" + url);
+                } else if (tempUrl.startsWith("http://")) {
+                    String host = tempUrl.substring(7).split("/")[0];
+                    url = "http://" + host + (url.startsWith("/") ? url : "/" + url);
+                }
+            }
+        }
 
         if (ALIYUN_PATTERN.matcher(url).find()) {
             aliyunFlag = true;
