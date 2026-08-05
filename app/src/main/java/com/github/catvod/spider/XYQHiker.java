@@ -3567,9 +3567,15 @@ public String playerContent(String flag, String id, List<String> vipFlags) throw
         }
 
         // P2P 协议链接（magnet/ed2k/thunder）不能走 HTTP 解析器，否则会连接超时。
-        // 直接以 parse(0) 返回，交给支持 P2P 的播放器（如迅雷内核）处理。
+        // 直接以 parse(0)+playUrl="" 返回（与 PushAgent 磁力处理格式一致），
+        // 交给支持 P2P 的播放器（如迅雷内核）处理。
+        // 必须显式设置 playUrl=""，否则部分播放器会使用默认解析地址尝试 HTTP 解析 magnet → 超时。
         if (isP2PUrl(id)) {
-            return Result.get().url(id).parse(0).string();
+            JSONObject p2pResult = new JSONObject();
+            p2pResult.put("parse", 0);
+            p2pResult.put("playUrl", "");
+            p2pResult.put("url", id);
+            return p2pResult.toString();
         }
 
         ensureSiteConfig();
