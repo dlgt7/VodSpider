@@ -275,12 +275,12 @@ public class XBPQ extends Spider {
     // ==================== 生命周期方法 ====================
 
     @Override
-    public void init(Context context) {
+    public void init(Context context) throws Exception {
         super.init(context);
     }
 
     @Override
-    public void init(Context context, String extend) {
+    public void init(Context context, String extend) throws Exception {
         super.init(context, extend);
         // 兜底设置本地代理端口（initApi 可能未被框架调用）
         if (Init.getLocalProxyPort() == null || Init.getLocalProxyPort().isEmpty()) {
