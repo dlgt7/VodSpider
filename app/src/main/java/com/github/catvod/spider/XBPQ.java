@@ -799,7 +799,7 @@ public class XBPQ extends Spider {
 
     /**
      * 从HTML提取列表。
-     */
+     *
      * @param html HTML内容
      * @param selector 选择器
      * @param isJson 是否为JSON模式
@@ -2815,7 +2815,7 @@ public class XBPQ extends Spider {
 
     /**
      * 图片代理。
-     */
+     *
      * @param params 代理参数
      * @return 代理结果数组
      */
