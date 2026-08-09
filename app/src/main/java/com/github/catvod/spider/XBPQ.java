@@ -937,7 +937,7 @@ public class XBPQ extends Spider {
                 obj.addProperty("method", req.getOrDefault("method", "GET"));
                 if (req.containsKey("headers")) {
                     com.google.gson.JsonObject headers = new com.google.gson.JsonObject();
-                    for (Map.Entry<String, String> entry : Json.fromJson(req.get("headers"), Map.class).entrySet()) {
+                    for (Map.Entry<String, String> entry : ((Map<String, String>) Json.fromJson(req.get("headers"), Map.class)).entrySet()) {
                         headers.addProperty(entry.getKey(), entry.getValue());
                     }
                     obj.add("headers", headers);
@@ -2716,7 +2716,7 @@ public class XBPQ extends Spider {
      */
     private void ensureSiteConfig() {
         if (siteConfig == null) {
-            siteConfig = Json.safeObject(extend);
+            siteConfig = new JSONObject(extend);
         }
     }
 
