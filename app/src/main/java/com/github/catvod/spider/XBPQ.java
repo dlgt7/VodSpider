@@ -19,6 +19,7 @@ import com.github.catvod.crawler.Spider;
 import com.github.catvod.crawler.SpiderApi;
 import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.net.OkHttp;
+import com.github.catvod.utils.Notify;
 import com.github.catvod.utils.Util;
 
 import org.json.JSONArray;
@@ -336,6 +337,11 @@ public class XBPQ extends Spider {
                     json.put("分类url", extend);
                 } else {
                     String content = OkHttp.string(extend, XBPQHttp.buildHeaders(this));
+                    if (spiderApi != null) spiderApi.log("URL加载extend: " + (content == null ? "null" : (content.isEmpty() ? "空内容" : (content.length() > 200 ? content.substring(0, 200) + "..." : content))));
+                    if (content == null || content.isEmpty()) {
+                        if (spiderApi != null) spiderApi.log("init 失败：远程JSON内容为空，extend=" + extend);
+                        return;
+                    }
                     json = new JSONObject(removeJsonComments(content));
                 }
             } else if (extend.startsWith("{")) {
@@ -359,7 +365,7 @@ public class XBPQ extends Spider {
             }
         } catch (Exception e) {
             SpiderDebug.log(e);
-            if (debug) Init.show("请检配置ext");
+            if (debug) Notify.show("请检配置ext");
             if (spiderApi != null) spiderApi.log("请检配置ext-->" + e);
         }
     }
