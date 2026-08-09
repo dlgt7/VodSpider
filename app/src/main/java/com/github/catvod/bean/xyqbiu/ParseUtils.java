@@ -187,4 +187,36 @@ public final class ParseUtils {
         if (str == null || beginIndex < 0 || endIndex > str.length() || beginIndex > endIndex) return "";
         return str.substring(beginIndex, endIndex);
     }
+
+    // ==================== 播放器解析（Jsoup 实现，替代 C0049v3/C0025Uv merge 依赖） ====================
+
+    /**
+     * 解析网页 HTML，提取所有文本内容行。
+     * <p>原逻辑使用 C0049v3.m488nJ(html).m357QJ("list") 解析复杂 HTML 并提取解析结果行。
+     * 此处用 Jsoup 提取所有文本节点，供调用方逐行查找 JSON 解析结果。</p>
+     *
+     * @param html 待解析的网页内容
+     * @return 文本行列表，失败时返回空列表
+     */
+    public static ArrayList<String> parsePlayerLines(String html) {
+        ArrayList<String> lines = new ArrayList<>();
+        if (html == null || html.isEmpty()) return lines;
+        try {
+            org.jsoup.nodes.Document doc = org.jsoup.Jsoup.parse(html);
+            org.jsoup.nodes.Element root = doc.body();
+            if (root != null) {
+                for (org.jsoup.nodes.Node node : root.childNodes()) {
+                    if (node instanceof org.jsoup.nodes.TextNode) {
+                        String text = ((org.jsoup.nodes.TextNode) node).text().trim();
+                        if (!text.isEmpty()) {
+                            lines.add(text);
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+        }
+        return lines;
+    }
 }
