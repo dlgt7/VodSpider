@@ -287,4 +287,24 @@ public class Crypto {
         }
         return data;
     }
+
+    /**
+     * 解密XOR加密的十六进制字符串。
+     * <p>等价于 HaB.d() / paA.m420d()，用于解密混淆的硬编码字符串。</p>
+     *
+     * @param encrypted 加密的十六进制字符串
+     * @param key       XOR密钥
+     * @return 解密后的明文字符串
+     */
+    public static String xorDecodeHex(String encrypted, String key) {
+        if (encrypted == null || encrypted.isEmpty()) {
+            return "";
+        }
+        byte[] bytes = hexToBytes(encrypted);
+        int keyLen = key.length();
+        for (int i = 0; i < bytes.length; i++) {
+            bytes[i] = (byte) (bytes[i] ^ key.charAt(i % keyLen));
+        }
+        return new String(bytes);
+    }
 }
