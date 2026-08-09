@@ -18,6 +18,8 @@ import com.github.catvod.net.OkHttp;
 import com.github.catvod.utils.Crypto;
 import com.github.catvod.utils.Json;
 
+import com.google.gson.JsonObject;
+
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -120,7 +122,7 @@ public class XBPQ extends Spider {
     // ==================== 实例字段 ====================
 
     /** 站点配置JSON */
-    protected JSONObject siteConfig;
+    protected JsonObject siteConfig;
 
     /** 站点地址 */
     protected String homeUrl = "";
@@ -607,6 +609,30 @@ public class XBPQ extends Spider {
     }
 
     /**
+     * 获取配置值（4个备选键）。
+     */
+    private String getConfig(String key1, String key2, String key3, String key4) {
+        String v = getConfig(key1, "");
+        if (!v.isEmpty()) return v;
+        v = getConfig(key2, "");
+        if (!v.isEmpty()) return v;
+        v = getConfig(key3, "");
+        if (!v.isEmpty()) return v;
+        return getConfig(key4, "");
+    }
+
+    /**
+     * 获取配置值（3个备选键）。
+     */
+    private String getConfig(String key1, String key2, String key3) {
+        String v = getConfig(key1, "");
+        if (!v.isEmpty()) return v;
+        v = getConfig(key2, "");
+        if (!v.isEmpty()) return v;
+        return getConfig(key3, "");
+    }
+
+    /**
      * 获取配置值链式调用。
      */
     private String getConfigChain(String key1, String key2, String defaultVal) {
@@ -717,8 +743,8 @@ public class XBPQ extends Spider {
      */
     private String getJson(String json, String key) {
         try {
-            JSONObject obj = Json.safeObject(json);
-            return obj.optString(key, "");
+            JsonObject obj = Json.safeObject(json);
+            return Json.getString(obj, key);
         } catch (Exception e) {
             return "";
         }
@@ -729,8 +755,8 @@ public class XBPQ extends Spider {
      */
     private String getJson(String json, String key, String defaultVal) {
         try {
-            JSONObject obj = Json.safeObject(json);
-            return obj.optString(key, defaultVal);
+            JsonObject obj = Json.safeObject(json);
+            return Json.getString(obj, key, defaultVal);
         } catch (Exception e) {
             return defaultVal;
         }
@@ -1678,7 +1704,7 @@ public class XBPQ extends Spider {
 
             result.put("list", new JSONArray());
             for (Vod vod : list) {
-                result.put("list", ((JSONArray) result.get("list")).put(vod.toJson()));
+                result.put("list", ((JSONArray) result.get("list")).put(Json.objectToJson(vod.toJson())));
             }
             result.put("page", 1);
             result.put("pagecount", pagecount);
@@ -2145,6 +2171,21 @@ public class XBPQ extends Spider {
     }
 
     /**
+     * 2参数版本：使用 key 本身作为 CSS 选择器。
+     */
+    private String extractByXPath(String html, String selector) {
+        try {
+            Elements elements = Jsoup.parse(html).select(selector);
+            if (!elements.isEmpty()) {
+                return elements.first().text().trim();
+            }
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+        }
+        return "";
+    }
+
+    /**
      * 从HTML中提取多个XPath字段列表。
      */
     private List<String> extractByXPathList(String html, String selector) {
@@ -2268,7 +2309,7 @@ public class XBPQ extends Spider {
                     String pic = item.optString(picKey.isEmpty() ? "pic" : picKey);
                     if (name.isEmpty()) continue;
                     Vod vod = new Vod(link, name, pic, "");
-                    list.put(vodToJson(vod));
+                    list.put(Json.toJson(vod));
                 } catch (Exception ignored) {
                 }
             }
@@ -2289,21 +2330,23 @@ public class XBPQ extends Spider {
             String linkSel = getConfig("<link>&&</link>", "搜索链接", "sea_url");
             String picSel = getConfig("<pic>&&</pic>", "搜索图片", "sea_pic");
             String subSel = getConfig("<pubDate>&&</pubDate>", "搜索副标题", "sea_subtitle");
-            
-            List<String> items = extractTextSegment(html, itemSel.split("&&")[0]);
+
+            // 二次截取：先按 item 分隔，再逐项提取
+            String[] items = html.split(itemSel, -1);
             JSONArray list = new JSONArray();
             for (String item : items) {
                 try {
-                    String title = extractTextSegment(item, titleSel).toString();
-                    String link = extractTextSegment(item, linkSel).toString();
-                    String pic = extractTextSegment(item, picSel).toString();
-                    String sub = extractTextSegment(item, subSel).toString();
+                    if (item.isEmpty()) continue;
+                    String title = extractByXPath(item, titleSel);
+                    String link = extractByXPath(item, linkSel);
+                    String pic = extractByXPath(item, picSel);
+                    String sub = extractByXPath(item, subSel);
                     if (title.isEmpty()) continue;
                     if (!link.startsWith("http") && !link.startsWith("//")) {
                         link = baseUrl + (link.startsWith("/") ? "" : "/") + link;
                     }
                     Vod vod = new Vod(link, title, pic, sub);
-                    list.put(vodToJson(vod));
+                    list.put(Json.toJson(vod));
                 } catch (Exception ignored) {
                 }
             }
@@ -2976,9 +3019,9 @@ public class XBPQ extends Spider {
      * <p>使用 LinkedHashMap 实现 LRU 淘汰（上限 100 条），配合 WeakReference 避免内存泄漏。</p>
      */
     public static final Map<String, String> verifyStateMap =
-            new java.util.LinkedHashMap<String, java.lang.ref.WeakReference<String>>(16, 0.75f, true) {
+            new java.util.LinkedHashMap<String, String>(16, 0.75f, true) {
                 @Override
-                protected boolean removeEldestEntry(java.util.Map.Entry<String, java.lang.ref.WeakReference<String>> eldest) {
+                protected boolean removeEldestEntry(java.util.Map.Entry<String, String> eldest) {
                     return size() > 100;
                 }
             };
@@ -3043,8 +3086,7 @@ public class XBPQ extends Spider {
      * @return 缓存值，若条目已被 GC 则返回 null
      */
     public static String getVerifyState(String key) {
-        java.lang.ref.WeakReference<String> ref = verifyStateMap.get(key);
-        return ref != null ? ref.get() : null;
+        return verifyStateMap.get(key);
     }
 
     /**
@@ -3800,15 +3842,15 @@ public class XBPQ extends Spider {
     /**
      * 解析JSON字符串。
      */
-    private JSONObject parseJson(String json) {
+    private JsonObject parseJson(String json) {
         try {
             if (json == null || json.isEmpty()) {
-                return new JSONObject();
+                return new JsonObject();
             }
             return Json.safeObject(json);
         } catch (Exception e) {
             SpiderDebug.log(e);
-            return new JSONObject();
+            return new JsonObject();
         }
     }
 
@@ -3945,9 +3987,9 @@ public class XBPQ extends Spider {
                 return "";
             }
             // 尝试从JSON对象中提取
-            JSONObject obj = Json.safeObject(content);
+            JsonObject obj = Json.safeObject(content);
             if (obj != null) {
-                String val = obj.optString(key, "");
+                String val = Json.getString(obj, key);
                 if (!val.isEmpty()) {
                     // 清理特殊字符
                     val = val.replace("|", "");

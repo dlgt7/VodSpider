@@ -40,7 +40,7 @@ public class XBPQAli extends XBPQ {
     /**
      * 代理请求。
      */
-    public static Object[] proxy(Map<String, String> params) {
+    public Object[] proxy(Map<String, String> params) {
         try {
             String action = params.get("action");
             if ("oss".equals(action) || "token".equals(action)) {
@@ -48,7 +48,7 @@ public class XBPQAli extends XBPQ {
                 if (url == null || url.isEmpty()) {
                     return new Object[]{404, "text/plain", "URL not found"};
                 }
-                okhttp3.Response response = OkHttp.newCall(url, null);
+                okhttp3.Response response = OkHttp.newCall(url, (String) null);
                 if (response == null || !response.isSuccessful()) {
                     return new Object[]{502, "text/plain", "Proxy request failed"};
                 }
