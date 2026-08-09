@@ -214,4 +214,69 @@ public final class XBPQHttp {
             return "";
         }
     }
+
+    /** 带额外请求头的 GET 请求（搜索请求头等场景使用）。 */
+    public static String fetchHtmlWithExtra(XBPQ main, String url, Map<String, String> extraHeaders) {
+        try {
+            String[] parsed = parseControlSuffix(url);
+            String cleanUrl = parsed[0];
+            String flags = parsed[1];
+            boolean needGzip = flags.contains("z");
+            boolean flagGbk = flags.contains("g");
+
+            if (main.forceProtocol.contains("https") && cleanUrl.startsWith("http://")) {
+                cleanUrl = cleanUrl.replace("http://", "https://");
+            } else if (main.forceProtocol.contains("http") && !main.forceProtocol.contains("https") && cleanUrl.startsWith("https://")) {
+                cleanUrl = cleanUrl.replace("https://", "http://");
+            }
+
+            Map<String, String> headers = new HashMap<>(buildHeaders(main));
+            if (extraHeaders != null) headers.putAll(extraHeaders);
+
+            String charset = "";
+            if (flagGbk || main.sniffGbk()) {
+                charset = "GBK";
+            } else if (main.config != null) {
+                charset = main.config.get("", "编码", "网页编码格式", "Coding_format");
+            }
+
+            if (needGzip) {
+                byte[] data = OkHttp.bytes(cleanUrl, headers);
+                if (data != null && data.length > 0) {
+                    String decompressed = gzipDecompress(data, charset);
+                    if (decompressed != null) return decompressed;
+                    return new String(data, charset.isEmpty() ? "UTF-8" : charset);
+                }
+                return "";
+            }
+            if (!charset.isEmpty() && !"UTF-8".equalsIgnoreCase(charset) && !"utf-8".equalsIgnoreCase(charset)) {
+                try {
+                    byte[] data = OkHttp.bytes(cleanUrl, headers);
+                    return data != null ? new String(data, charset) : "";
+                } catch (Exception e) {
+                    SpiderDebug.log(e);
+                    String html = OkHttp.string(cleanUrl, headers);
+                    try { return new String(html.getBytes(StandardCharsets.ISO_8859_1), charset); } catch (Exception ignored) {}
+                    return html;
+                }
+            }
+            return OkHttp.string(cleanUrl, headers);
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+            return "";
+        }
+    }
+
+    /** 从配置字符串解析额外请求头（格式：Key$Value#Key$Value）。 */
+    public static Map<String, String> parseExtraHeaders(XBPQ main, String headerStr) {
+        Map<String, String> extra = new HashMap<>();
+        if (headerStr.isEmpty()) return extra;
+        for (String pair : headerStr.split("#")) {
+            String[] kv = pair.split("\\$", 2);
+            if (kv.length >= 2 && !kv[0].isEmpty() && !kv[1].isEmpty()) {
+                extra.put(kv[0].trim(), kv[1].trim());
+            }
+        }
+        return extra;
+    }
 }
