@@ -100,7 +100,7 @@ public final class XBPQHttp {
     }
 
     /** 构建请求头 Map（playerContent 用，含播放请求头）。双重检查锁定保证线程安全。 */
-    static Map<String, String> buildHeaderMap(XBPQ main) {
+    public static Map<String, String> buildHeaderMap(XBPQ main) {
         if (main.headerCache != null) return main.headerCache;
         synchronized (main) {
             if (main.headerCache != null) return main.headerCache;
