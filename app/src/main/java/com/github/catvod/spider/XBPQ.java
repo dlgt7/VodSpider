@@ -2359,7 +2359,11 @@ public class XBPQ extends Spider {
             return new JSONObject().put("list", list).toString();
         } catch (Exception e) {
             SpiderDebug.log(e);
-            return new JSONObject().put("list", new JSONArray()).toString();
+            try {
+                return new JSONObject().put("list", new JSONArray()).toString();
+            } catch (JSONException je) {
+                return "";
+            }
         }
     }
 
