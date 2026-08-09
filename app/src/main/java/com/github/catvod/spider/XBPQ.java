@@ -1704,7 +1704,7 @@ public class XBPQ extends Spider {
 
             result.put("list", new JSONArray());
             for (Vod vod : list) {
-                result.put("list", ((JSONArray) result.get("list")).put(Json.objectToJson(vod.toJson())));
+                result.put("list", ((JSONArray) result.get("list")).put(Json.toJson(vod)));
             }
             result.put("page", 1);
             result.put("pagecount", pagecount);
@@ -2323,7 +2323,7 @@ public class XBPQ extends Spider {
     /**
      * XML 模式搜索结果解析（RSS 格式：item/title/link/pic/pubDate）。
      */
-    private JSONObject parseXmlSearch(String html) {
+    private String parseXmlSearch(String html) {
         try {
             String itemSel = getConfig("<item>&&</item>", "搜索数组", "sea_arr_pre");
             String titleSel = getConfig("<title>&&</title>", "搜索标题", "sea_title");
@@ -2350,10 +2350,10 @@ public class XBPQ extends Spider {
                 } catch (Exception ignored) {
                 }
             }
-            return new JSONObject().put("list", list);
+            return new JSONObject().put("list", list).toString();
         } catch (Exception e) {
             SpiderDebug.log(e);
-            return new JSONObject().put("list", new JSONArray());
+            return new JSONObject().put("list", new JSONArray()).toString();
         }
     }
 
@@ -2748,7 +2748,7 @@ public class XBPQ extends Spider {
             }
 
             SpiderDebug.log("proxy 发起HTTP请求");
-            Response response = OkHttp.newCall(url, null);
+            Response response = OkHttp.newCall(url, (String) null);
             if (!response.isSuccessful()) {
                 SpiderDebug.log("proxy 请求失败: code=" + response.code());
                 response.close();
@@ -3074,9 +3074,7 @@ public class XBPQ extends Spider {
      * @param value 缓存值
      */
     public static void putVerifyState(String key, String value) {
-        java.lang.ref.WeakReference<String> ref = value == null ? null
-                : new java.lang.ref.WeakReference<String>(value);
-        verifyStateMap.put(key, ref);
+        verifyStateMap.put(key, value);
     }
 
     /**
@@ -3897,7 +3895,7 @@ public class XBPQ extends Spider {
             if (json == null || json.isEmpty()) {
                 return new JSONArray();
             }
-            JSONObject obj = Json.safeObject(json);
+            JsonObject obj = Json.safeObject(json);
             if (obj == null) {
                 return new JSONArray();
             }
