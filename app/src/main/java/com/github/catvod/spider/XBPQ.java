@@ -263,6 +263,24 @@ public class XBPQ extends Spider {
     public String sniffCachePrefix = "";
     /** 后缀解码模板（含工具链，用于播放 URL 解码）。 */
     public String suffixDecode = "";
+    /** 播放列表二次截取前置（播放数组提取前再截取一次）。 */
+    public String playArrTwice = "";
+    /** 线路列表二次截取前置。 */
+    public String lineArrTwice = "";
+    /** 动态分类数组前缀（""=标准模式，非空=从页面动态提取分类列表）。 */
+    public String catArrayPre = "";
+    /** 动态分类标题选择器。 */
+    public String catTitleSel = "";
+    /** 动态分类ID选择器。 */
+    public String catIdSel = "";
+    /** 搜索请求头配置（格式同请求头，Key$Value 用 # 分隔）。 */
+    public String searchReqHeader = "";
+    /** 播放请求头配置。 */
+    public String playReqHeader = "";
+    /** 免嗅开关（"1"=跳过嗅探，直接播放；""=正常嗅探）。 */
+    public boolean skipSniff = false;
+    /** 直接播放开关（"1"=播放链接直接输出，不做嗅探/跳转等处理）。 */
+    public boolean directPlay = false;
     /** 变量缓存（避免重复计算，配置重载时清空）。ConcurrentHashMap 保证多线程搜索/解析并发安全。 */
     public final Map<String, String> varCache = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -321,7 +339,7 @@ public class XBPQ extends Spider {
                     json = new JSONObject(content);
                 }
             } else if (extend.startsWith("{")) {
-                json = new JSONObject(extend);
+                json = new JSONObject(removeJsonComments(extend));
             } else {
                 json = new JSONObject();
                 String safe = extend.replace("\\,", "逗号");
@@ -428,6 +446,15 @@ public class XBPQ extends Spider {
         sniffCachePrefix = cacheKey + "_sniff_";
         // 后缀解码：播放 URL 解码模板（含工具链，interpolate 时触发 fetch+decode）
         suffixDecode = config.get("", "后缀解码");
+        playArrTwice = config.get("", "播放二次截取", "play_arr_twice");
+        lineArrTwice = config.get("", "线路二次截取", "line_arr_twice");
+        catArrayPre = config.get("", "分类数组", "cat_arr_pre");
+        catTitleSel = config.get("", "分类标题", "cat_title_sel");
+        catIdSel = config.get("", "分类ID", "cat_id_sel");
+        searchReqHeader = config.get("", "搜索请求头", "search_req_header");
+        playReqHeader = config.get("", "播放请求头", "play_req_header");
+        skipSniff = "1".equals(config.get("", "免嗅", "skipSniff"));
+        directPlay = "1".equals(config.get("", "直接播放", "directPlay"));
 
         // ===== 第二阶段：域名发现链（网络 I/O，独立 try-catch，失败不影响分类显示） =====
         try {
@@ -527,6 +554,45 @@ public class XBPQ extends Spider {
     // ==================== 分类列表解析 ====================
 
     /**
+     * 移除 JSON 字符串中的 // 注释和 # 注释（行内注释）。
+     * XBPQ 配置中允许使用 // 和 # 写注释，但标准 JSON 不支持，解析前需清理。
+     * 注意：不处理 JSON 值内部的 // 或 # 字符（如 URL 中含 //）。
+     */
+    public static String removeJsonComments(String json) {
+        if (json == null) return "";
+        StringBuilder sb = new StringBuilder();
+        boolean inString = false;
+        char prev = 0;
+        for (int i = 0; i < json.length(); i++) {
+            char c = json.charAt(i);
+            if (inString) {
+                sb.append(c);
+                if (c == '\\' && prev == '\\') {
+                    // 双反斜杠：转义序列，下一个字符不改变状态
+                } else if (c == '"') {
+                    inString = false;
+                }
+                prev = c;
+            } else {
+                if (c == '"') {
+                    inString = true;
+                    sb.append(c);
+                } else if (c == '/' && i + 1 < json.length() && json.charAt(i + 1) == '/') {
+                    // 行注释：跳过到行末
+                    while (i < json.length() && json.charAt(i) != '\n') i++;
+                } else if (c == '#') {
+                    // 行注释（YAML风格）：跳过到行末
+                    while (i < json.length() && json.charAt(i) != '\n') i++;
+                } else {
+                    sb.append(c);
+                }
+                prev = c;
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
      * 清理配置中读取的 URL 字符串：去除首尾空格和反引号。
      * XBPQ 配置中 URL 常被反引号包裹（如 `` `https://example.com` ``），
      * 不清理会导致 URL 验证失败和 HTTP 请求异常。
@@ -582,6 +648,33 @@ public class XBPQ extends Spider {
     private ArrayList<String> parseCategoryList() {
         ArrayList<String> result = new ArrayList<>();
         if (config == null) return result;
+        // 动态分类数组：先从页面提取分类列表（优先于静态配置）
+        if (!catArrayPre.isEmpty()) {
+            try {
+                String homeUrl = !baseUrl.isEmpty() ? baseUrl : hostUrl;
+                if (homeUrl.isEmpty()) homeUrl = config.get("", "主页url", "主页");
+                if (homeUrl.isEmpty()) homeUrl = cleanUrl(config.get("", "分类url", "分类链接", "fenlei"));
+                if (!homeUrl.isEmpty() && !homeUrl.startsWith("http"))
+                    homeUrl = baseUrl + (homeUrl.startsWith("/") ? "" : "/") + homeUrl;
+                if (!homeUrl.isEmpty() && homeUrl.startsWith("http")) {
+                    String homeHtml = XBPQHttp.fetchHtml(this, homeUrl);
+                    if (homeHtml != null && !homeHtml.isEmpty()) {
+                        String arrPre = catArrayPre.contains("&&") ? catArrayPre.split("&&")[0] : catArrayPre;
+                        String arrSuf = catArrayPre.contains("&&")
+                                ? catArrayPre.split("&&", 2)[1] : "</";
+                        List<String> items = XBPQParse.extractAll(this, homeHtml, arrPre, arrSuf);
+                        String titleSel = catTitleSel.isEmpty() ? ">&&<" : catTitleSel;
+                        String idSel = catIdSel.isEmpty() ? "href=\"&&\"" : catIdSel;
+                        for (String item : items) {
+                            String name = XBPQParse.pick(this, item, titleSel);
+                            String id = XBPQParse.pick(this, item, idSel);
+                            if (!name.isEmpty()) result.add(name + "$" + id);
+                        }
+                        if (!result.isEmpty()) return result;
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
         // 优先读"分类名称"（道长 XYQ），其次读"分类"（标准 XBPQ / 名+值 / 仅名称）
         String names = config.get("", "分类名称", "分类");
         if (names.isEmpty()) return result;
@@ -1251,6 +1344,11 @@ public class XBPQ extends Spider {
             // 阶段 2：URL 前处理（路径补全、xp 协议、;post 请求）
             String playUrl = XBPQPlayer.preprocessPlayUrl(this, id);
 
+            // 直接播放模式："直接播放"=1 时跳过所有嗅探/跳转，直接返回播放地址
+            if (directPlay && playUrl.startsWith("http")) {
+                return Result.get().parse(0).url(playUrl).header(XBPQHttp.buildHeaderMap(this)).string();
+            }
+
             // 阶段 3：JS 渲染（sniffConfig 含 J）
             String jsResult = XBPQPlayer.handleJsRender(this, playUrl);
             if (jsResult != null) return jsResult;
@@ -1265,9 +1363,11 @@ public class XBPQ extends Spider {
             // 阶段 6：验证码异步处理
             XBPQPlayer.handleVerificationAsync(this, playUrl);
 
-            // 阶段 7：免嗅处理
-            String sniffResult = XBPQPlayer.handleSniffing(this, playUrl);
-            if (sniffResult != null) return sniffResult;
+            // 阶段 7：免嗅处理（skipSniff=1 时跳过）
+            if (!skipSniff) {
+                String sniffResult = XBPQPlayer.handleSniffing(this, playUrl);
+                if (sniffResult != null) return sniffResult;
+            }
 
             // 阶段 8：加密播放解密
             String decryptResult = XBPQPlayer.handleDecryption(this, playUrl);
@@ -1423,8 +1523,11 @@ public class XBPQ extends Spider {
             }
 
             String html;
+            Map<String, String> extraSearchHeaders = XBPQHttp.parseExtraHeaders(this, searchReqHeader);
             if (fullUrl.contains(";post")) {
                 html = XBPQHttp.fetchPost(this, fullUrl.replace(";post", ""));
+            } else if (!extraSearchHeaders.isEmpty()) {
+                html = XBPQHttp.fetchHtmlWithExtra(this, fullUrl, extraSearchHeaders);
             } else {
                 html = XBPQHttp.fetchHtml(this, fullUrl);
             }
@@ -1433,11 +1536,12 @@ public class XBPQ extends Spider {
                 return result;
             }
 
-            // 搜索模式：强制指定解析模式（json/xml），未指定时自动检测
+            // 搜索模式：强制指定解析模式
+            // "1"/"" → HTML 截取（默认），"json" → JSON 解析，"xml" → XML/RSS 解析
             String searchMode = config.get("", "搜索模式", "ssmoshi");
 
-            // JSON 模式
-            if ("json".equals(searchMode) || html.trim().startsWith("{") || html.trim().startsWith("[")) {
+            // JSON 模式：仅明确指定 "json" 时进入（避免 HTML 以 { 开头被误判）
+            if ("json".equals(searchMode)) {
                 return parseJsonSearch(html);
             }
 
