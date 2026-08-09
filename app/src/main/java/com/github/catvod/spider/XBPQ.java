@@ -122,7 +122,7 @@ public class XBPQ extends Spider {
     // ==================== 实例字段 ====================
 
     /** 站点配置JSON */
-    protected JsonObject siteConfig;
+    protected JSONObject siteConfig;
 
     /** 站点地址 */
     protected String homeUrl = "";
@@ -462,7 +462,7 @@ public class XBPQ extends Spider {
         super.init(ctx, extend);
         this.extend = extend;
         this.name = "XBPQ";
-        this.siteConfig = Json.safeObject(extend);
+        this.siteConfig = new JSONObject(extend);
 
         // 读取基础配置
         this.homeUrl = siteConfig.optString(XbpqConfigKey.HOME_URL, "");
@@ -743,8 +743,8 @@ public class XBPQ extends Spider {
      */
     private String getJson(String json, String key) {
         try {
-            JsonObject obj = Json.safeObject(json);
-            return Json.getString(obj, key);
+            JSONObject obj = new JSONObject(json);
+            return obj.optString(key, "");
         } catch (Exception e) {
             return "";
         }
@@ -755,8 +755,8 @@ public class XBPQ extends Spider {
      */
     private String getJson(String json, String key, String defaultVal) {
         try {
-            JsonObject obj = Json.safeObject(json);
-            return Json.getString(obj, key, defaultVal);
+            JSONObject obj = new JSONObject(json);
+            return obj.optString(key, defaultVal);
         } catch (Exception e) {
             return defaultVal;
         }
@@ -2229,7 +2229,7 @@ public class XBPQ extends Spider {
             
             // JSON 模式：仅明确指定 "json" 时进入
             if ("json".equals(searchMode)) {
-                return parseJsonSearch(html);
+                return parseJsonSearch(html).toString();
             }
 
             // XML 模式（RSS）
@@ -3418,7 +3418,7 @@ public class XBPQ extends Spider {
         }
         try {
             org.jsoup.nodes.Document doc = org.jsoup.Jsoup.parse(rough);
-            org.jsoup.select.Element el = doc.selectFirst(selector);
+            Element el = doc.selectFirst(selector);
             if (el == null) {
                 return rough.trim();
             }
@@ -3530,7 +3530,7 @@ public class XBPQ extends Spider {
                 return "";
             }
             // 尝试从JSON对象中获取
-            JSONObject obj = Json.safeObject(content);
+            JSONObject obj = new JSONObject(content);
             if (obj != null) {
                 String val = obj.optString(key, "");
                 if (!val.isEmpty()) {
@@ -3840,15 +3840,15 @@ public class XBPQ extends Spider {
     /**
      * 解析JSON字符串。
      */
-    private JsonObject parseJson(String json) {
+    private JSONObject parseJson(String json) {
         try {
             if (json == null || json.isEmpty()) {
-                return new JsonObject();
+                return new JSONObject();
             }
-            return Json.safeObject(json);
+            return new JSONObject(json);
         } catch (Exception e) {
             SpiderDebug.log(e);
-            return new JsonObject();
+            return new JSONObject();
         }
     }
 
@@ -3861,7 +3861,7 @@ public class XBPQ extends Spider {
             if (content.isEmpty()) {
                 return new JSONObject();
             }
-            return Json.safeObject(content);
+            return new JSONObject(content);
         } catch (Exception e) {
             SpiderDebug.log(e);
             return new JSONObject();
@@ -3895,7 +3895,7 @@ public class XBPQ extends Spider {
             if (json == null || json.isEmpty()) {
                 return new JSONArray();
             }
-            JsonObject obj = Json.safeObject(json);
+            JSONObject obj = new JSONObject(json);
             if (obj == null) {
                 return new JSONArray();
             }
@@ -3985,9 +3985,9 @@ public class XBPQ extends Spider {
                 return "";
             }
             // 尝试从JSON对象中提取
-            JsonObject obj = Json.safeObject(content);
+            JSONObject obj = new JSONObject(content);
             if (obj != null) {
-                String val = Json.getString(obj, key);
+                String val = obj.optString(key, "");
                 if (!val.isEmpty()) {
                     // 清理特殊字符
                     val = val.replace("|", "");
