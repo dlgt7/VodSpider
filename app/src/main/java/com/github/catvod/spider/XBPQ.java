@@ -336,7 +336,7 @@ public class XBPQ extends Spider {
                     json.put("分类url", extend);
                 } else {
                     String content = OkHttp.string(extend, XBPQHttp.buildHeaders(this));
-                    json = new JSONObject(content);
+                    json = new JSONObject(removeJsonComments(content));
                 }
             } else if (extend.startsWith("{")) {
                 json = new JSONObject(removeJsonComments(extend));
