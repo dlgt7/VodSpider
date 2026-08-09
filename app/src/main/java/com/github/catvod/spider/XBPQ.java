@@ -2295,7 +2295,9 @@ public class XBPQ extends Spider {
                 }
             }
             if (searchList == null) {
-                return new JSONObject().put("list", new JSONArray());
+                JSONObject result = new JSONObject();
+                try { result.put("list", new JSONArray()); } catch (JSONException je) {}
+                return result;
             }
             String nameKey = getConfig("name", "搜索标题", "jsname", "jsonname");
             String idKey = getConfig("id", "搜索链接", "jsid", "jsonid");
@@ -2316,7 +2318,11 @@ public class XBPQ extends Spider {
             return new JSONObject().put("list", list);
         } catch (Exception e) {
             SpiderDebug.log(e);
-            return new JSONObject().put("list", new JSONArray());
+            try {
+                return new JSONObject().put("list", new JSONArray());
+            } catch (JSONException je) {
+                return new JSONObject();
+            }
         }
     }
 
@@ -2716,7 +2722,11 @@ public class XBPQ extends Spider {
      */
     private void ensureSiteConfig() {
         if (siteConfig == null) {
-            siteConfig = new JSONObject(extend);
+            try {
+                siteConfig = new JSONObject(extend);
+            } catch (JSONException je) {
+                siteConfig = new JSONObject();
+            }
         }
     }
 
