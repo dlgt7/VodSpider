@@ -1,4 +1,4 @@
-package com.github.catvod.spider;
+package com.github.catvod.bean.xyqbiu;
 
 /**
  * XBPQ 配置键常量。

@@ -1,4 +1,4 @@
-package com.github.catvod.spider;
+package com.github.catvod.bean.xyqbiu;
 
 import java.util.Map;
 import java.util.regex.Matcher;
