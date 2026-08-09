@@ -5,6 +5,7 @@ import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.net.OkHttp;
 import com.github.catvod.spider.Init;
 import com.github.catvod.spider.XBPQ;
+import com.github.catvod.utils.Notify;
 import android.util.Base64;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
@@ -134,12 +135,12 @@ public final class XBPQPlayer {
                                 main.verifyStateMap.put(verifyUrl, "0");
                                 return;
                             }
-                            Init.show("正在验证...");
+                            Notify.show("正在验证...");
                             boolean verified = handleVerification(main, verifyUrl, html, verifyConfig);
                             if (!verified) main.verifyStateMap.put(verifyUrl, "0");
                         } else {
                             main.verifyStateMap.put(verifyUrl, "1");
-                            Init.show("验证成功！");
+                            Notify.show("验证成功！");
                         }
                     } catch (Exception e) {
                         SpiderDebug.log(e);
@@ -437,7 +438,7 @@ public final class XBPQPlayer {
                 }
             }
             if ("cookie".equals(main.playMode)) {
-                Init.show(playUrl);
+                Notify.show(playUrl);
             }
             return playUrl;
         } catch (Exception e) {
@@ -501,7 +502,7 @@ public final class XBPQPlayer {
                 }
             }
             main.verifyStateMap.put(playUrl, "1");
-            Init.show("验证成功！");
+            Notify.show("验证成功！");
             return true;
         } catch (Exception e) {
             SpiderDebug.log(e);
