@@ -8,6 +8,10 @@ import android.content.pm.PackageManager;
 import android.os.Handler;
 import android.os.Looper;
 
+import android.widget.Toast;
+
+import com.github.catvod.utils.Notify;
+
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -205,6 +209,20 @@ public class Init {
 
     public static boolean contains(String key) {
         return get().prefers != null && get().prefers.contains(key);
+    }
+
+    private static String localProxyPort;
+
+    public static String getLocalProxyPort() {
+        return localProxyPort;
+    }
+
+    public static void setLocalProxyPort(String port) {
+        localProxyPort = port;
+    }
+
+    public static void show(String text) {
+        Notify.show(text);
     }
 
     public static void shutdown() {

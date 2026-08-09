@@ -19,7 +19,6 @@ import com.github.catvod.crawler.Spider;
 import com.github.catvod.crawler.SpiderApi;
 import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.net.OkHttp;
-import com.github.catvod.spider.merge.xbpq.HaB;
 import com.github.catvod.utils.Util;
 
 import org.json.JSONArray;
@@ -284,8 +283,8 @@ public class XBPQ extends Spider {
     public void init(Context context, String extend) {
         super.init(context, extend);
         // 兜底设置本地代理端口（initApi 可能未被框架调用）
-        if (Init.localProxyPort == null || Init.localProxyPort.isEmpty()) {
-            Init.localProxyPort = this.port;
+        if (Init.getLocalProxyPort() == null || Init.getLocalProxyPort().isEmpty()) {
+            Init.setLocalProxyPort(this.port);
         }
         // 日志：输出 extend 原始值（截断防止过长）
         if (spiderApi != null) {
@@ -632,7 +631,7 @@ public class XBPQ extends Spider {
         this.spiderApi = api;
         this.port = api.getPort();
         if (this.port == null || this.port.isEmpty()) this.port = DEFAULT_PORT;
-        Init.localProxyPort = this.port;
+        Init.setLocalProxyPort(this.port);
         api.log("Id版端口：" + port);
     }
 
@@ -1781,7 +1780,7 @@ public class XBPQ extends Spider {
     public String decrypt(String encrypted, String charset, String key, String iv) {
         try {
             // 密钥处理：hex → byte[] → XOR with "wxEesU"
-            byte[] keyBytes = HaB.d(key).getBytes(charset);
+            byte[] keyBytes = XBPQCrypto.decryptHex(key).getBytes(charset);
             javax.crypto.spec.SecretKeySpec secretKey =
                     new javax.crypto.spec.SecretKeySpec(keyBytes, "AES");
 
