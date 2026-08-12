@@ -4,22 +4,28 @@ import android.text.TextUtils;
 
 import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.spider.Init;
-import com.github.catvod.utils.SslSocketFactory;
-import com.github.catvod.utils.TrustAllManager;
 import com.github.catvod.utils.Util;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
+import javax.net.ssl.HostnameVerifier;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocketFactory;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
+
 import okhttp3.Call;
 import okhttp3.Callback;
 import okhttp3.Dns;
-import okhttp3.Headers;
 import okhttp3.HttpUrl;
 import okhttp3.Interceptor;
 import okhttp3.MediaType;
@@ -438,7 +444,7 @@ public class OkHttp {
 
         if (trustAll) {
             builder.hostnameVerifier((hostname, session) -> true)
-                   .sslSocketFactory(new SslSocketFactory(), new TrustAllManager());
+                   .sslSocketFactory(createTrustAllSslSocketFactory(), createTrustAllManager());
         }
 
         builder.connectionPool(new okhttp3.ConnectionPool(10, 5, TimeUnit.MINUTES));
@@ -561,12 +567,48 @@ public class OkHttp {
     private static String bodyToString(RequestBody body) {
         if (body == null) return "";
         try {
-            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
-            body.writeTo(out);
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            body.writeTo(new okhttp3.ResponseBody() {
+                @Override public MediaType contentType() { return null; }
+                @Override public long contentLength() { return 0; }
+                @Override public okhttp3.Source source() { throw new UnsupportedOperationException(); }
+            });
             return out.toString("UTF-8");
         } catch (IOException e) {
             SpiderDebug.log(e);
             return "";
         }
+    }
+
+    // ==================== SSL 工具（内联，替代不存在的 SslSocketFactory/TrustAllManager） ====================
+
+    /**
+     * 创建信任所有证书的 SSLSocketFactory
+     */
+    private static SSLSocketFactory createTrustAllSslSocketFactory() {
+        try {
+            SSLContext sslContext = SSLContext.getInstance("TLS");
+            sslContext.init(null, new TrustManager[]{createTrustAllManager()}, new java.security.SecureRandom());
+            return sslContext.getSocketFactory();
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+            return (SSLSocketFactory) SSLSocketFactory.getDefault();
+        }
+    }
+
+    /**
+     * 创建信任所有证书的 TrustManager
+     */
+    private static X509TrustManager createTrustAllManager() {
+        return new X509TrustManager() {
+            @Override
+            public void checkClientTrusted(X509Certificate[] chain, String authType) throws CertificateException {}
+            @Override
+            public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {}
+            @Override
+            public X509Certificate[] getAcceptedIssuers() {
+                return new X509Certificate[0];
+            }
+        };
     }
 }
