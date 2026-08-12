@@ -27,19 +27,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import okhttp3.Response;
-
-// ==================== 验证码回调接口 ====================
-
-/**
- * 验证码验证回调接口
- */
-public interface CaptchaCallback {
-    /**
-     * 验证码验证回调
-     * @param code 用户输入的验证码或采集到的Cookie
-     */
-    void vertifyCode(String code);
-}
+import okhttp3.ResponseBody;
 
 /**
  * JavaScript key 获取工具（用于 WebView 验证码）
@@ -58,16 +46,26 @@ final class HttpWebView {
         Handler mainHandler = new Handler(Looper.getMainLooper());
         final WebView[] result = {null};
         final CountDownLatch latch = new CountDownLatch(1);
-        mainHandler.post(() -> {
-            result[0] = buildWebView(context);
-            latch.countDown();
+        final boolean[] isTimedOut = {false};
+        boolean posted = mainHandler.post(() -> {
+            if (isTimedOut[0]) return;
+            try {
+                result[0] = buildWebView(context);
+            } catch (Exception e) {
+                SpiderDebug.log(e);
+            } finally {
+                latch.countDown();
+            }
         });
+        if (!posted) return null;
         try {
             if (!latch.await(3, TimeUnit.SECONDS)) {
+                isTimedOut[0] = true;
                 SpiderDebug.log("HttpWebView.createWebView 主线程等待超时");
                 return null;
             }
         } catch (InterruptedException e) {
+            isTimedOut[0] = true;
             Thread.currentThread().interrupt();
             return null;
         }
@@ -199,6 +197,7 @@ public class SliderVerifyUtils {
     
     private volatile String verifyCookie = "";
     private volatile long verifiedAt = 0;
+    private volatile boolean isVerifying = false; // 标记是否有线程正在执行验证，防止并发击穿
     private final ReentrantLock verifyLock = new ReentrantLock();
     private String ddddOcrApi = "";
     private String jsKeyUrl = ""; // JS验证码key接口地址，为空则不主动获取
@@ -304,9 +303,13 @@ public class SliderVerifyUtils {
                 }
 
             } else {
-                // 直接作为ddddocr API地址
-                ddddOcrApi = extend.replaceAll("/$", "");
-                SpiderDebug.log("设置ddddocr API: " + ddddOcrApi);
+                // 直接作为 ddddocr API 地址（必须 http(s) 开头才采纳）
+                if (extend.startsWith("http://") || extend.startsWith("https://")) {
+                    ddddOcrApi = extend.replaceAll("/$", "");
+                    SpiderDebug.log("设置ddddocr API: " + ddddOcrApi);
+                } else {
+                    SpiderDebug.log("略过非法的扩展打码配置: " + extend);
+                }
             }
         } catch (Exception e) {
             SpiderDebug.log(e);
@@ -380,28 +383,29 @@ public class SliderVerifyUtils {
      */
     private void saveCache() {
         verifiedAt = System.currentTimeMillis();
-        
+
         if (!enableCache || sharedPreferences == null) return;
-        
+
         try {
+            // 使用 commit() 替代 apply()，确保高并发下磁盘落盘数据的绝对可见性
             sharedPreferences.edit()
                     .putString(cacheKey, verifyCookie + '\u0001' + verifiedAt)
-                    .apply();
+                    .commit();
         } catch (Exception e) {
             SpiderDebug.log(e);
         }
     }
-    
+
     /**
      * 清除缓存
      */
     public void clearCache() {
         verifyCookie = "";
         verifiedAt = 0;
-        
+
         if (sharedPreferences != null) {
             try {
-                sharedPreferences.edit().remove(cacheKey).apply();
+                sharedPreferences.edit().remove(cacheKey).commit();
             } catch (Exception e) {
                 SpiderDebug.log(e);
             }
@@ -419,9 +423,21 @@ public class SliderVerifyUtils {
     /**
      * 销毁验证码弹窗 WebView，释放内存（防止 OOM）
      */
+    /**
+     * 销毁验证码弹窗 WebView，断开父联并释放内存（防止 OOM 与内存泄漏）
+     */
     public void destroyWebView() {
         if (captchaWebView != null) {
             try {
+                // 1. 安全从父布局移除，切断 View 树引用
+                if (captchaWebView.getParent() != null) {
+                    ((android.view.ViewGroup) captchaWebView.getParent()).removeView(captchaWebView);
+                }
+                // 2. 清除历史与缓存
+                captchaWebView.clearHistory();
+                captchaWebView.clearCache(true);
+                captchaWebView.loadUrl("about:blank");
+                // 3. 彻底销毁
                 captchaWebView.destroy();
             } catch (Exception e) {
                 SpiderDebug.log(e);
@@ -504,6 +520,25 @@ public class SliderVerifyUtils {
             return content;
         }
 
+        // 锁外前置判定：若有线程正在锁内打码，短暂自旋等待其完成，避免拿旧 Cookie 返回验证页给业务层
+        int spinRetries = 5;
+        while (isVerifying && spinRetries > 0) {
+            try {
+                TimeUnit.MILLISECONDS.sleep(300);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+            spinRetries--;
+            // 若打码线程已完成且 Cookie 有效，直接用新 Cookie 快速通关
+            if (!isVerifying && !TextUtils.isEmpty(verifyCookie)) {
+                headers.put("Cookie", verifyCookie);
+                content = OkHttp.string(url, headers);
+                if (!isVerifyPage(content)) {
+                    return content;
+                }
+            }
+        }
+
         // 第二阶段：检测到验证页面，加锁执行验证（原子操作）
         verifyLock.lock();
         try {
@@ -526,6 +561,9 @@ public class SliderVerifyUtils {
                     }
                 }
             }
+
+            // 🔥 双重检查彻底失败，确定需要打码，再对外宣示状态
+            isVerifying = true;
 
             VerifyType detectedType = detectVerifyType(content);
             SpiderDebug.log("检测到验证页面，类型：" + detectedType.getDesc());
@@ -555,6 +593,7 @@ public class SliderVerifyUtils {
             SpiderDebug.log(e);
             return "";
         } finally {
+            isVerifying = false; // 确保标志位一定被复位，防止死锁
             verifyLock.unlock();
         }
     }
@@ -586,7 +625,7 @@ public class SliderVerifyUtils {
 
     /**
      * TVB滑动验证（针对huadong_*.js）
-     * 使用 try-with-resources 确保 Response 正确关闭
+     * 企业级重构：彻底规避隐式 NPE 及 OkHttp 物理连接泄漏
      */
     private boolean passTvbSliderVerify(String html) {
         try {
@@ -601,29 +640,45 @@ public class SliderVerifyUtils {
             String scriptPath = scriptMatcher.group(1);
             String scriptUrl = scriptPath.startsWith("http") ? scriptPath : siteUrl + scriptPath;
 
-            // 获取脚本内容（使用 try-with-resources）
+            // 全程使用局部变量，验证成功后才刷入全局，避免半成品状态污染其他线程
+            String localCookie = this.verifyCookie;
+
+            // ================== 交互 1：获取 JS 脚本内容 ==================
             HashMap<String, String> jsHeaders = new HashMap<>(defaultHeaders);
-            if (!TextUtils.isEmpty(verifyCookie)) {
-                jsHeaders.put("Cookie", verifyCookie);
+            if (!TextUtils.isEmpty(localCookie)) {
+                jsHeaders.put("Cookie", localCookie);
             }
             jsHeaders.put("Referer", siteUrl + "/");
 
             String jsContent = "";
-            try (Response jsResponse = executeRequest(scriptUrl, jsHeaders)) {
-                if (jsResponse == null || !jsResponse.isSuccessful()) {
-                    SpiderDebug.log("获取JS脚本失败");
-                    return false;
-                }
-
-                jsContent = jsResponse.body().string();
-                List<String> setCookies = jsResponse.headers("Set-Cookie");
-                if (setCookies != null) {
-                    for (String cookie : setCookies) {
-                        if (!TextUtils.isEmpty(cookie)) {
-                            verifyCookie = mergeCookie(verifyCookie, cookie);
+            Response jsResponse = executeRequest(scriptUrl, jsHeaders);
+            if (jsResponse != null) {
+                try {
+                    if (jsResponse.isSuccessful()) {
+                        // 嵌套管辖 Body 流，防物理连接泄漏
+                        try (ResponseBody body = jsResponse.body()) {
+                            if (body != null) {
+                                jsContent = body.string();
+                            }
                         }
+                        List<String> setCookies = jsResponse.headers("Set-Cookie");
+                        if (setCookies != null) {
+                            for (String cookie : setCookies) {
+                                if (!TextUtils.isEmpty(cookie)) {
+                                    localCookie = mergeCookie(localCookie, cookie);
+                                }
+                            }
+                        }
+                    } else {
+                        SpiderDebug.log("获取JS脚本响应码异常: " + jsResponse.code());
+                        return false;
                     }
+                } finally {
+                    try { jsResponse.close(); } catch (Exception ignored) {}
                 }
+            } else {
+                SpiderDebug.log("获取JS脚本返回 Response 为空");
+                return false;
             }
 
             if (TextUtils.isEmpty(jsContent)) {
@@ -644,30 +699,38 @@ public class SliderVerifyUtils {
             // 构建验证URL
             String verifyUrl = buildVerifyUrl(verifyPath, key, value);
 
-            // 执行验证（使用 try-with-resources）
+            // ================== 交互 2：执行滑块验证冲刺 ==================
             HashMap<String, String> verifyHeaders = new HashMap<>(defaultHeaders);
-            if (!TextUtils.isEmpty(verifyCookie)) {
-                verifyHeaders.put("Cookie", verifyCookie);
+            if (!TextUtils.isEmpty(localCookie)) {
+                verifyHeaders.put("Cookie", localCookie);
             }
             verifyHeaders.put("Referer", siteUrl + "/");
 
-            boolean success;
-            try (Response verifyResponse = executeRequest(verifyUrl, verifyHeaders)) {
-                if (verifyResponse == null) {
-                    SpiderDebug.log("验证请求失败");
-                    return false;
-                }
-
-                List<String> verifyCookies = verifyResponse.headers("Set-Cookie");
-                if (verifyCookies != null) {
-                    for (String cookie : verifyCookies) {
-                        if (!TextUtils.isEmpty(cookie)) {
-                            verifyCookie = mergeCookie(verifyCookie, cookie);
+            boolean success = false;
+            Response verifyResponse = executeRequest(verifyUrl, verifyHeaders);
+            if (verifyResponse != null) {
+                try {
+                    success = verifyResponse.isSuccessful();
+                    // 🔥 核心修正：必须管辖 ResponseBody，否则底层 Socket 物理连接永远无法归还连接池
+                    try (ResponseBody body = verifyResponse.body()) {
+                        if (success) {
+                            List<String> verifyCookies = verifyResponse.headers("Set-Cookie");
+                            if (verifyCookies != null) {
+                                for (String cookie : verifyCookies) {
+                                    if (!TextUtils.isEmpty(cookie)) {
+                                        localCookie = mergeCookie(localCookie, cookie);
+                                    }
+                                }
+                                this.verifyCookie = localCookie;
+                            }
                         }
                     }
+                } finally {
+                    try { verifyResponse.close(); } catch (Exception ignored) {}
                 }
-
-                success = verifyResponse.isSuccessful();
+            } else {
+                SpiderDebug.log("验证请求返回 Response 为空");
+                return false;
             }
 
             SpiderDebug.log("TVB滑块验证" + (success ? "成功" : "失败"));
@@ -750,23 +813,25 @@ public class SliderVerifyUtils {
             // 发送请求（使用短超时，防止外部打码服务挂起时锁住线程）
             String apiUrl = ddddOcrApi + "/verify";
             String response = executeRequestBody(apiUrl, apiHeaders);
-            if (response == null || TextUtils.isEmpty(response)) {
-                SpiderDebug.log("外部验证服务请求失败或超时");
+            if (TextUtils.isEmpty(response) || !response.trim().startsWith("{")) {
+                SpiderDebug.log("外部验证服务返回非合法JSON数据或超时");
                 return false;
             }
-            
+
             // 解析响应
             JSONObject data = new JSONObject(response);
             String cookie = extractCookieFromResponse(data);
             
             if (!TextUtils.isEmpty(cookie)) {
-                // 合并cookie
+                // 全程局部变量，确认成功后一次性刷入全局
                 String[] cookies = cookie.split(";\\s*");
+                String tempCookie = this.verifyCookie;
                 for (String c : cookies) {
                     if (!TextUtils.isEmpty(c)) {
-                        verifyCookie = mergeCookie(verifyCookie, c);
+                        tempCookie = mergeCookies(tempCookie, c);
                     }
                 }
+                this.verifyCookie = tempCookie;
                 SpiderDebug.log("外部验证服务成功，已更新cookie");
                 return true;
             }
@@ -829,11 +894,22 @@ public class SliderVerifyUtils {
      * 执行HTTP请求并返回响应体字符串（带短超时，用于外部打码服务调用）
      */
     private String executeRequestBody(String url, Map<String, String> headers) {
-        try (Response response = OkHttp.newCall(url, headers, VERIFY_IO_TIMEOUT_MS)) {
-            return response != null ? response.body().string() : null;
+        // 1. 锁外安全获取 Response，不直接放入 try(...) 防 null.close() NPE
+        Response response = null;
+        try {
+            response = OkHttp.newCall(url, headers, VERIFY_IO_TIMEOUT_MS);
+            if (response == null || !response.isSuccessful()) return null;
+            // 2. 精准嵌套管辖 Body 物理流，防死锁和连接池干涸
+            try (ResponseBody body = response.body()) {
+                return body != null ? body.string() : null;
+            }
         } catch (Exception e) {
             SpiderDebug.log(e);
             return null;
+        } finally {
+            if (response != null) {
+                try { response.close(); } catch (Exception ignored) {}
+            }
         }
     }
     
@@ -918,7 +994,12 @@ public class SliderVerifyUtils {
         StringBuilder sb = new StringBuilder();
         for (Map.Entry<String, String> entry : jar.entrySet()) {
             if (sb.length() > 0) sb.append("; ");
-            sb.append(entry.getKey()).append("=").append(entry.getValue());
+            // 无值的 Flag（如 HttpOnly）不加 '=' 号，避免输出脏数据
+            if (TextUtils.isEmpty(entry.getValue())) {
+                sb.append(entry.getKey());
+            } else {
+                sb.append(entry.getKey()).append("=").append(entry.getValue());
+            }
         }
         return sb.toString();
     }
@@ -926,19 +1007,25 @@ public class SliderVerifyUtils {
     private static void parseCookiePair(String pair, HashMap<String, String> jar) {
         if (TextUtils.isEmpty(pair)) return;
         int idx = pair.indexOf('=');
-        if (idx > 0) {
-            String name = pair.substring(0, idx).trim();
-            String value = pair.substring(idx + 1).trim();
-            // 跳过属性项（如 Path=/, HttpOnly, Expires=...）
-            if (!name.equalsIgnoreCase("Path")
-                    && !name.equalsIgnoreCase("Domain")
-                    && !name.equalsIgnoreCase("Expires")
-                    && !name.equalsIgnoreCase("Max-Age")
-                    && !name.equalsIgnoreCase("HttpOnly")
-                    && !name.equalsIgnoreCase("Secure")
-                    && !name.equalsIgnoreCase("SameSite")) {
-                jar.put(name, value);
-            }
+        String name;
+        String value;
+        if (idx >= 0) {
+            name = pair.substring(0, idx).trim();
+            value = pair.substring(idx + 1).trim();
+        } else {
+            // 允许无 '=' 的标记（如 HttpOnly 独立标头），以空字符串为值写入
+            name = pair.trim();
+            value = "";
+        }
+        if (!TextUtils.isEmpty(name)
+                && !name.equalsIgnoreCase("Path")
+                && !name.equalsIgnoreCase("Domain")
+                && !name.equalsIgnoreCase("Expires")
+                && !name.equalsIgnoreCase("Max-Age")
+                && !name.equalsIgnoreCase("HttpOnly")
+                && !name.equalsIgnoreCase("Secure")
+                && !name.equalsIgnoreCase("SameSite")) {
+            jar.put(name, value);
         }
     }
     
@@ -992,14 +1079,27 @@ public class SliderVerifyUtils {
      * 通过 OkHttp 请求配置的 /key 接口获取，失败时返回空字符串
      * jsKeyUrl 为空时返回空字符串（避免无意义请求）
      */
+    /**
+     * 获取 JS 验证码 Key
+     * 修复版：彻底切断隐式 null.close() 导致的 NPE 闪退
+     */
     public static String getJsKey(String jsKeyUrl) {
         if (TextUtils.isEmpty(jsKeyUrl)) return "";
+        okhttp3.Response response = null;
         try {
-            String body = OkHttp.string(jsKeyUrl);
-            return TextUtils.isEmpty(body) ? "" : body.trim();
+            response = OkHttp.newCall(jsKeyUrl, null, VERIFY_IO_TIMEOUT_MS);
+            if (response == null || !response.isSuccessful()) return "";
+            try (okhttp3.ResponseBody body = response.body()) {
+                String bodyStr = body != null ? body.string() : "";
+                return TextUtils.isEmpty(bodyStr) ? "" : bodyStr.trim();
+            }
         } catch (Exception e) {
             SpiderDebug.log(e);
             return "";
+        } finally {
+            if (response != null) {
+                try { response.close(); } catch (Exception ignored) {}
+            }
         }
     }
 
