@@ -67,8 +67,9 @@ class OkRequest {
             // 非法 URL：保留原值，后续 builder.url(url) 会由 OkHttp 抛 IOException，统一走 catch 路径
         }
 
-        // 根据方法决定是否需要 body（DELETE/HEAD 无 body，其他方法需要）
-        boolean hasBody = !(method.equals(OkHttp.DELETE) || method.equals(OkHttp.HEAD));
+        // 根据方法决定是否需要 body
+        boolean hasBody = method.equals(OkHttp.POST) || method.equals(OkHttp.PUT)
+                || method.equals(OkHttp.PATCH) || method.equals(OkHttp.DELETE);
         RequestBody body = hasBody ? getRequestBody() : null;
 
         // 正确的 HTTP 方法分发
@@ -102,13 +103,15 @@ class OkRequest {
         if (!TextUtils.isEmpty(json)) {
             return RequestBody.create(MediaType.get("application/json; charset=utf-8"), json);
         }
-        FormBody.Builder formBody = new FormBody.Builder();
-        if (params != null) {
+        if (params != null && !params.isEmpty()) {
+            FormBody.Builder formBody = new FormBody.Builder();
             for (Map.Entry<String, String> entry : params.entrySet()) {
                 formBody.add(entry.getKey(), entry.getValue() == null ? "" : entry.getValue());
             }
+            return formBody.build();
         }
-        return formBody.build();
+        // 无 body 时返回 null，由调用方根据 HTTP 方法决定
+        return null;
     }
 
     public OkResult execute(OkHttpClient client) {

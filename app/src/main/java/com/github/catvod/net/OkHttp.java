@@ -6,7 +6,6 @@ import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.spider.Init;
 import com.github.catvod.utils.Util;
 
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -34,6 +33,7 @@ import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
 import okhttp3.ResponseBody;
+import okio.Buffer;
 
 /**
  * 网络请求封装（CatVodSpider 专用）
@@ -69,7 +69,7 @@ public class OkHttp {
 
     // ==================== 可配置选项 ====================
     private static volatile Dns customDns;
-    private static volatile boolean trustAllCerts = true;
+    private static volatile boolean trustAllCerts = false;
     private static volatile java.net.Proxy customProxy;
     private static volatile CryptoProvider cryptoProvider;
 
@@ -108,6 +108,7 @@ public class OkHttp {
 
     /**
      * 加解密/签名拦截器（可选，仅在注册了 CryptoProvider 时生效）
+     * 使用 peekBody 保证响应 body 即使解密失败也不会被消费
      */
     private static final Interceptor CRYPTO_INTERCEPTOR = chain -> {
         Request original = chain.request();
@@ -117,30 +118,37 @@ public class OkHttp {
             return chain.proceed(original);
         }
         RequestBody body = original.body();
+        Request encryptedRequest = original;
         if (body != null) {
             String raw = bodyToString(body);
             String encrypted = provider.encryptRequest(url, raw);
             if (encrypted != null && !encrypted.equals(raw)) {
                 MediaType mt = body.contentType();
-                // 保留原始 HTTP 方法，防止 PUT/PATCH/DELETE 被强制改为 POST
-                Request.Builder b = original.newBuilder()
-                        .method(original.method(), RequestBody.create(mt != null ? mt : MediaType.parse("application/octet-stream"), encrypted));
-                return chain.proceed(b.build());
+                encryptedRequest = original.newBuilder()
+                        .method(original.method(), RequestBody.create(mt != null ? mt : MediaType.parse("application/octet-stream"), encrypted))
+                        .build();
             }
         }
-        Response response = chain.proceed(original);
-        // 先保存 contentType，再读取 body（避免 safeString 消费 body 后无法再次读取）
-        MediaType respMt = response.body() != null ? response.body().contentType() : null;
-        String respBody = response.body() != null ? safeString(response.body()) : "";
-        if (!respBody.isEmpty()) {
-            String decrypted = provider.decryptResponse(url, respBody);
-            if (decrypted != null && !decrypted.equals(respBody)) {
-                Response.Builder rb = response.newBuilder();
-                rb.body(ResponseBody.create(respMt != null ? respMt : MediaType.parse("application/octet-stream"), decrypted));
-                return rb.build();
-            }
+        Response response = chain.proceed(encryptedRequest);
+        ResponseBody respBody = response.body();
+        if (respBody == null) return response;
+        // peekBody 会消耗原始 source，必须统一用重建的 body 返回，否则未解密时调用方读到空串
+        long peekSize = respBody.contentLength() > 0
+                ? Math.min(respBody.contentLength(), 16 * 1024 * 1024)
+                : 16 * 1024 * 1024;
+        ResponseBody peeled = respBody.peekBody(peekSize);
+        if (peeled == null) return response;
+        String respStr = peeled.string();
+        MediaType respMt = respBody.contentType();
+        String finalContent = respStr;
+        String decrypted = provider.decryptResponse(url, respStr);
+        if (decrypted != null && !decrypted.equals(respStr)) {
+            finalContent = decrypted;
         }
-        return response;
+        byte[] finalBytes = finalContent.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        Response.Builder rb = response.newBuilder();
+        rb.body(ResponseBody.create(respMt != null ? respMt : MediaType.parse("application/octet-stream"), finalBytes));
+        return rb.build();
     };
 
     // ==================== 请求入口 ====================
@@ -247,12 +255,11 @@ public class OkHttp {
     // ==================== 代理 & 文件 ====================
 
     /**
-     * 代理流：内部完成流拷贝后释放 Response，返回 int[code], String[contentType], byte[]
-     * 调用方直接拿到完整字节，无需管理任何资源
+     * 代理流（内存版）：内部完成流拷贝后释放 Response，返回 int[code], String[contentType], byte[]
+     * 适用于小文件/图片等场景
      */
     public static Object[] proxy(String url, Map<String, String> header) {
         try {
-            // 使用长超时客户端，适合视频流等长时间连接场景
             OkHttpClient streamClient = client(STREAM_TIMEOUT);
             Request.Builder rb = new Request.Builder().url(url);
             if (header != null) for (Map.Entry<String, String> entry : header.entrySet()) rb.addHeader(entry.getKey(), entry.getValue());
@@ -267,6 +274,29 @@ public class OkHttp {
         } catch (Exception e) {
             SpiderDebug.log(e);
             return new Object[]{500, "text/plain", new byte[0]};
+        }
+    }
+
+    /**
+     * 流式代理：返回 Response，调用方通过 response.body().byteStream() 读取流
+     * 适用于视频流等大体积数据，避免 OOM
+     * 调用方必须使用 try-with-resources 关闭 Response 以释放连接池
+     * @return Response，失败时返回 null
+     */
+    public static Response proxyStream(String url, Map<String, String> header) {
+        try {
+            OkHttpClient streamClient = client(STREAM_TIMEOUT);
+            Request.Builder rb = new Request.Builder().url(url);
+            if (header != null) for (Map.Entry<String, String> entry : header.entrySet()) rb.addHeader(entry.getKey(), entry.getValue());
+            Response response = streamClient.newCall(rb.build()).execute();
+            // 不关闭，让调用方统一管理；失败时仍返回 Response 以便调用方检查状态码
+            if (!response.isSuccessful() || response.body() == null) {
+                return response;
+            }
+            return response;
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+            return null;
         }
     }
 
@@ -285,20 +315,22 @@ public class OkHttp {
     public static String download(String url, String path, Map<String, String> header) throws IOException {
         long start = System.currentTimeMillis();
         Response response = newCall(url, header);
-        long duration = System.currentTimeMillis() - start;
-        if (!response.isSuccessful()) {
-            response.close();
-            throw new IOException("HTTP " + response.code());
-        }
         File file = new File(path);
         if (file.getParentFile() != null) file.getParentFile().mkdirs();
-        try (InputStream is = response.body().byteStream();
-             java.io.FileOutputStream fos = new java.io.FileOutputStream(file)) {
-            byte[] buffer = new byte[8192];
-            int len;
-            while ((len = is.read(buffer)) != -1) fos.write(buffer, 0, len);
+        try {
+            if (!response.isSuccessful()) {
+                throw new IOException("HTTP " + response.code());
+            }
+            try (InputStream is = response.body().byteStream();
+                 java.io.FileOutputStream fos = new java.io.FileOutputStream(file)) {
+                byte[] buffer = new byte[8192];
+                int len;
+                while ((len = is.read(buffer)) != -1) fos.write(buffer, 0, len);
+            }
+        } finally {
+            response.close();
         }
-        response.close();
+        long duration = System.currentTimeMillis() - start;
         SpiderDebug.log("OkHttp download: " + url + " cost=" + duration + "ms");
         return file.getAbsolutePath();
     }
@@ -313,17 +345,13 @@ public class OkHttp {
 
     public static byte[] bytes(String url, Map<String, String> header, long timeout) {
         long start = System.currentTimeMillis();
-        try {
-            Response response = timeout > 0 ? newCall(url, header, timeout) : newCall(url, header);
-            long duration = System.currentTimeMillis() - start;
+        try (Response response = timeout > 0 ? newCall(url, header, timeout) : newCall(url, header)) {
             if (!response.isSuccessful()) {
-                response.close();
-                SpiderDebug.log("OkHttp bytes: " + url + " code=" + response.code() + " cost=" + duration + "ms");
+                SpiderDebug.log("OkHttp bytes: " + url + " code=" + response.code() + " cost=" + (System.currentTimeMillis() - start) + "ms");
                 return new byte[0];
             }
             byte[] data = response.body().bytes();
-            response.close();
-            SpiderDebug.log("OkHttp bytes: " + url + " cost=" + duration + "ms");
+            SpiderDebug.log("OkHttp bytes: " + url + " cost=" + (System.currentTimeMillis() - start) + "ms");
             return data;
         } catch (Exception e) {
             SpiderDebug.log(e);
@@ -567,13 +595,9 @@ public class OkHttp {
     private static String bodyToString(RequestBody body) {
         if (body == null) return "";
         try {
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            body.writeTo(new okhttp3.ResponseBody() {
-                @Override public MediaType contentType() { return null; }
-                @Override public long contentLength() { return 0; }
-                @Override public okhttp3.Source source() { throw new UnsupportedOperationException(); }
-            });
-            return out.toString("UTF-8");
+            Buffer buffer = new Buffer();
+            body.writeTo(buffer);
+            return buffer.readUtf8();
         } catch (IOException e) {
             SpiderDebug.log(e);
             return "";
