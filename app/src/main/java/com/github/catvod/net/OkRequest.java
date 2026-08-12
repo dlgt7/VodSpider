@@ -80,8 +80,16 @@ class OkRequest {
         } else if (method.equals(OkHttp.PATCH)) {
             builder.patch(body);
         } else if (method.equals(OkHttp.DELETE)) {
-            if (body != null && body.contentLength() > 0) {
-                builder.delete(body);
+            if (body != null) {
+                try {
+                    if (body.contentLength() > 0) {
+                        builder.delete(body);
+                    } else {
+                        builder.delete();
+                    }
+                } catch (IOException e) {
+                    builder.delete();
+                }
             } else {
                 builder.delete();
             }

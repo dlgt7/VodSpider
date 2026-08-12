@@ -108,7 +108,7 @@ public class OkHttp {
 
     /**
      * 加解密/签名拦截器（可选，仅在注册了 CryptoProvider 时生效）
-     * 使用 peekBody 保证响应 body 即使解密失败也不会被消费
+     * 直接读取 body 后统一重建 ResponseBody，兼容所有 OkHttp 版本
      */
     private static final Interceptor CRYPTO_INTERCEPTOR = chain -> {
         Request original = chain.request();
