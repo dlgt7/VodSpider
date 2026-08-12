@@ -132,29 +132,26 @@ public class OkHttp {
         Response response = chain.proceed(encryptedRequest);
         ResponseBody respBody = response.body();
         if (respBody == null) return response;
-        // 读取响应体内容，限制最大 16MB 防 OOM（旧版 OkHttp 无 peekBody，统一用 buffer 方式）
-        long maxBytes = respBody.contentLength() > 0
-                ? Math.min(respBody.contentLength(), 16 * 1024 * 1024)
-                : 16 * 1024 * 1024;
-        byte[] respBytes;
+        // 直接读取 body 再统一重建，不依赖 peekBody（兼容所有 OkHttp 版本）
+        MediaType respMt = respBody.contentType();
+        String respStr;
         try {
-            // buffer() 消费原始 stream 并缓存到内存；超出 maxBytes 时调用方通过 bytes.length 感知截断
-            respBytes = respBody.source().readByteArray((int) maxBytes);
+            respStr = respBody.string();
         } catch (IOException e) {
             SpiderDebug.log(e);
             return response;
         }
-        String respStr = new String(respBytes, java.nio.charset.StandardCharsets.UTF_8);
-        MediaType respMt = respBody.contentType();
         String finalContent = respStr;
-        String decrypted = provider.decryptResponse(url, respStr);
-        if (decrypted != null && !decrypted.equals(respStr)) {
-            finalContent = decrypted;
+        if (!respStr.isEmpty()) {
+            String decrypted = provider.decryptResponse(url, respStr);
+            if (decrypted != null && !decrypted.equals(respStr)) {
+                finalContent = decrypted;
+            }
         }
         byte[] finalBytes = finalContent.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        Response.Builder rb = response.newBuilder();
-        rb.body(ResponseBody.create(respMt != null ? respMt : MediaType.parse("application/octet-stream"), finalBytes));
-        return rb.build();
+        return response.newBuilder()
+                .body(ResponseBody.create(respMt != null ? respMt : MediaType.parse("application/octet-stream"), finalBytes))
+                .build();
     };
 
     // ==================== 请求入口 ====================
