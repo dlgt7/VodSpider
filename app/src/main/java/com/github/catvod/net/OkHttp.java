@@ -1,50 +1,143 @@
 package com.github.catvod.net;
 
 import android.text.TextUtils;
-import android.util.Log;
 
 import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.spider.Init;
+import com.github.catvod.utils.SslSocketFactory;
+import com.github.catvod.utils.TrustAllManager;
+import com.github.catvod.utils.Util;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 import okhttp3.Call;
+import okhttp3.Callback;
 import okhttp3.Dns;
 import okhttp3.Headers;
+import okhttp3.HttpUrl;
+import okhttp3.Interceptor;
 import okhttp3.MediaType;
-import okhttp3.MultipartBody;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
+import okhttp3.ResponseBody;
 
+/**
+ * 网络请求封装（CatVodSpider 专用）
+ *
+ * 核心改进：
+ * 1. double-checked locking 替代 synchronized，消除高并发锁死
+ * 2. 内置 UA 随机 + Accept-Language 拦截器，隐藏 OkHttp 指纹
+ * 3. 支持 CryptoProvider SPI，底层透明加解密
+ * 4. client(2小时) 专门用于 proxy() 长流转发
+ */
 public class OkHttp {
 
     private static final String TAG = OkHttp.class.getSimpleName();
     private static final long DEFAULT_TIMEOUT = TimeUnit.SECONDS.toMillis(15);
-    private static final long MAX_TIMEOUT = TimeUnit.SECONDS.toMillis(60);
+    private static final long STREAM_TIMEOUT = TimeUnit.HOURS.toMillis(2); // proxy 专用长超时
 
     public static final String POST = "POST";
     public static final String GET = "GET";
     public static final String PUT = "PUT";
     public static final String DELETE = "DELETE";
     public static final String PATCH = "PATCH";
+    public static final String HEAD = "HEAD";
+    public static final String OPTIONS = "OPTIONS";
+    public static final String COOKIE = "Cookie";
+    public static final String UA = "User-Agent";
+    public static final String REFERER = "Referer";
+    public static final String ACCEPT_LANGUAGE = "Accept-Language";
 
-    private static volatile OkHttpClient client;
-    private static volatile OkHttpClient safeClient;
+    // ==================== 客户端缓存（按超时时间区分） ====================
+    private static final ConcurrentHashMap<Long, OkHttpClient> CLIENT_CACHE = new ConcurrentHashMap<>();
+    private static final Object CLIENT_LOCK = new Object();
+    private static volatile OkHttpClient noRedirectClient;
 
-    private static class Loader {
-        static volatile OkHttp INSTANCE = new OkHttp();
+    // ==================== 可配置选项 ====================
+    private static volatile Dns customDns;
+    private static volatile boolean trustAllCerts = true;
+    private static volatile java.net.Proxy customProxy;
+    private static volatile CryptoProvider cryptoProvider;
+
+    // ==================== 内部类 ====================
+
+    /**
+     * 加解密/签名 SPI 接口
+     * 由调用方实现并注册，在 OkHttp 发送前/收到响应后自动处理
+     */
+    public interface CryptoProvider {
+        /** 是否对该 URL 进行处理（加解密/签名） */
+        boolean shouldProcess(String url);
+        /** 请求前处理（加密/签名），返回替换后的 body */
+        String encryptRequest(String url, String body);
+        /** 响应后处理（解密），返回解密后的字符串 */
+        String decryptResponse(String url, String body);
     }
 
-    private static OkHttp get() {
-        return Loader.INSTANCE;
-    }
+    /**
+     * 自动注入浏览器指纹的拦截器
+     * - 未设置 UA 时随机选取真实浏览器 UA
+     * - 未设置 Accept-Language 时补充 zh-CN
+     * - 消除 OkHttp 默认特征
+     */
+    private static final Interceptor UA_INTERCEPTOR = chain -> {
+        Request original = chain.request();
+        Request.Builder builder = original.newBuilder();
+        if (original.header(UA) == null) {
+            builder.header(UA, Util.getRandomUserAgent());
+        }
+        if (original.header(ACCEPT_LANGUAGE) == null) {
+            builder.header(ACCEPT_LANGUAGE, "zh-CN,zh;q=0.9,en;q=0.8");
+        }
+        return chain.proceed(builder.build());
+    };
+
+    /**
+     * 加解密/签名拦截器（可选，仅在注册了 CryptoProvider 时生效）
+     */
+    private static final Interceptor CRYPTO_INTERCEPTOR = chain -> {
+        Request original = chain.request();
+        String url = original.url().toString();
+        CryptoProvider provider = cryptoProvider;
+        if (provider == null || !provider.shouldProcess(url)) {
+            return chain.proceed(original);
+        }
+        RequestBody body = original.body();
+        if (body != null) {
+            String raw = bodyToString(body);
+            String encrypted = provider.encryptRequest(url, raw);
+            if (encrypted != null && !encrypted.equals(raw)) {
+                MediaType mt = body.contentType();
+                // 保留原始 HTTP 方法，防止 PUT/PATCH/DELETE 被强制改为 POST
+                Request.Builder b = original.newBuilder()
+                        .method(original.method(), RequestBody.create(mt != null ? mt : MediaType.parse("application/octet-stream"), encrypted));
+                return chain.proceed(b.build());
+            }
+        }
+        Response response = chain.proceed(original);
+        // 先保存 contentType，再读取 body（避免 safeString 消费 body 后无法再次读取）
+        MediaType respMt = response.body() != null ? response.body().contentType() : null;
+        String respBody = response.body() != null ? safeString(response.body()) : "";
+        if (!respBody.isEmpty()) {
+            String decrypted = provider.decryptResponse(url, respBody);
+            if (decrypted != null && !decrypted.equals(respBody)) {
+                Response.Builder rb = response.newBuilder();
+                rb.body(ResponseBody.create(respMt != null ? respMt : MediaType.parse("application/octet-stream"), decrypted));
+                return rb.build();
+            }
+        }
+        return response;
+    };
+
+    // ==================== 请求入口 ====================
 
     public static Response newCall(String url, String tag) throws IOException {
         return client().newCall(new Request.Builder().url(url).tag(tag).build()).execute();
@@ -98,32 +191,77 @@ public class OkHttp {
         return new OkRequest(PATCH, url, json, header).execute(client()).getBody();
     }
 
+    // ==================== 异步请求 ====================
+
+    public static void asyncString(String url, Map<String, String> header, Callback callback) {
+        asyncString(url, null, header, client(), callback);
+    }
+
+    public static void asyncString(String url, Map<String, String> params, Map<String, String> header, Callback callback) {
+        asyncString(url, params, header, client(), callback);
+    }
+
+    public static void asyncPost(String url, String json, Map<String, String> header, Callback callback) {
+        asyncPost(url, json, header, client(), callback);
+    }
+
+    private static void asyncString(String url, Map<String, String> params, Map<String, String> header,
+                                     OkHttpClient client, Callback callback) {
+        if (callback == null) return;
+        HttpUrl.Builder urlBuilder = safeUrlBuilder(url);
+        if (urlBuilder == null) {
+            callback.onFailure(null, new IOException("Invalid URL: " + url));
+            return;
+        }
+        if (params != null) {
+            for (Map.Entry<String, String> entry : params.entrySet()) {
+                urlBuilder.addQueryParameter(entry.getKey(), entry.getValue() == null ? "" : entry.getValue());
+            }
+        }
+        Request.Builder builder = new Request.Builder().url(urlBuilder.build());
+        if (header != null) for (Map.Entry<String, String> entry : header.entrySet()) builder.addHeader(entry.getKey(), entry.getValue());
+        client.newCall(builder.build()).enqueue(callback);
+    }
+
+    private static void asyncPost(String url, String json, Map<String, String> header,
+                                   OkHttpClient client, Callback callback) {
+        if (callback == null) return;
+        HttpUrl.Builder urlBuilder = safeUrlBuilder(url);
+        if (urlBuilder == null) {
+            callback.onFailure(null, new IOException("Invalid URL: " + url));
+            return;
+        }
+        MediaType mediaType = MediaType.get("application/json; charset=utf-8");
+        RequestBody body = TextUtils.isEmpty(json) ? RequestBody.create(mediaType, "{}") : RequestBody.create(mediaType, json);
+        Request.Builder builder = new Request.Builder().url(urlBuilder.build()).post(body);
+        if (header != null) for (Map.Entry<String, String> entry : header.entrySet()) builder.addHeader(entry.getKey(), entry.getValue());
+        client.newCall(builder.build()).enqueue(callback);
+    }
+
+    // ==================== 代理 & 文件 ====================
+
+    /**
+     * 代理流：内部完成流拷贝后释放 Response，返回 int[code], String[contentType], byte[]
+     * 调用方直接拿到完整字节，无需管理任何资源
+     */
     public static Object[] proxy(String url, Map<String, String> header) {
         try {
-            Response response = newCall(url, header);
-            return new Object[]{response.code(), response.header("Content-Type", "application/octet-stream"), response.body().byteStream()};
+            // 使用长超时客户端，适合视频流等长时间连接场景
+            OkHttpClient streamClient = client(STREAM_TIMEOUT);
+            Request.Builder rb = new Request.Builder().url(url);
+            if (header != null) for (Map.Entry<String, String> entry : header.entrySet()) rb.addHeader(entry.getKey(), entry.getValue());
+            try (Response response = streamClient.newCall(rb.build()).execute()) {
+                if (!response.isSuccessful() || response.body() == null) {
+                    return new Object[]{response.code(), response.header("Content-Type", "application/octet-stream"), new byte[0]};
+                }
+                byte[] data = response.body().bytes();
+                String contentType = response.header("Content-Type", "application/octet-stream");
+                return new Object[]{response.code(), contentType, data};
+            }
         } catch (Exception e) {
             SpiderDebug.log(e);
-            return new Object[]{500, "text/plain", null};
+            return new Object[]{500, "text/plain", new byte[0]};
         }
-    }
-
-    public static Response newCall(String url, Map<String, String> header) throws IOException {
-        Request.Builder builder = new Request.Builder().url(url);
-        if (header != null) for (String key : header.keySet()) builder.addHeader(key, header.get(key));
-        return client().newCall(builder.build()).execute();
-    }
-
-    public static Response newCall(String url, Map<String, String> header, long timeout) throws IOException {
-        Request.Builder builder = new Request.Builder().url(url);
-        if (header != null) for (String key : header.keySet()) builder.addHeader(key, header.get(key));
-        return client(timeout).newCall(builder.build()).execute();
-    }
-
-    public static Response newCall(String url, Map<String, String> header, String tag) throws IOException {
-        Request.Builder builder = new Request.Builder().url(url).tag(tag);
-        if (header != null) for (String key : header.keySet()) builder.addHeader(key, header.get(key));
-        return client().newCall(builder.build()).execute();
     }
 
     public static String upload(String url, Map<String, String> params, Map<String, File> files) {
@@ -139,19 +277,23 @@ public class OkHttp {
     }
 
     public static String download(String url, String path, Map<String, String> header) throws IOException {
+        long start = System.currentTimeMillis();
         Response response = newCall(url, header);
+        long duration = System.currentTimeMillis() - start;
         if (!response.isSuccessful()) {
             response.close();
             throw new IOException("HTTP " + response.code());
         }
         File file = new File(path);
         if (file.getParentFile() != null) file.getParentFile().mkdirs();
-        try (java.io.InputStream is = response.body().byteStream(); java.io.FileOutputStream fos = new java.io.FileOutputStream(file)) {
+        try (InputStream is = response.body().byteStream();
+             java.io.FileOutputStream fos = new java.io.FileOutputStream(file)) {
             byte[] buffer = new byte[8192];
             int len;
             while ((len = is.read(buffer)) != -1) fos.write(buffer, 0, len);
         }
         response.close();
+        SpiderDebug.log("OkHttp download: " + url + " cost=" + duration + "ms");
         return file.getAbsolutePath();
     }
 
@@ -164,14 +306,18 @@ public class OkHttp {
     }
 
     public static byte[] bytes(String url, Map<String, String> header, long timeout) {
+        long start = System.currentTimeMillis();
         try {
             Response response = timeout > 0 ? newCall(url, header, timeout) : newCall(url, header);
+            long duration = System.currentTimeMillis() - start;
             if (!response.isSuccessful()) {
                 response.close();
+                SpiderDebug.log("OkHttp bytes: " + url + " code=" + response.code() + " cost=" + duration + "ms");
                 return new byte[0];
             }
             byte[] data = response.body().bytes();
             response.close();
+            SpiderDebug.log("OkHttp bytes: " + url + " cost=" + duration + "ms");
             return data;
         } catch (Exception e) {
             SpiderDebug.log(e);
@@ -179,8 +325,54 @@ public class OkHttp {
         }
     }
 
+    // ==================== 无重定向 GET ====================
+
+    /**
+     * GET请求，不跟随重定向，可获取302等跳转的原始响应
+     * 使用 try-with-resources 确保 Response 正确关闭，避免资源泄漏
+     */
+    public static String getStringNoRedirect(String url, Map<String, String> header, Map<String, List<String>> headerCollector) {
+        OkHttpClient noRedirect = getNoRedirectClient();
+        Request.Builder builder = new Request.Builder().url(url);
+        if (header != null) for (Map.Entry<String, String> entry : header.entrySet()) builder.addHeader(entry.getKey(), entry.getValue());
+        try (Response response = noRedirect.newCall(builder.build()).execute()) {
+            if (headerCollector != null) headerCollector.putAll(response.headers().toMultimap());
+            return safeString(response.body());
+        } catch (IOException e) {
+            SpiderDebug.log(e);
+            return "";
+        }
+    }
+
+    // ==================== Header 工具 ====================
+
+    public static String getHeader(Map<String, List<String>> headers, String fieldName) {
+        if (headers == null || headers.isEmpty()) return null;
+        List<String> values = headers.get(fieldName);
+        return values != null && !values.isEmpty() ? values.get(0) : null;
+    }
+
+    // ==================== 取消 ====================
+
     public static void cancel(Object tag) {
-        if (tag == null) return;
+        if (tag == null) {
+            cancelAll();
+            return;
+        }
+        try {
+            OkHttpClient c = client();
+            for (Call call : c.dispatcher().queuedCalls()) {
+                if (tag.equals(call.request().tag())) call.cancel();
+            }
+            for (Call call : c.dispatcher().runningCalls()) {
+                if (tag.equals(call.request().tag())) call.cancel();
+            }
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+        }
+    }
+
+    public static void cancelAll() {
         try {
             client().dispatcher().cancelAll();
         } catch (Exception e) {
@@ -188,40 +380,142 @@ public class OkHttp {
         }
     }
 
+    // ==================== 客户端管理（double-checked locking） ====================
+
     public static OkHttpClient client() {
+        return client(DEFAULT_TIMEOUT);
+    }
+
+    public static OkHttpClient client(long timeout) {
+        if (timeout <= 0) timeout = DEFAULT_TIMEOUT;
+        OkHttpClient client = CLIENT_CACHE.get(timeout);
         if (client == null) {
-            synchronized (OkHttp.class) {
+            synchronized (CLIENT_LOCK) {
+                client = CLIENT_CACHE.get(timeout);
                 if (client == null) {
-                    client = buildClient(DEFAULT_TIMEOUT);
+                    client = buildClient(timeout, trustAllCerts);
+                    CLIENT_CACHE.put(timeout, client);
                 }
             }
         }
         return client;
     }
 
-    private static OkHttpClient client(long timeout) {
-        if (timeout <= 0 || timeout == DEFAULT_TIMEOUT) return client();
-        return buildClient(timeout);
+    private static OkHttpClient getNoRedirectClient() {
+        if (noRedirectClient == null) {
+            synchronized (OkHttp.class) {
+                if (noRedirectClient == null) {
+                    noRedirectClient = client(DEFAULT_TIMEOUT)
+                            .newBuilder()
+                            .followRedirects(false)
+                            .followSslRedirects(false)
+                            .build();
+                }
+            }
+        }
+        return noRedirectClient;
     }
 
-    private static OkHttpClient buildClient(long timeout) {
+    // ==================== 构建客户端 ====================
+
+    private static OkHttpClient buildClient(long timeout, boolean trustAll) {
+        Dns dns = customDns != null ? customDns : Dns.SYSTEM;
         OkHttpClient.Builder builder = new OkHttpClient.Builder()
+                .dns(dns)
                 .connectTimeout(timeout, TimeUnit.MILLISECONDS)
                 .readTimeout(timeout, TimeUnit.MILLISECONDS)
                 .writeTimeout(timeout, TimeUnit.MILLISECONDS)
                 .retryOnConnectionFailure(true)
                 .followRedirects(true)
-                .followSslRedirects(true);
-        
-        builder.connectionPool(new okhttp3.ConnectionPool(5, 5, TimeUnit.MINUTES));
-        
+                .followSslRedirects(true)
+                .addInterceptor(UA_INTERCEPTOR);   // 统一注入浏览器指纹
+
+        if (cryptoProvider != null) {
+            builder.addInterceptor(CRYPTO_INTERCEPTOR); // 仅当注册了 CryptoProvider 时才添加
+        }
+
+        if (customProxy != null) builder.proxy(customProxy);
+
+        if (trustAll) {
+            builder.hostnameVerifier((hostname, session) -> true)
+                   .sslSocketFactory(new SslSocketFactory(), new TrustAllManager());
+        }
+
+        builder.connectionPool(new okhttp3.ConnectionPool(10, 5, TimeUnit.MINUTES));
+
         File cacheDir = getCacheDir();
         if (cacheDir != null && cacheDir.exists()) {
-            int cacheSize = 50 * 1024 * 1024;
-            builder.cache(new okhttp3.Cache(cacheDir, cacheSize));
+            builder.cache(new okhttp3.Cache(cacheDir, 50 * 1024 * 1024));
         }
-        
+
         return builder.build();
+    }
+
+    /**
+     * 构建信任所有证书的 OkHttpClient
+     */
+    public static OkHttpClient buildTrustAllClient(long timeout) {
+        return buildClient(timeout, true);
+    }
+
+    /**
+     * 构建使用系统证书链的 OkHttpClient（更安全）
+     */
+    public static OkHttpClient buildSystemClient(long timeout) {
+        return buildClient(timeout, false);
+    }
+
+    // ==================== 配置接口 ====================
+
+    /**
+     * 设置自定义 DNS（如 DoH），清除缓存使后续 client() 使用新 DNS
+     */
+    public static void setDns(Dns dns) {
+        customDns = dns;
+        clearClientCache();
+    }
+
+    /**
+     * 设置自定义代理，清除缓存
+     */
+    public static void setProxy(java.net.Proxy proxy) {
+        customProxy = proxy;
+        clearClientCache();
+    }
+
+    /**
+     * 切换信任所有证书模式
+     * @param trustAll true=信任所有证书（兼容旧行为），false=使用系统证书链
+     * 清除缓存使后续 client() 使用新配置
+     */
+    public static void setTrustAll(boolean trustAll) {
+        trustAllCerts = trustAll;
+        clearClientCache();
+    }
+
+    /**
+     * 注册全局加解密/签名处理器
+     * 调用 shouldProcess(url) 判断是否需要处理，true 则在发送/接收时自动加解密
+     */
+    public static void setCryptoProvider(CryptoProvider provider) {
+        cryptoProvider = provider;
+        clearClientCache(); // 重新构建客户端以加入/移除 CRYPTO_INTERCEPTOR
+    }
+
+    /**
+     * 清除所有已缓存的客户端，强制下次调用时重建
+     */
+    public static void clearClientCache() {
+        CLIENT_CACHE.clear();
+        noRedirectClient = null;
+    }
+
+    // ==================== 内部方法 ====================
+
+    private static HttpUrl.Builder safeUrlBuilder(String url) {
+        if (TextUtils.isEmpty(url)) return null;
+        HttpUrl parsed = HttpUrl.parse(url);
+        return parsed != null ? parsed.newBuilder() : null;
     }
 
     private static File getCacheDir() {
@@ -237,12 +531,42 @@ public class OkHttp {
         return null;
     }
 
-    private static Headers getHeaders(Map<String, String> header) {
-        if (header == null || header.isEmpty()) return new Headers.Builder().build();
-        Headers.Builder builder = new Headers.Builder();
-        for (Map.Entry<String, String> entry : header.entrySet()) {
-            builder.add(entry.getKey(), entry.getValue());
+    public static Response newCall(String url, Map<String, String> header) throws IOException {
+        Request.Builder builder = new Request.Builder().url(url);
+        if (header != null) for (Map.Entry<String, String> entry : header.entrySet()) builder.addHeader(entry.getKey(), entry.getValue());
+        return client().newCall(builder.build()).execute();
+    }
+
+    public static Response newCall(String url, Map<String, String> header, long timeout) throws IOException {
+        Request.Builder builder = new Request.Builder().url(url);
+        if (header != null) for (Map.Entry<String, String> entry : header.entrySet()) builder.addHeader(entry.getKey(), entry.getValue());
+        return client(timeout).newCall(builder.build()).execute();
+    }
+
+    public static Response newCall(String url, Map<String, String> header, String tag) throws IOException {
+        Request.Builder builder = new Request.Builder().url(url).tag(tag);
+        if (header != null) for (Map.Entry<String, String> entry : header.entrySet()) builder.addHeader(entry.getKey(), entry.getValue());
+        return client().newCall(builder.build()).execute();
+    }
+
+    private static String safeString(ResponseBody body) {
+        try {
+            return body.string();
+        } catch (IOException e) {
+            SpiderDebug.log(e);
+            return "";
         }
-        return builder.build();
+    }
+
+    private static String bodyToString(RequestBody body) {
+        if (body == null) return "";
+        try {
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            body.writeTo(out);
+            return out.toString("UTF-8");
+        } catch (IOException e) {
+            SpiderDebug.log(e);
+            return "";
+        }
     }
 }

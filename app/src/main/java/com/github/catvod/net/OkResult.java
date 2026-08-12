@@ -46,33 +46,17 @@ public class OkResult {
         this.url = url != null ? url : "";
     }
 
-    public int getCode() {
-        return code;
-    }
+    // ==================== 基础属性 ====================
 
-    public String getBody() {
-        return TextUtils.isEmpty(body) ? "" : body;
-    }
+    public int getCode() { return code; }
+    public String getBody() { return TextUtils.isEmpty(body) ? "" : body; }
+    public Map<String, List<String>> getResp() { return resp; }
+    public long getDuration() { return duration; }
+    public void setDuration(long duration) { this.duration = duration; }
+    public String getUrl() { return url; }
+    public void setUrl(String url) { this.url = url; }
 
-    public Map<String, List<String>> getResp() {
-        return resp;
-    }
-
-    public long getDuration() {
-        return duration;
-    }
-
-    public void setDuration(long duration) {
-        this.duration = duration;
-    }
-
-    public String getUrl() {
-        return url;
-    }
-
-    public void setUrl(String url) {
-        this.url = url;
-    }
+    // ==================== Header 获取 ====================
 
     public String getHeader(String key) {
         if (resp == null || TextUtils.isEmpty(key)) return "";
@@ -91,35 +75,16 @@ public class OkResult {
         return resp.get(key);
     }
 
-    public String getContentType() {
-        return getHeader("Content-Type");
-    }
-
-    public String getContentEncoding() {
-        return getHeader("Content-Encoding");
-    }
-
-    public String getContentLength() {
-        return getHeader("Content-Length");
-    }
-
-    public String getServer() {
-        return getHeader("Server");
-    }
-
-    public String getDate() {
-        return getHeader("Date");
-    }
-
-    public String getSetCookie() {
-        return getHeader("Set-Cookie");
-    }
+    public String getContentType()    { return getHeader("Content-Type"); }
+    public String getContentEncoding(){ return getHeader("Content-Encoding"); }
+    public String getContentLength()  { return getHeader("Content-Length"); }
+    public String getServer()         { return getHeader("Server"); }
+    public String getDate()           { return getHeader("Date"); }
+    public String getSetCookie()      { return getHeader("Set-Cookie"); }
 
     public String getLocation() {
         String location = getHeader("Location");
-        if (TextUtils.isEmpty(location)) {
-            location = getHeader("location");
-        }
+        if (TextUtils.isEmpty(location)) location = getHeader("location");
         return location;
     }
 
@@ -129,108 +94,50 @@ public class OkResult {
         return values != null && !values.isEmpty();
     }
 
-    public boolean hasBody() {
-        return !TextUtils.isEmpty(body);
+    // ==================== 内容判断 ====================
+
+    public boolean hasBody()    { return !TextUtils.isEmpty(body); }
+    public boolean isEmpty()    { return TextUtils.isEmpty(body); }
+    public boolean isNotEmpty() { return !TextUtils.isEmpty(body); }
+    public int bodyLength()     { return body != null ? body.length() : 0; }
+    public int bodyBytes()      { return body != null ? body.getBytes().length : 0; }
+
+    public boolean isJson()  { return containsType("application/json"); }
+    public boolean isHtml()  { return containsType("text/html"); }
+    public boolean isXml()   { return containsType("application/xml") || containsType("text/xml"); }
+    public boolean isText()  { return containsType("text/"); }
+    public boolean isImage() { return containsType("image/"); }
+    public boolean isVideo() { return containsType("video/"); }
+    public boolean isAudio() { return containsType("audio/"); }
+
+    private boolean containsType(String type) {
+        String ct = getContentType();
+        return ct != null && ct.contains(type);
     }
 
-    public boolean isSuccess() {
-        return code >= 200 && code < 300;
+    // ==================== 状态判断 ====================
+
+    public boolean isSuccess()     { return code >= 200 && code < 300; }
+    public boolean isRedirect()    { return code >= 300 && code < 400; }
+    public boolean isClientError() { return code >= 400 && code < 500; }
+    public boolean isServerError() { return code >= 500 && code < 600; }
+    public boolean isError()       { return code >= 400; }
+    public boolean isOk()          { return code == 200; }
+    public boolean isCreated()     { return code == 201; }
+    public boolean isNoContent()   { return code == 204; }
+    public boolean isNotFound()    { return code == 404; }
+    public boolean isUnauthorized(){ return code == 401; }
+    public boolean isForbidden()   { return code == 403; }
+    public boolean isTimeout()     { return code == 408 || code == 504; }
+
+    /**
+     * 判断是否需要处理错误响应（与 HttpResponse.isFail 保持一致）
+     */
+    public boolean isFail() {
+        return code < 200 || code >= 400;
     }
 
-    public boolean isRedirect() {
-        return code >= 300 && code < 400;
-    }
-
-    public boolean isClientError() {
-        return code >= 400 && code < 500;
-    }
-
-    public boolean isServerError() {
-        return code >= 500 && code < 600;
-    }
-
-    public boolean isError() {
-        return code >= 400;
-    }
-
-    public boolean isOk() {
-        return code == 200;
-    }
-
-    public boolean isCreated() {
-        return code == 201;
-    }
-
-    public boolean isNoContent() {
-        return code == 204;
-    }
-
-    public boolean isNotFound() {
-        return code == 404;
-    }
-
-    public boolean isUnauthorized() {
-        return code == 401;
-    }
-
-    public boolean isForbidden() {
-        return code == 403;
-    }
-
-    public boolean isTimeout() {
-        return code == 408 || code == 504;
-    }
-
-    public int bodyLength() {
-        return body != null ? body.length() : 0;
-    }
-
-    public int bodyBytes() {
-        return body != null ? body.getBytes().length : 0;
-    }
-
-    public boolean isEmpty() {
-        return TextUtils.isEmpty(body);
-    }
-
-    public boolean isNotEmpty() {
-        return !TextUtils.isEmpty(body);
-    }
-
-    public boolean isJson() {
-        String contentType = getContentType();
-        return contentType != null && contentType.contains("application/json");
-    }
-
-    public boolean isHtml() {
-        String contentType = getContentType();
-        return contentType != null && contentType.contains("text/html");
-    }
-
-    public boolean isXml() {
-        String contentType = getContentType();
-        return contentType != null && (contentType.contains("application/xml") || contentType.contains("text/xml"));
-    }
-
-    public boolean isText() {
-        String contentType = getContentType();
-        return contentType != null && contentType.contains("text/");
-    }
-
-    public boolean isImage() {
-        String contentType = getContentType();
-        return contentType != null && contentType.contains("image/");
-    }
-
-    public boolean isVideo() {
-        String contentType = getContentType();
-        return contentType != null && contentType.contains("video/");
-    }
-
-    public boolean isAudio() {
-        String contentType = getContentType();
-        return contentType != null && contentType.contains("audio/");
-    }
+    // ==================== 调试输出 ====================
 
     @Override
     public String toString() {
