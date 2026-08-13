@@ -3,6 +3,7 @@ package com.github.catvod.utils;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.util.Base64;
 
 import com.github.catvod.spider.Init;
 
@@ -12,7 +13,6 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.text.DecimalFormat;
 import java.util.Arrays;
-import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -25,7 +25,7 @@ public class Util {
     private static final Pattern HTML_TAG = Pattern.compile("<[^>]*>");
     private static final Pattern WHITESPACE = Pattern.compile("\\s+");
     private static final Pattern DOMAIN_PREFIX = Pattern.compile("^(https?://)?(www\\.)?");
-    
+
     private static final String[] USER_AGENTS = {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
@@ -33,9 +33,10 @@ public class Util {
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1"
     };
-    
+
     public static final String CHROME = USER_AGENTS[0];
-    
+    private static final String CLIPBOARD_TAG = "fongmi";
+
     public static final List<String> MEDIA = Arrays.asList("mp4", "mkv", "mov", "wav", "wma", "wmv", "flv", "avi", "iso", "mpg", "ts", "mp3", "aac", "flac", "m4a", "ape", "ogg", "rm", "rmvb", "asf", "webm", "m3u8", "f4v");
     public static final List<String> SUB = Arrays.asList("srt", "ass", "ssa", "vtt", "sub", "smi");
     public static final List<String> IMAGE = Arrays.asList("jpg", "jpeg", "png", "gif", "webp", "bmp", "svg");
@@ -47,47 +48,57 @@ public class Util {
     }
 
     public static boolean isThunder(String url) {
+        if (isEmpty(url)) return false;
         return THUNDER.matcher(url).find() || isTorrent(url);
     }
 
     public static boolean isTorrent(String url) {
-        return !url.startsWith("magnet") && url.split(";")[0].endsWith(".torrent");
+        if (isEmpty(url)) return false;
+        if (url.toLowerCase().startsWith("magnet:")) return false;
+        return getExt(url).equals("torrent");
     }
 
     public static boolean isSub(String text) {
-        return SUB.contains(getExt(text).toLowerCase());
+        return SUB.contains(getExt(text));
     }
 
     public static boolean isMedia(String text) {
-        return MEDIA.contains(getExt(text).toLowerCase());
+        return MEDIA.contains(getExt(text));
     }
 
     public static boolean isImage(String text) {
-        return IMAGE.contains(getExt(text).toLowerCase());
+        return IMAGE.contains(getExt(text));
     }
 
     public static boolean isAudio(String text) {
-        return AUDIO.contains(getExt(text).toLowerCase());
+        return AUDIO.contains(getExt(text));
     }
 
     public static boolean isVideo(String text) {
-        return VIDEO.contains(getExt(text).toLowerCase());
+        return VIDEO.contains(getExt(text));
     }
 
     public static String getExt(String name) {
-        return name.contains(".") ? name.substring(name.lastIndexOf(".") + 1).toLowerCase() : name.toLowerCase();
+        if (isEmpty(name)) return "";
+        int q = name.indexOf('?');
+        if (q != -1) name = name.substring(0, q);
+        int hash = name.indexOf('#');
+        if (hash != -1) name = name.substring(0, hash);
+        int slash = name.lastIndexOf('/');
+        String filename = slash != -1 ? name.substring(slash + 1) : name;
+        int dot = filename.lastIndexOf('.');
+        return (dot != -1 && dot < filename.length() - 1) ? filename.substring(dot + 1).toLowerCase() : "";
     }
 
     public static String getSize(double size) {
-        if (size <= 0) return "";
+        if (size <= 0) return "0 bytes";
         String[] units = new String[]{"bytes", "KB", "MB", "GB", "TB", "PB"};
         int digitGroups = (int) (Math.log10(size) / Math.log10(1024));
+        if (digitGroups < 0) digitGroups = 0;
+        if (digitGroups >= units.length) digitGroups = units.length - 1;
         return new DecimalFormat("#,##0.#").format(size / Math.pow(1024, digitGroups)) + " " + units[digitGroups];
     }
 
-    /**
-     * 从字符串中提取数字部分
-     */
     public static String getDigit(String text) {
         if (text == null || text.isEmpty()) return "";
         StringBuilder sb = new StringBuilder();
@@ -98,43 +109,57 @@ public class Util {
     }
 
     /**
-     * 将字节数组转换为 UTF-8 字符串
+     * 将字节数组解码为 UTF-8 字符串
      */
-    public static byte[] toUtf8(byte[] bytes) {
-        // 直接返回原字节数组，由调用方处理编码转换
-        return bytes;
+    public static String bytesToUtf8(byte[] bytes) {
+        return bytes == null ? "" : new String(bytes, StandardCharsets.UTF_8);
     }
 
     public static String removeExt(String text) {
-        return text.contains(".") ? text.substring(0, text.lastIndexOf(".")) : text;
+        if (isEmpty(text)) return "";
+        int q = text.indexOf('?');
+        if (q != -1) text = text.substring(0, q);
+        int hash = text.indexOf('#');
+        if (hash != -1) text = text.substring(0, hash);
+        int slash = text.lastIndexOf('/');
+        String filename = slash != -1 ? text.substring(slash + 1) : text;
+        int dot = filename.lastIndexOf('.');
+        return dot != -1 ? text.substring(0, text.length() - filename.length() + dot) : text;
     }
 
+    /** 去掉末尾 1 个字符，保留单参数签名以兼容已有调用（如 Wbi、jianpian） */
     public static String substring(String text) {
-        return substring(text, 1);
+        return stripLast(text, 1);
     }
 
-    public static String substring(String text, int num) {
-        if (text != null && text.length() > num) {
+    /** 去掉末尾 n 个字符，null/空/num≤0 时原样返回 */
+    public static String stripLast(String text, int num) {
+        if (isEmpty(text) || num <= 0) return text;
+        if (text.length() > num) {
             return text.substring(0, text.length() - num);
-        } else {
-            return text;
         }
+        return text;
+    }
+
+    public static String substring(String text, int start, int end) {
+        if (text == null) return "";
+        int len = text.length();
+        if (start < 0) start = 0;
+        if (end > len) end = len;
+        if (start >= end) return "";
+        return text.substring(start, end);
     }
 
     public static String getVar(String data, String param) {
-        for (String var : data.split("var")) if (var.contains(param)) return checkVar(var);
-        return "";
-    }
-
-    private static String checkVar(String var) {
-        if (var.contains("'")) return var.split("'")[1];
-        if (var.contains("\"")) return var.split("\"")[1];
-        return "";
+        if (isEmpty(data) || isEmpty(param)) return "";
+        Pattern pattern = Pattern.compile("(?:var|let|const)\\s+" + Pattern.quote(param) + "\\s*=\\s*(['\"])(.*?)\\1", Pattern.DOTALL);
+        java.util.regex.Matcher matcher = pattern.matcher(data);
+        return matcher.find() ? matcher.group(2) : "";
     }
 
     public static void copy(String text) {
         ClipboardManager manager = (ClipboardManager) Init.context().getSystemService(Context.CLIPBOARD_SERVICE);
-        manager.setPrimaryClip(ClipData.newPlainText("fongmi", text));
+        manager.setPrimaryClip(ClipData.newPlainText(CLIPBOARD_TAG, text));
         Notify.show("已複製 " + text);
     }
 
@@ -155,19 +180,31 @@ public class Util {
     }
 
     public static String base64Encode(String text) {
-        return Base64.getEncoder().encodeToString(text.getBytes(StandardCharsets.UTF_8));
+        if (isEmpty(text)) return "";
+        return Base64.encodeToString(text.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
     }
 
     public static String base64Decode(String text) {
-        return new String(Base64.getDecoder().decode(text), StandardCharsets.UTF_8);
+        if (isEmpty(text)) return "";
+        try {
+            return new String(Base64.decode(text, Base64.NO_WRAP), StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            return text;
+        }
     }
 
     public static String base64UrlEncode(String text) {
-        return Base64.getUrlEncoder().encodeToString(text.getBytes(StandardCharsets.UTF_8));
+        if (isEmpty(text)) return "";
+        return Base64.encodeToString(text.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP | Base64.URL_SAFE);
     }
 
     public static String base64UrlDecode(String text) {
-        return new String(Base64.getUrlDecoder().decode(text), StandardCharsets.UTF_8);
+        if (isEmpty(text)) return "";
+        try {
+            return new String(Base64.decode(text, Base64.NO_WRAP | Base64.URL_SAFE), StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            return text;
+        }
     }
 
     public static String uuid() {
@@ -207,20 +244,80 @@ public class Util {
         }
     }
 
-    public static boolean isEmpty(String text) {
-        return text == null || text.trim().isEmpty();
+    // ==================== 字符串判断 ====================
+
+    public static boolean isEmpty(CharSequence text) {
+        return text == null || text.length() == 0;
     }
 
-    public static boolean isNotEmpty(String text) {
+    public static boolean isNotEmpty(CharSequence text) {
         return !isEmpty(text);
     }
 
+    public static boolean isBlank(CharSequence text) {
+        if (text == null) return true;
+        for (int i = 0, len = text.length(); i < len; i++) {
+            if (!Character.isWhitespace(text.charAt(i))) return false;
+        }
+        return true;
+    }
+
+    public static boolean isNotBlank(CharSequence text) {
+        return !isBlank(text);
+    }
+
+    public static boolean isNumeric(String text) {
+        if (isEmpty(text)) return false;
+        int len = text.length();
+        int i = text.charAt(0) == '-' ? 1 : 0;
+        if (i == len) return false;
+
+        boolean hasDot = false;
+        boolean hasDigit = false;
+        for (; i < len; i++) {
+            char c = text.charAt(i);
+            if (c == '.') {
+                if (hasDot) return false;
+                hasDot = true;
+            } else if (c >= '0' && c <= '9') {
+                hasDigit = true;
+            } else {
+                return false;
+            }
+        }
+        return hasDigit;
+    }
+
+    public static boolean equals(CharSequence a, CharSequence b) {
+        if (a == b) return true;
+        if (a == null || b == null) return false;
+        if (a.length() != b.length()) return false;
+        if (a instanceof String && b instanceof String) return a.equals(b);
+        return a.toString().equals(b.toString());
+    }
+
+    public static boolean equalsIgnoreCase(String a, String b) {
+        if (a == b) return true;
+        if (a == null || b == null) return false;
+        return a.equalsIgnoreCase(b);
+    }
+
+    // ==================== 字符串转换 ====================
+
     public static String defaultIfEmpty(String text, String defaultValue) {
-        return isEmpty(text) ? defaultValue : text;
+        return isNotEmpty(text) ? text : defaultValue;
+    }
+
+    public static String defaultIfBlank(String text, String defaultValue) {
+        return isNotBlank(text) ? text : defaultValue;
     }
 
     public static String trim(String text) {
         return text == null ? "" : text.trim();
+    }
+
+    public static String trimToEmpty(String text) {
+        return trim(text);
     }
 
     public static String truncate(String text, int maxLength) {
@@ -252,151 +349,216 @@ public class Util {
         return text == null ? "" : text.toUpperCase(Locale.getDefault());
     }
 
-    public static String formatNumber(long number) {
-        if (number < 1000) {
-            return String.valueOf(number);
-        } else if (number < 1000000) {
-            return String.format(Locale.getDefault(), "%.1fK", number / 1000.0);
-        } else if (number < 1000000000) {
-            return String.format(Locale.getDefault(), "%.1fM", number / 1000000.0);
-        } else {
-            return String.format(Locale.getDefault(), "%.1fB", number / 1000000000.0);
+    // ==================== 字符串拼接 ====================
+
+    public static String join(CharSequence... parts) {
+        if (parts == null || parts.length == 0) return "";
+        StringBuilder sb = new StringBuilder();
+        for (CharSequence part : parts) {
+            if (part != null) sb.append(part);
         }
+        return sb.toString();
     }
 
-    public static String formatDuration(long seconds) {
-        long hours = seconds / 3600;
-        long minutes = (seconds % 3600) / 60;
-        long secs = seconds % 60;
-        if (hours > 0) {
-            return String.format(Locale.getDefault(), "%d:%02d:%02d", hours, minutes, secs);
-        } else {
-            return String.format(Locale.getDefault(), "%d:%02d", minutes, secs);
+    public static String join(CharSequence delimiter, CharSequence... parts) {
+        if (parts == null || parts.length == 0) return "";
+        StringBuilder sb = new StringBuilder();
+        boolean first = true;
+        for (CharSequence part : parts) {
+            if (part == null) continue;
+            if (!first) sb.append(delimiter);
+            sb.append(part);
+            first = false;
         }
+        return sb.toString();
     }
 
     public static String join(String delimiter, String[] array) {
-        if (array == null || array.length == 0) {
-            return "";
-        }
+        if (array == null || array.length == 0) return "";
         return String.join(delimiter, array);
     }
 
     public static String join(String delimiter, List<String> list) {
-        if (list == null || list.isEmpty()) {
-            return "";
-        }
+        if (list == null || list.isEmpty()) return "";
         return String.join(delimiter, list);
     }
 
-    public static String replaceAll(String text, String target, String replacement) {
-        if (text == null) {
-            return "";
-        }
-        return text.replaceAll(target, replacement);
-    }
-
-    public static String replace(String text, String target, String replacement) {
-        if (text == null) {
-            return "";
-        }
+    public static String replace(String text, CharSequence target, CharSequence replacement) {
+        if (text == null) return "";
+        if (target == null || replacement == null) return text;
         return text.replace(target, replacement);
     }
 
+    public static String replaceAll(String text, String target, String replacement) {
+        if (text == null) return "";
+        return text.replaceAll(target, replacement);
+    }
+
+    /** 拼接字符串与整数，null 视为空字符串 */
+    public static String append(String str, int i) {
+        return (str == null ? "" : str) + i;
+    }
+
+    /** 拼接字符串与长整数，null 视为空字符串 */
+    public static String append(String str, long i) {
+        return (str == null ? "" : str) + i;
+    }
+
+    /** 拼接字符串与双精度浮点数，null 视为空字符串 */
+    public static String append(String str, double i) {
+        return (str == null ? "" : str) + i;
+    }
+
+    /** 拼接两个字符串，null 视为空字符串 */
+    public static String concat(String a, String b) {
+        return a == null ? (b == null ? "" : b) : (b == null ? a : a + b);
+    }
+
+    /** 创建并初始化 StringBuilder，null 视为空字符串 */
+    public static StringBuilder createBuilder(String str) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(str == null ? "" : str);
+        return sb;
+    }
+
+    // ==================== 字符串查询 ====================
+
+    public static int length(CharSequence text) {
+        return text == null ? 0 : text.length();
+    }
+
     public static boolean contains(String text, String search) {
-        if (text == null || search == null) {
-            return false;
-        }
+        if (text == null || search == null) return false;
         return text.contains(search);
     }
 
+    public static boolean contains(CharSequence text, CharSequence search) {
+        if (text == null || search == null) return false;
+        return text.toString().contains(search);
+    }
+
     public static boolean startsWith(String text, String prefix) {
-        if (text == null || prefix == null) {
-            return false;
-        }
+        if (text == null || prefix == null) return false;
         return text.startsWith(prefix);
     }
 
+    public static boolean startsWith(CharSequence text, CharSequence prefix) {
+        if (text == null || prefix == null) return false;
+        return text.toString().startsWith(prefix.toString());
+    }
+
     public static boolean endsWith(String text, String suffix) {
-        if (text == null || suffix == null) {
-            return false;
-        }
+        if (text == null || suffix == null) return false;
         return text.endsWith(suffix);
     }
 
+    public static boolean endsWith(CharSequence text, CharSequence suffix) {
+        if (text == null || suffix == null) return false;
+        return text.toString().endsWith(suffix.toString());
+    }
+
+    // ==================== 业务方法 ====================
+
     public static String mapToString(Map<String, String> map) {
-        if (map == null || map.isEmpty()) {
-            return "";
-        }
+        if (map == null || map.isEmpty()) return "";
         StringBuilder sb = new StringBuilder();
         for (Map.Entry<String, String> entry : map.entrySet()) {
-            if (sb.length() > 0) {
-                sb.append("&");
-            }
-            sb.append(entry.getKey()).append("=").append(encode(entry.getValue()));
+            if (sb.length() > 0) sb.append("&");
+            String val = entry.getValue();
+            sb.append(encode(entry.getKey())).append("=").append(val == null ? "" : encode(val));
         }
         return sb.toString();
     }
 
     public static Map<String, String> stringToMap(String text) {
         Map<String, String> map = new java.util.HashMap<>();
-        if (isEmpty(text)) {
-            return map;
-        }
+        if (isEmpty(text)) return map;
         String[] pairs = text.split("&");
         for (String pair : pairs) {
-            String[] keyValue = pair.split("=", 2);
-            if (keyValue.length == 2) {
-                map.put(keyValue[0], decode(keyValue[1]));
+            int idx = pair.indexOf('=');
+            if (idx != -1) {
+                map.put(pair.substring(0, idx), decode(pair.substring(idx + 1)));
+            } else if (!pair.isEmpty()) {
+                map.put(pair, "");
             }
         }
         return map;
     }
 
     public static String extractDomain(String url) {
-        if (isEmpty(url)) {
-            return "";
+        if (isEmpty(url)) return "";
+        if (!url.contains("://")) {
+            url = url.startsWith("//") ? "http:" + url : "http://" + url;
         }
         try {
-            String domain = DOMAIN_PREFIX.matcher(url).replaceAll("");
-            int index = domain.indexOf('/');
-            return index > 0 ? domain.substring(0, index) : domain;
+            java.net.URI uri = new java.net.URI(url);
+            String host = uri.getHost();
+            if (host == null) return "";
+            int port = uri.getPort();
+            return port > 0 ? host + ":" + port : host;
         } catch (Exception e) {
-            return "";
+            // 降级回退：字符串截取，应对未转义字符的 URL
+            int schemeEnd = url.indexOf("://");
+            int restStart = schemeEnd >= 0 ? schemeEnd + 3 : 0;
+            int hostEnd = url.indexOf('/', restStart);
+            int queryStart = url.indexOf('?', restStart);
+            if (queryStart == -1 || (hostEnd != -1 && hostEnd < queryStart)) queryStart = hostEnd;
+            if (queryStart == -1) queryStart = url.length();
+            String rawHost = url.substring(restStart, queryStart);
+            int bracketEnd = rawHost.indexOf(']');
+            if (bracketEnd != -1) {
+                int portIdx = rawHost.indexOf(':', bracketEnd + 1);
+                return portIdx != -1 ? rawHost.substring(0, portIdx) : rawHost;
+            }
+            return rawHost;
         }
     }
 
     public static String extractPath(String url) {
-        if (isEmpty(url)) {
-            return "";
+        if (isEmpty(url)) return "";
+        if (!url.contains("://")) {
+            url = url.startsWith("//") ? "http:" + url : "http://" + url;
         }
         try {
-            int index = url.indexOf('/', url.indexOf("://") + 3);
-            return index > 0 ? url.substring(index) : "/";
+            java.net.URI uri = new java.net.URI(url);
+            String path = uri.getPath();
+            return path == null || path.isEmpty() ? "/" : path;
         } catch (Exception e) {
-            return "";
+            // 降级回退：字符串截取，保证不丢失 Path 数据
+            int schemeEnd = url.indexOf("://");
+            int hostEnd = schemeEnd >= 0 ? url.indexOf('/', schemeEnd + 3) : url.indexOf('/');
+            int pathStart = hostEnd >= 0 ? hostEnd : (schemeEnd >= 0 ? schemeEnd + 3 : 0);
+            int pathEnd = url.length();
+            int q = url.indexOf('?');
+            int hash = url.indexOf('#');
+            if (q != -1) pathEnd = q;
+            if (hash != -1 && hash < pathEnd) pathEnd = hash;
+            String fallback = url.substring(pathStart, pathEnd);
+            return fallback.isEmpty() ? "/" : fallback;
         }
     }
 
     public static String extractQuery(String url) {
-        if (isEmpty(url)) {
-            return "";
+        if (isEmpty(url)) return "";
+        if (!url.contains("://")) {
+            url = url.startsWith("//") ? "http:" + url : "http://" + url;
         }
         try {
-            int index = url.indexOf('?');
-            return index > 0 ? url.substring(index + 1) : "";
+            java.net.URI uri = new java.net.URI(url);
+            String query = uri.getQuery();
+            return query == null ? "" : query;
         } catch (Exception e) {
-            return "";
+            // 降级回退：应对包含未转义字符的 URL
+            int q = url.indexOf('?');
+            if (q == -1) return "";
+            int hash = url.indexOf('#', q);
+            return hash != -1 ? url.substring(q + 1, hash) : url.substring(q + 1);
         }
     }
 
     public static String buildUrl(String baseUrl, String path) {
-        if (isEmpty(baseUrl)) {
-            return path;
-        }
-        if (isEmpty(path)) {
-            return baseUrl;
-        }
+        if (isEmpty(baseUrl)) return path;
+        if (isEmpty(path)) return baseUrl;
         String separator = baseUrl.endsWith("/") || path.startsWith("/") ? "" : "/";
         return baseUrl + separator + path;
     }
@@ -419,9 +581,7 @@ public class Util {
     }
 
     public static String escapeHtml(String text) {
-        if (text == null) {
-            return "";
-        }
+        if (text == null) return "";
         return text.replace("&", "&amp;")
                 .replace("<", "&lt;")
                 .replace(">", "&gt;")
@@ -430,9 +590,7 @@ public class Util {
     }
 
     public static String unescapeHtml(String text) {
-        if (text == null) {
-            return "";
-        }
+        if (text == null) return "";
         return text.replace("&amp;", "&")
                 .replace("&lt;", "<")
                 .replace("&gt;", ">")
@@ -441,51 +599,39 @@ public class Util {
     }
 
     public static String stripTags(String html) {
-        if (html == null) {
-            return "";
-        }
+        if (html == null) return "";
         return HTML_TAG.matcher(html).replaceAll("");
     }
 
     public static String cleanWhitespace(String text) {
-        if (text == null) {
-            return "";
-        }
+        if (text == null) return "";
         return WHITESPACE.matcher(text).replaceAll(" ").trim();
     }
 
-    public static boolean isNumeric(String text) {
-        if (text == null || text.isEmpty()) {
-            return false;
-        }
-        try {
-            Double.parseDouble(text);
-            return true;
-        } catch (NumberFormatException e) {
-            return false;
-        }
-    }
-
     public static int toInt(String text, int defaultValue) {
-        if (isNumeric(text)) {
+        if (!isNumeric(text)) return defaultValue;
+        try {
+            return Integer.parseInt(text);
+        } catch (NumberFormatException e) {
             try {
-                return Integer.parseInt(text);
-            } catch (NumberFormatException e) {
+                return (int) Double.parseDouble(text);
+            } catch (NumberFormatException ignored) {
                 return defaultValue;
             }
         }
-        return defaultValue;
     }
 
     public static long toLong(String text, long defaultValue) {
-        if (isNumeric(text)) {
+        if (!isNumeric(text)) return defaultValue;
+        try {
+            return Long.parseLong(text);
+        } catch (NumberFormatException e) {
             try {
-                return Long.parseLong(text);
-            } catch (NumberFormatException e) {
+                return (long) Double.parseDouble(text);
+            } catch (NumberFormatException ignored) {
                 return defaultValue;
             }
         }
-        return defaultValue;
     }
 
     public static double toDouble(String text, double defaultValue) {
@@ -500,9 +646,22 @@ public class Util {
     }
 
     public static boolean toBoolean(String text, boolean defaultValue) {
-        if (isEmpty(text)) {
-            return defaultValue;
-        }
+        if (isEmpty(text)) return defaultValue;
         return "true".equalsIgnoreCase(text) || "1".equals(text) || "yes".equalsIgnoreCase(text);
+    }
+
+    public static String formatNumber(long number) {
+        if (number < 1000) return String.valueOf(number);
+        if (number < 1000000) return String.format(Locale.US, "%.1fK", number / 1000.0);
+        if (number < 1000000000) return String.format(Locale.US, "%.1fM", number / 1000000.0);
+        return String.format(Locale.US, "%.1fB", number / 1000000000.0);
+    }
+
+    public static String formatDuration(long seconds) {
+        long hours = seconds / 3600;
+        long minutes = (seconds % 3600) / 60;
+        long secs = seconds % 60;
+        if (hours > 0) return String.format(Locale.US, "%d:%02d:%02d", hours, minutes, secs);
+        return String.format(Locale.US, "%d:%02d", minutes, secs);
     }
 }
