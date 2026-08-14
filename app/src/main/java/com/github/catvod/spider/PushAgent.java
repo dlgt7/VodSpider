@@ -665,7 +665,7 @@ public class PushAgent extends Spider {
                 list.put(vodAtom);
                 result.put("list", list);
                 return result.toString();
-            } else if (Misc.isVip(url) && url.contains("qq.com")) {
+            } else if (Util.isVip(url) && url.contains("qq.com")) {
                 List<String> vodItems = new ArrayList<>();
                 JSONObject result = new JSONObject();
                 JSONArray lists = new JSONArray();
