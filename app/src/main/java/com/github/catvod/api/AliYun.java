@@ -37,7 +37,6 @@ import com.github.catvod.utils.Notify;
 import com.github.catvod.utils.Path;
 import com.github.catvod.utils.ProxyVideo;
 import com.github.catvod.utils.QRCode;
-import com.github.catvod.utils.ResUtil;
 import com.github.catvod.utils.Util;
 import com.google.gson.JsonObject;
 
@@ -642,7 +641,7 @@ public class AliYun {
 
     private void showQRCode(Data data) {
         try {
-            int size = ResUtil.dp2px(240);
+            int size = Util.dp2px(240);
             FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(size, size);
             ImageView image = new ImageView(Init.context());
             image.setScaleType(ImageView.ScaleType.CENTER_CROP);
