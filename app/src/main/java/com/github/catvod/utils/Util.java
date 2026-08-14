@@ -8,13 +8,17 @@ import android.util.Base64;
 import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.spider.Init;
 
+import java.io.IOException;
+import java.io.StringWriter;
 import java.io.UnsupportedEncodingException;
+import java.io.Writer;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -900,5 +904,350 @@ public class Util {
         long secs = seconds % 60;
         if (hours > 0) return String.format(Locale.US, "%d:%02d:%02d", hours, minutes, secs);
         return String.format(Locale.US, "%d:%02d", minutes, secs);
+    }
+
+    // ==================== Unicode转义处理 ====================
+
+    private static final HashMap<String, String> HTML_ENTITY_MAP = new HashMap<>();
+
+    static {
+        HTML_ENTITY_MAP.put("amp", "&");
+        HTML_ENTITY_MAP.put("lt", "<");
+        HTML_ENTITY_MAP.put("gt", ">");
+        HTML_ENTITY_MAP.put("quot", "\"");
+        HTML_ENTITY_MAP.put("apos", "'");
+        HTML_ENTITY_MAP.put("nbsp", "\u00A0");
+        HTML_ENTITY_MAP.put("copy", "\u00A9");
+        HTML_ENTITY_MAP.put("reg", "\u00AE");
+        HTML_ENTITY_MAP.put("trade", "\u2122");
+        HTML_ENTITY_MAP.put("Euro", "\u20AC");
+        HTML_ENTITY_MAP.put("laquo", "\u00AB");
+        HTML_ENTITY_MAP.put("raquo", "\u00BB");
+        HTML_ENTITY_MAP.put("middot", "\u00B7");
+        HTML_ENTITY_MAP.put("hellip", "\u2026");
+        HTML_ENTITY_MAP.put("ndash", "\u2013");
+        HTML_ENTITY_MAP.put("mdash", "\u2014");
+        HTML_ENTITY_MAP.put("lsquo", "\u2018");
+        HTML_ENTITY_MAP.put("rsquo", "\u2019");
+        HTML_ENTITY_MAP.put("ldquo", "\u201C");
+        HTML_ENTITY_MAP.put("rdquo", "\u201D");
+        HTML_ENTITY_MAP.put("bull", "\u2022");
+        HTML_ENTITY_MAP.put("permil", "\u2030");
+        HTML_ENTITY_MAP.put("lsaquo", "\u2039");
+        HTML_ENTITY_MAP.put("rsaquo", "\u203A");
+        HTML_ENTITY_MAP.put("oline", "\u203E");
+        HTML_ENTITY_MAP.put("frasl", "\u2044");
+        HTML_ENTITY_MAP.put("aleph", "\u2135");
+        HTML_ENTITY_MAP.put("alpha", "\u03B1");
+        HTML_ENTITY_MAP.put("beta", "\u03B2");
+        HTML_ENTITY_MAP.put("gamma", "\u03B3");
+        HTML_ENTITY_MAP.put("delta", "\u03B4");
+        HTML_ENTITY_MAP.put("epsilon", "\u03B5");
+        HTML_ENTITY_MAP.put("zeta", "\u03B6");
+        HTML_ENTITY_MAP.put("eta", "\u03B7");
+        HTML_ENTITY_MAP.put("theta", "\u03B8");
+        HTML_ENTITY_MAP.put("iota", "\u03B9");
+        HTML_ENTITY_MAP.put("kappa", "\u03BA");
+        HTML_ENTITY_MAP.put("lambda", "\u03BB");
+        HTML_ENTITY_MAP.put("mu", "\u03BC");
+        HTML_ENTITY_MAP.put("nu", "\u03BD");
+        HTML_ENTITY_MAP.put("xi", "\u03BE");
+        HTML_ENTITY_MAP.put("omicron", "\u03BF");
+        HTML_ENTITY_MAP.put("pi", "\u03C0");
+        HTML_ENTITY_MAP.put("rho", "\u03C1");
+        HTML_ENTITY_MAP.put("sigma", "\u03C3");
+        HTML_ENTITY_MAP.put("tau", "\u03C4");
+        HTML_ENTITY_MAP.put("upsilon", "\u03C5");
+        HTML_ENTITY_MAP.put("phi", "\u03C6");
+        HTML_ENTITY_MAP.put("chi", "\u03C7");
+        HTML_ENTITY_MAP.put("psi", "\u03C8");
+        HTML_ENTITY_MAP.put("omega", "\u03C9");
+        HTML_ENTITY_MAP.put("thetasym", "\u03D1");
+        HTML_ENTITY_MAP.put("upsih", "\u03D2");
+        HTML_ENTITY_MAP.put("piv", "\u03D6");
+        HTML_ENTITY_MAP.put("OElig", "\u0152");
+        HTML_ENTITY_MAP.put("oelig", "\u0153");
+        HTML_ENTITY_MAP.put("Scaron", "\u0160");
+        HTML_ENTITY_MAP.put("scaron", "\u0161");
+        HTML_ENTITY_MAP.put("Yuml", "\u0178");
+        HTML_ENTITY_MAP.put("fnof", "\u0192");
+        HTML_ENTITY_MAP.put("circ", "\u02C6");
+        HTML_ENTITY_MAP.put("tilde", "\u02DC");
+        HTML_ENTITY_MAP.put("ensp", "\u2002");
+        HTML_ENTITY_MAP.put("emsp", "\u2003");
+        HTML_ENTITY_MAP.put("thinsp", "\u2009");
+        HTML_ENTITY_MAP.put("zwnj", "\u200C");
+        HTML_ENTITY_MAP.put("zwj", "\u200D");
+        HTML_ENTITY_MAP.put("lrm", "\u200E");
+        HTML_ENTITY_MAP.put("rlm", "\u200F");
+        HTML_ENTITY_MAP.put("sbquo", "\u201A");
+        HTML_ENTITY_MAP.put("bdquo", "\u201E");
+        HTML_ENTITY_MAP.put("dagger", "\u2020");
+        HTML_ENTITY_MAP.put("Dagger", "\u2021");
+        HTML_ENTITY_MAP.put("euro", "\u20AC");
+        HTML_ENTITY_MAP.put("forall", "\u2200");
+        HTML_ENTITY_MAP.put("part", "\u2202");
+        HTML_ENTITY_MAP.put("exist", "\u2203");
+        HTML_ENTITY_MAP.put("empty", "\u2205");
+        HTML_ENTITY_MAP.put("nabla", "\u2207");
+        HTML_ENTITY_MAP.put("isin", "\u2208");
+        HTML_ENTITY_MAP.put("notin", "\u2209");
+        HTML_ENTITY_MAP.put("ni", "\u220B");
+        HTML_ENTITY_MAP.put("prod", "\u220F");
+        HTML_ENTITY_MAP.put("sum", "\u2211");
+        HTML_ENTITY_MAP.put("minus", "\u2212");
+        HTML_ENTITY_MAP.put("lowast", "\u2217");
+        HTML_ENTITY_MAP.put("radic", "\u221A");
+        HTML_ENTITY_MAP.put("prop", "\u221D");
+        HTML_ENTITY_MAP.put("infin", "\u221E");
+        HTML_ENTITY_MAP.put("ang", "\u2220");
+        HTML_ENTITY_MAP.put("and", "\u2227");
+        HTML_ENTITY_MAP.put("or", "\u2228");
+        HTML_ENTITY_MAP.put("cap", "\u2229");
+        HTML_ENTITY_MAP.put("cup", "\u222A");
+        HTML_ENTITY_MAP.put("int", "\u222B");
+        HTML_ENTITY_MAP.put("there4", "\u2234");
+        HTML_ENTITY_MAP.put("sim", "\u223C");
+        HTML_ENTITY_MAP.put("cong", "\u2245");
+        HTML_ENTITY_MAP.put("asymp", "\u2248");
+        HTML_ENTITY_MAP.put("neq", "\u2260");
+        HTML_ENTITY_MAP.put("equiv", "\u2261");
+        HTML_ENTITY_MAP.put("le", "\u2264");
+        HTML_ENTITY_MAP.put("ge", "\u2265");
+        HTML_ENTITY_MAP.put("sub", "\u2282");
+        HTML_ENTITY_MAP.put("sup", "\u2283");
+        HTML_ENTITY_MAP.put("nsub", "\u2284");
+        HTML_ENTITY_MAP.put("sube", "\u2286");
+        HTML_ENTITY_MAP.put("supe", "\u2287");
+        HTML_ENTITY_MAP.put("oplus", "\u2295");
+        HTML_ENTITY_MAP.put("otimes", "\u2297");
+        HTML_ENTITY_MAP.put("perp", "\u22A5");
+        HTML_ENTITY_MAP.put("sdot", "\u22C5");
+        HTML_ENTITY_MAP.put("lceil", "\u2308");
+        HTML_ENTITY_MAP.put("rceil", "\u2309");
+        HTML_ENTITY_MAP.put("lfloor", "\u230A");
+        HTML_ENTITY_MAP.put("rfloor", "\u230B");
+        HTML_ENTITY_MAP.put("lang", "\u2329");
+        HTML_ENTITY_MAP.put("rang", "\u232A");
+        HTML_ENTITY_MAP.put("loz", "\u25CA");
+        HTML_ENTITY_MAP.put("spades", "\u2660");
+        HTML_ENTITY_MAP.put("clubs", "\u2663");
+        HTML_ENTITY_MAP.put("hearts", "\u2665");
+        HTML_ENTITY_MAP.put("diams", "\u2666");
+        HTML_ENTITY_MAP.put("Agrave", "\u00C0");
+        HTML_ENTITY_MAP.put("Aacute", "\u00C1");
+        HTML_ENTITY_MAP.put("Acirc", "\u00C2");
+        HTML_ENTITY_MAP.put("Atilde", "\u00C3");
+        HTML_ENTITY_MAP.put("Auml", "\u00C4");
+        HTML_ENTITY_MAP.put("AElig", "\u00C6");
+        HTML_ENTITY_MAP.put("Ccedil", "\u00C7");
+        HTML_ENTITY_MAP.put("Egrave", "\u00C8");
+        HTML_ENTITY_MAP.put("Eacute", "\u00C9");
+        HTML_ENTITY_MAP.put("Ecirc", "\u00CA");
+        HTML_ENTITY_MAP.put("Euml", "\u00CB");
+        HTML_ENTITY_MAP.put("Igrave", "\u00CC");
+        HTML_ENTITY_MAP.put("Iacute", "\u00CD");
+        HTML_ENTITY_MAP.put("Icirc", "\u00CE");
+        HTML_ENTITY_MAP.put("Iuml", "\u00CF");
+        HTML_ENTITY_MAP.put("ETH", "\u00D0");
+        HTML_ENTITY_MAP.put("Ntilde", "\u00D1");
+        HTML_ENTITY_MAP.put("Ograve", "\u00D2");
+        HTML_ENTITY_MAP.put("Oacute", "\u00D3");
+        HTML_ENTITY_MAP.put("Ocirc", "\u00D4");
+        HTML_ENTITY_MAP.put("Otilde", "\u00D5");
+        HTML_ENTITY_MAP.put("Ouml", "\u00D6");
+        HTML_ENTITY_MAP.put("times", "\u00D7");
+        HTML_ENTITY_MAP.put("Oslash", "\u00D8");
+        HTML_ENTITY_MAP.put("Ugrave", "\u00D9");
+        HTML_ENTITY_MAP.put("Uacute", "\u00DA");
+        HTML_ENTITY_MAP.put("Ucirc", "\u00DB");
+        HTML_ENTITY_MAP.put("Uuml", "\u00DC");
+        HTML_ENTITY_MAP.put("Yacute", "\u00DD");
+        HTML_ENTITY_MAP.put("THORN", "\u00DE");
+        HTML_ENTITY_MAP.put("szlig", "\u00DF");
+        HTML_ENTITY_MAP.put("agrave", "\u00E0");
+        HTML_ENTITY_MAP.put("aacute", "\u00E1");
+        HTML_ENTITY_MAP.put("acirc", "\u00E2");
+        HTML_ENTITY_MAP.put("atilde", "\u00E3");
+        HTML_ENTITY_MAP.put("auml", "\u00E4");
+        HTML_ENTITY_MAP.put("aring", "\u00E5");
+        HTML_ENTITY_MAP.put("Aring", "\u00C5");
+        HTML_ENTITY_MAP.put("aelig", "\u00E6");
+        HTML_ENTITY_MAP.put("ccedil", "\u00E7");
+        HTML_ENTITY_MAP.put("egrave", "\u00E8");
+        HTML_ENTITY_MAP.put("eacute", "\u00E9");
+        HTML_ENTITY_MAP.put("ecirc", "\u00EA");
+        HTML_ENTITY_MAP.put("euml", "\u00EB");
+        HTML_ENTITY_MAP.put("igrave", "\u00EC");
+        HTML_ENTITY_MAP.put("iacute", "\u00ED");
+        HTML_ENTITY_MAP.put("icirc", "\u00EE");
+        HTML_ENTITY_MAP.put("iuml", "\u00EF");
+        HTML_ENTITY_MAP.put("eth", "\u00F0");
+        HTML_ENTITY_MAP.put("ntilde", "\u00F1");
+        HTML_ENTITY_MAP.put("ograve", "\u00F2");
+        HTML_ENTITY_MAP.put("oacute", "\u00F3");
+        HTML_ENTITY_MAP.put("ocirc", "\u00F4");
+        HTML_ENTITY_MAP.put("otilde", "\u00F5");
+        HTML_ENTITY_MAP.put("ouml", "\u00F6");
+        HTML_ENTITY_MAP.put("divide", "\u00F7");
+        HTML_ENTITY_MAP.put("oslash", "\u00F8");
+        HTML_ENTITY_MAP.put("ugrave", "\u00F9");
+        HTML_ENTITY_MAP.put("uacute", "\u00FA");
+        HTML_ENTITY_MAP.put("ucirc", "\u00FB");
+        HTML_ENTITY_MAP.put("uuml", "\u00FC");
+        HTML_ENTITY_MAP.put("yacute", "\u00FD");
+        HTML_ENTITY_MAP.put("thorn", "\u00FE");
+        HTML_ENTITY_MAP.put("yuml", "\u00FF");
+    }
+
+    /**
+     * 解码 \uXXXX、八进制转义及HTML实体
+     */
+    public static String decodeUnicode(String str) {
+        if (str == null || str.isEmpty()) return str;
+        try {
+            StringWriter writer = new StringWriter(str.length() * 2);
+            int length = str.length();
+            int i = 0;
+            while (i < length) {
+                int processed = processDecodeUnicodeSequence(str, i, writer);
+                if (processed == 0) {
+                    char c = str.charAt(i);
+                    writer.write(c);
+                    i++;
+                    if (Character.isHighSurrogate(c) && i < length) {
+                        char c2 = str.charAt(i);
+                        if (Character.isLowSurrogate(c2)) {
+                            writer.write(c2);
+                            i++;
+                        }
+                    }
+                } else {
+                    i += processed;
+                }
+            }
+            return writer.toString();
+        } catch (IOException e) {
+            throw new RuntimeException("Unicode escape decoding failed", e);
+        }
+    }
+
+    /**
+     * 将字符串编码为 \uXXXX 格式
+     */
+    public static String encodeUnicode(String str) {
+        if (str == null || str.isEmpty()) return str;
+        try {
+            StringWriter writer = new StringWriter(str.length() * 2);
+            int length = str.length();
+            int i = 0;
+            while (i < length) {
+                int codePoint = str.codePointAt(i);
+                if (codePoint >= 32 && codePoint <= 126) {
+                    writer.write(codePoint);
+                } else if (codePoint <= 0xFFFF) {
+                    writer.write("\\u");
+                    writer.write(padLeft(Integer.toHexString(codePoint).toUpperCase(Locale.ENGLISH), 4, '0'));
+                } else {
+                    char[] chars = Character.toChars(codePoint);
+                    for (char c : chars) {
+                        writer.write("\\u");
+                        writer.write(padLeft(Integer.toHexString(c).toUpperCase(Locale.ENGLISH), 4, '0'));
+                    }
+                }
+                i += Character.charCount(codePoint);
+            }
+            return writer.toString();
+        } catch (IOException e) {
+            throw new RuntimeException("Unicode escape encoding failed", e);
+        }
+    }
+
+    private static int processDecodeUnicodeSequence(CharSequence seq, int index, Writer writer) throws IOException {
+        int result = decodeHtmlEntity(seq, index, writer);
+        if (result != 0) return result;
+        result = decodeOctalEscape(seq, index, writer);
+        if (result != 0) return result;
+        return decodeUnicode(seq, index, writer);
+    }
+
+    private static int decodeHtmlEntity(CharSequence seq, int index, Writer writer) throws IOException {
+        if (seq.length() <= index || seq.charAt(index) != '&') return 0;
+        int semi = seq.indexOf(';', index + 1);
+        if (semi == -1 || semi > index + 10) return 0;
+        String name = seq.subSequence(index + 1, semi).toString();
+        String value = HTML_ENTITY_MAP.get(name);
+        if (value != null) {
+            writer.write(value);
+            return semi - index + 1;
+        }
+        if (name.startsWith("#")) {
+            try {
+                String numStr = name.substring(1);
+                int codePoint;
+                if (numStr.startsWith("x") || numStr.startsWith("X")) {
+                    codePoint = Integer.parseUnsignedInt(numStr.substring(1), 16);
+                } else {
+                    codePoint = Integer.parseUnsignedInt(numStr, 10);
+                }
+                writer.write(Character.toChars(codePoint));
+                return semi - index + 1;
+            } catch (NumberFormatException e) {
+                return 0;
+            }
+        }
+        return 0;
+    }
+
+    private static int decodeOctalEscape(CharSequence seq, int index, Writer writer) throws IOException {
+        if (seq.length() <= index || seq.charAt(index) != '\\') return 0;
+        int len = seq.length() - index - 1;
+        if (len <= 0) return 0;
+        char c1 = seq.charAt(index + 1);
+        if (c1 < '0' || c1 > '7') return 0;
+        StringBuilder sb = new StringBuilder();
+        sb.append(c1);
+        if (len > 1 && isOctalDigit(seq.charAt(index + 2))) {
+            sb.append(seq.charAt(index + 2));
+            if (len > 2 && c1 <= '3' && isOctalDigit(seq.charAt(index + 3))) {
+                sb.append(seq.charAt(index + 3));
+            }
+        }
+        try {
+            writer.write(Integer.parseInt(sb.toString(), 8));
+            return sb.length() + 1;
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    private static int decodeUnicode(CharSequence seq, int index, Writer writer) throws IOException {
+        if (seq.length() <= index || seq.charAt(index) != '\\') return 0;
+        int i = index + 1;
+        if (i >= seq.length() || seq.charAt(i) != 'u') return 0;
+        int uCount = 1;
+        while (i + uCount < seq.length() && seq.charAt(i + uCount) == 'u') uCount++;
+        int hexStart = i + uCount;
+        int hexEnd = hexStart + 4;
+        if (hexEnd > seq.length()) throw new IllegalArgumentException("Invalid unicode escape");
+        String hex = seq.subSequence(hexStart, hexEnd).toString();
+        try {
+            int codePoint = Integer.parseUnsignedInt(hex, 16);
+            writer.write(Character.toChars(codePoint));
+            return uCount + 5;
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Invalid unicode escape: \\u" + hex, e);
+        }
+    }
+
+    private static boolean isOctalDigit(char c) {
+        return c >= '0' && c <= '7';
+    }
+
+    private static String padLeft(String str, int length, char padChar) {
+        StringBuilder sb = new StringBuilder(length);
+        for (int i = str.length(); i < length; i++) sb.append(padChar);
+        sb.append(str);
+        return sb.toString();
     }
 }
