@@ -46,8 +46,10 @@ public class FengYe extends Spider {
     private String publishUrl = DEFAULT_PUBLISH;
 
     public FengYe() {
-        this.host = DEFAULT_HOST;
-        this.publishUrl = DEFAULT_PUBLISH;
+        this.defaultHeaders.put("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36");
+        this.defaultHeaders.put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8");
+        this.defaultHeaders.put("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
+        this.defaultHeaders.put("Connection", "keep-alive");
     }
 
     /**
@@ -244,6 +246,18 @@ public class FengYe extends Spider {
                         }
                     }
                 }
+
+                // 解析播放源配置并填充 playSourceMap
+                playSourceMap.clear();
+                Pattern playSourcePattern = Pattern.compile("\"(\\w+)\"\\s*:\\s*\"(https?://[^\"]+)\"");
+                Matcher playMatcher = playSourcePattern.matcher(html);
+                while (playMatcher.find()) {
+                    playSourceMap.put(playMatcher.group(1), playMatcher.group(2));
+                }
+                // 兜底：如果解析失败，使用内置默认值
+                if (playSourceMap.isEmpty()) {
+                    playSourceMap.put("default", "https://fgsrg.hzqingshan.com/api/");
+                }
             }
         } catch (Exception e) {
             // 使用默认站点
@@ -360,7 +374,7 @@ public class FengYe extends Spider {
             return Result.string(page, totalPage, 36, 9999, list);
         }
 
-        // 构建完整筛选URL
+        // 构建完整筛选URL（补入页码 pg）
         StringBuilder urlBuilder = new StringBuilder("/cupfox-list/");
         urlBuilder.append(tidValue).append("-");
         urlBuilder.append(area).append("-");
@@ -368,12 +382,19 @@ public class FengYe extends Spider {
         urlBuilder.append(genre).append("-");
         urlBuilder.append(lang).append("-");
         urlBuilder.append(letter).append("-");
-        urlBuilder.append(year).append(".html");
+        urlBuilder.append(year).append("---").append(pg).append("---.html");
 
         String html = fetchHtml(urlBuilder.toString());
         ArrayList<Vod> list = parseVideoList(html);
 
-        return Result.string(1, 1, 36, 9999, list);
+        int page;
+        try {
+            page = Integer.parseInt(pg);
+        } catch (Exception e) {
+            page = 1;
+        }
+
+        return Result.string(page, 1, 36, 9999, list);
     }
 
     @Override
