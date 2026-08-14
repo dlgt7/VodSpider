@@ -596,7 +596,7 @@ public class AliYun {
 
     private void showInput() {
         try {
-            int margin = ResUtil.dp2px(16);
+            int margin = Util.dp2px(16);
             FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             FrameLayout frame = new FrameLayout(Init.context());
             params.setMargins(margin, margin, margin, margin);
