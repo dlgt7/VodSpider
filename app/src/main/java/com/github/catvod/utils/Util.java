@@ -1101,7 +1101,7 @@ public class Util {
     }
 
     /**
-     * 解码 \uXXXX、八进制转义及HTML实体
+     * 解码 \\uXXXX、八进制转义及HTML实体
      */
     public static String decodeUnicode(String str) {
         if (str == null || str.isEmpty()) return str;
