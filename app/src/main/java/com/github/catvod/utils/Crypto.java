@@ -2,6 +2,8 @@ package com.github.catvod.utils;
 
 import android.util.Base64;
 
+import com.github.catvod.crawler.SpiderDebug;
+
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyFactory;
@@ -11,6 +13,8 @@ import java.security.PublicKey;
 import java.security.spec.AlgorithmParameterSpec;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
+import java.util.Arrays;
+import java.util.Random;
 
 import javax.crypto.Cipher;
 import javax.crypto.Mac;
@@ -324,5 +328,215 @@ public class Crypto {
         } catch (Exception e) {
             return src;
         }
+    }
+
+    // ==================== AES GCM（FengYe 风格） ====================
+
+    private static final char[] FENGYE_BASE64_UPPER = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".toCharArray();
+    private static final char[] FENGYE_BASE64_LOWER = "ZYXWVUTSRQPONMLKJIHGFEDCBAzyxwvutsrqponmlkjihgfedcba9876543210+/".toCharArray();
+    private static final char[] FENGYE_SORTED_CHARSET;
+
+    static {
+        String chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        char[] arr = chars.toCharArray();
+        Arrays.sort(arr);
+        FENGYE_SORTED_CHARSET = arr;
+    }
+
+    /**
+     * FengYe 风格 AES 加密（密钥对方式）
+     */
+    public static String fengyeEncrypt(String plaintext, String keyPair) {
+        return fengyeCrypt(plaintext, keyPair, true);
+    }
+
+    /**
+     * FengYe 风格 AES 解密（密钥对方式）
+     */
+    public static String fengyeDecrypt(String ciphertext, String keyPair) {
+        return fengyeCrypt(ciphertext, keyPair, false);
+    }
+
+    /**
+     * 生成 FengYe 密钥对
+     */
+    public static String fengyeGenerateKeyPair() {
+        String keyMaterial = "lywkxC";
+        String md5 = md5(keyMaterial);
+        String encoded = Base64.encodeToString(md5.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
+        String substring = encoded.substring(5, encoded.length() - 7);
+        if (substring.length() < 48) {
+            substring = Base64.encodeToString(substring.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
+        }
+        return substring.substring(3, 19) + ":" + substring.substring(substring.length() - 27, substring.length() - 11);
+    }
+
+    private static String fengyeCrypt(String input, String keyPair, boolean encrypt) {
+        try {
+            String[] parts = keyPair.split(":");
+            if (parts.length != 2) return "";
+            return encrypt ? doFengyeEncrypt(input, parts[0], parts[1]) : doFengyeDecrypt(input, parts[0], parts[1]);
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+            return "";
+        }
+    }
+
+    /**
+     * 密文末尾结构：
+     *   [...加密数据|rotate(1字节)|timeMod(1字节)]
+     *   rotate: 字节循环偏移量  1-5
+     *   timeMod: System.currentTimeMillis() % 15  0-14
+     */
+    private static String doFengyeEncrypt(String plaintext, String keyPart1, String keyPart2) {
+        int shift = new Random().nextInt(36) + 1;
+        String shifted = shiftCharset(plaintext, shift, true);
+        byte[] bytes = shifted.getBytes(StandardCharsets.UTF_8);
+
+        byte[] padding = new byte[bytes.length];
+        byte[] combined = new byte[bytes.length * 2];
+        long timeMod = System.currentTimeMillis() % 15;
+        for (int i = 0; i < bytes.length; i++) {
+            padding[i] = (byte) (timeMod + 1);
+            combined[i] = (byte) (bytes[i] + padding[i]);
+            combined[bytes.length + i] = padding[i];
+        }
+
+        String prefix = String.format("%02X", shift);
+        String base64Str = Base64.encodeToString(combined, Base64.NO_WRAP);
+        String transformed = shiftBase64Chars(base64Str, true);
+        byte[] data = (prefix + transformed).getBytes(StandardCharsets.UTF_8);
+
+        int rotate = new Random().nextInt(5) + 1;
+        byte[] rotated = new byte[data.length];
+        for (int i = 0; i < data.length; i++) {
+            rotated[(i + rotate) % data.length] = data[i];
+        }
+        byte[] withRotate = Arrays.copyOf(rotated, rotated.length + 1);
+        withRotate[rotated.length] = (byte) rotate;
+
+        // AES offset 用 rotate（解密侧从密文末尾读取同一值），而非 charset shift
+        byte[] encrypted = aesFengyeEncrypt(withRotate, keyPart1.getBytes(StandardCharsets.UTF_8),
+                keyPart2.getBytes(StandardCharsets.UTF_8), rotate);
+        if (encrypted == null) return "";
+
+        byte[] result = Arrays.copyOf(encrypted, encrypted.length + 2);
+        result[encrypted.length] = (byte) rotate;
+        result[encrypted.length + 1] = (byte) (timeMod + 1);
+        return Base64.encodeToString(result, Base64.NO_WRAP);
+    }
+
+    private static String doFengyeDecrypt(String ciphertext, String keyPart1, String keyPart2) {
+        byte[] decoded = Base64.decode(ciphertext, Base64.NO_WRAP);
+        if (decoded == null || decoded.length < 2) return "";
+
+        // 密文末尾：rotate(1字节) | timeMod+1(1字节)
+        // rotate 是 AES key offset，timeMod 不参与 AES
+        int rotate = decoded[decoded.length - 2] & 0xFF;
+        // int timeModPlus1 = decoded[decoded.length - 1] & 0xFF;
+
+        byte[] core = Arrays.copyOfRange(decoded, 0, decoded.length - 2);
+        // AES offset 用 rotate（密文尾部已知），与加密侧传入的 rotate 完全一致
+        byte[] decrypted = aesFengyeDecrypt(core, keyPart1.getBytes(StandardCharsets.UTF_8),
+                keyPart2.getBytes(StandardCharsets.UTF_8), rotate);
+        if (decrypted == null || decrypted.length < 2) return "";
+
+        // 逆循环：decrypted 末尾 1 字节是 rotate，用于还原字节移位
+        int len = decrypted.length - 1;
+        byte[] unrotated = new byte[len];
+        int rot = decrypted[decrypted.length - 1] & 0xFF;
+        for (int i = 0; i < len; i++) {
+            unrotated[(i - rot + len) % len] = decrypted[i];
+        }
+
+        // 前缀 2 字节是 charsetShift（十六进制），加密时写入，解密时从此读取并还原
+        int charsetShift;
+        try {
+            charsetShift = Integer.parseInt(new String(unrotated, 0, 2, StandardCharsets.UTF_8), 16);
+        } catch (Exception e) {
+            return "";
+        }
+
+        String base64Data = new String(unrotated, 2, unrotated.length - 2, StandardCharsets.UTF_8);
+        String restored = shiftBase64Chars(base64Data, false);
+        byte[] restoredBytes = Base64.decode(restored, Base64.NO_WRAP);
+        if (restoredBytes == null || restoredBytes.length < 2) return "";
+
+        byte[] padded = new byte[restoredBytes.length / 2];
+        for (int i = 0; i < padded.length; i++) {
+            padded[i] = (byte) (restoredBytes[i] - restoredBytes[restoredBytes.length / 2 + i]);
+        }
+        return shiftCharset(new String(padded, StandardCharsets.UTF_8), charsetShift, false);
+    }
+
+    /**
+     * AES-ECB 仅用 key，不传 IV（ECB 模式下 IvParameterSpec 会抛 InvalidAlgorithmParameterException）
+     * @param shift 用于截断 key1/key2 并做字节偏移的偏移量
+     */
+    private static byte[] aesFengyeEncrypt(byte[] data, byte[] key1, byte[] key2, int shift) {
+        try {
+            SecretKeySpec key = new SecretKeySpec(truncateTo16(key1, shift), "AES");
+            Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5Padding");
+            cipher.init(Cipher.ENCRYPT_MODE, key);
+            return cipher.doFinal(data);
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+            return null;
+        }
+    }
+
+    private static byte[] aesFengyeDecrypt(byte[] data, byte[] key1, byte[] key2, int shift) {
+        try {
+            SecretKeySpec key = new SecretKeySpec(truncateTo16(key1, shift), "AES");
+            Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5Padding");
+            cipher.init(Cipher.DECRYPT_MODE, key);
+            return cipher.doFinal(data);
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+            return null;
+        }
+    }
+
+    private static byte[] truncateTo16(byte[] bytes, int shift) {
+        byte[] result = new byte[16];
+        System.arraycopy(bytes, 0, result, 0, Math.min(bytes.length, 16));
+        for (int i = 0; i < result.length; i++) {
+            result[i] = (byte) (result[i] + shift);
+        }
+        return result;
+    }
+
+    private static String shiftCharset(String str, int shift, boolean encrypt) {
+        if (str == null || str.isEmpty()) return "";
+        int len = FENGYE_SORTED_CHARSET.length;
+        StringBuilder sb = new StringBuilder();
+        for (char c : str.toCharArray()) {
+            int idx = Arrays.binarySearch(FENGYE_SORTED_CHARSET, c);
+            if (idx >= 0) {
+                c = FENGYE_SORTED_CHARSET[(encrypt ? (idx + shift) : ((idx - shift) + len)) % len];
+            }
+            sb.append(c);
+        }
+        return sb.toString();
+    }
+
+    private static String shiftBase64Chars(String str, boolean uppercase) {
+        if (str == null || str.isEmpty()) return "";
+        char[] from = uppercase ? FENGYE_BASE64_UPPER : FENGYE_BASE64_LOWER;
+        char[] to = uppercase ? FENGYE_BASE64_LOWER : FENGYE_BASE64_UPPER;
+        StringBuilder sb = new StringBuilder();
+        for (char c : str.toCharArray()) {
+            if (c == '=') {
+                sb.append(c);
+                continue;
+            }
+            int idx = -1;
+            for (int i = 0; i < from.length; i++) {
+                if (from[i] == c) { idx = i; break; }
+            }
+            if (idx >= 0) c = to[idx];
+            sb.append(c);
+        }
+        return sb.toString();
     }
 }
