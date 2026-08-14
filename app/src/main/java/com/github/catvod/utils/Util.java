@@ -4,7 +4,6 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.util.Base64;
-import android.util.TypedValue;
 
 import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.spider.Init;
@@ -14,8 +13,9 @@ import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.text.DecimalFormat;
-import java.util.Arrays;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -52,6 +52,70 @@ public class Util {
 
     public static String getRandomUserAgent() {
         return USER_AGENTS[(int) (Math.random() * USER_AGENTS.length)];
+    }
+
+    /**
+     * 随机选取一个浏览器 UA（别名，供 UAConfig 迁移调用方使用）
+     */
+    public static String randomUA() {
+        return getRandomUserAgent();
+    }
+
+    /**
+     * 将扁平 header Map 转为有序 LinkedHashMap（保留插入顺序，便于 WAF 指纹识别）
+     */
+    public static LinkedHashMap<String, String> toOrderedMap(Map<String, String> header) {
+        LinkedHashMap<String, String> ordered = new LinkedHashMap<>();
+        if (header != null) {
+            for (Map.Entry<String, String> entry : header.entrySet()) {
+                ordered.put(entry.getKey(), entry.getValue());
+            }
+        }
+        return ordered;
+    }
+
+    /**
+     * 构建带默认公共 Header 的 Map
+     * 未设置 UA 时自动补充随机浏览器 UA
+     * 未设置 Accept-Language 时自动补充 zh-CN
+     */
+    public static LinkedHashMap<String, String> buildDefaultHeaders(Map<String, String> extra) {
+        LinkedHashMap<String, String> headers = new LinkedHashMap<>();
+        headers.put("User-Agent", randomUA());
+        headers.put("Accept", "*/*");
+        headers.put("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
+        headers.put("Connection", "keep-alive");
+        if (extra != null) {
+            for (Map.Entry<String, String> entry : extra.entrySet()) {
+                headers.put(entry.getKey(), entry.getValue());
+            }
+        }
+        return headers;
+    }
+
+    /**
+     * 合并两个 Cookie 字符串，新 Cookie 中的同 Key 覆盖旧值
+     */
+    public static String mergeCookies(String oldCookie, String newCookie) {
+        if (isEmpty(oldCookie)) return newCookie == null ? "" : newCookie;
+        if (isEmpty(newCookie)) return oldCookie;
+        LinkedHashMap<String, String> map = new LinkedHashMap<>();
+        for (String pair : oldCookie.split(";")) {
+            String trimmed = pair.trim();
+            int idx = trimmed.indexOf('=');
+            if (idx > 0) map.put(trimmed.substring(0, idx).trim(), trimmed.substring(idx + 1).trim());
+        }
+        for (String pair : newCookie.split(";")) {
+            String trimmed = pair.trim();
+            int idx = trimmed.indexOf('=');
+            if (idx > 0) map.put(trimmed.substring(0, idx).trim(), trimmed.substring(idx + 1).trim());
+        }
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<String, String> entry : map.entrySet()) {
+            if (sb.length() > 0) sb.append("; ");
+            sb.append(entry.getKey()).append("=").append(entry.getValue());
+        }
+        return sb.toString();
     }
 
     public static boolean isThunder(String url) {
