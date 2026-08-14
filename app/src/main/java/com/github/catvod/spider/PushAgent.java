@@ -8,8 +8,8 @@ import android.text.TextUtils;
 import com.github.catvod.crawler.Spider;
 import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.net.OkHttp;
-import com.github.catvod.utils.Misc;
 import com.github.catvod.utils.Notify;
+import com.github.catvod.utils.Util;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -338,7 +338,7 @@ public class PushAgent extends Spider {
                 long timeSys = getTimeSys();
                 String token = shareToken.get(shareId);
                 Long expires = shareExpires.get(shareId);
-                if (!TextUtils.isEmpty(token) && expires - timeSys > 600) {
+                if (!TextUtils.isEmpty(token) && expires != null && expires - timeSys > SHARE_TOKEN_THRESHOLD) {
                     return token;
                 }
                 JSONObject json = new JSONObject();
@@ -358,7 +358,7 @@ public class PushAgent extends Spider {
 
     public static Object[] loadsub(String url) {
         try {
-            return new Object[]{200, "application/octet-stream", new ByteArrayInputStream(OkHttp.string(url, getHeaders()).getBytes())};
+            return new Object[]{200, "application/octet-stream", new ByteArrayInputStream(OkHttp.string(url, getHeaders()).getBytes(java.nio.charset.StandardCharsets.UTF_8))};
         } catch (Exception e) {
             SpiderDebug.log(e);
             return null;
@@ -368,7 +368,7 @@ public class PushAgent extends Spider {
     public static Object[] File(Map<String, String> params) {
         try {
             String shareId = params.get("share_id");
-            return new Object[]{200, "application/octet-stream", new ByteArrayInputStream(getVideoUrl(shareId, getShareTk(shareId, ""), params.get("file_id")).getBytes())};
+            return new Object[]{200, "application/octet-stream", new ByteArrayInputStream(getVideoUrl(shareId, getShareTk(shareId, ""), params.get("file_id")).getBytes(java.nio.charset.StandardCharsets.UTF_8))};
         } catch (Exception e) {
             SpiderDebug.log(e);
             return null;
@@ -382,14 +382,34 @@ public class PushAgent extends Spider {
             String mediaId = params.get("media_id");
             String shareToken = getShareTk(shareId, "");
             rLock.lock();
-            String url = videosMap.get(fileId).get(mediaId);
-            if (Long.parseLong(new UrlQuerySanitizer(url).getValue("x-oss-expires")) - getTimeSys() <= 60) {
-                getVideoUrl(shareId, shareToken, fileId);
-                url = videosMap.get(fileId).get(mediaId);
+            try {
+                Map<String, String> mediaMap = videosMap.get(fileId);
+                if (mediaMap == null || !mediaMap.containsKey(mediaId)) {
+                    // fileId 未缓存或 mediaId 缺失，重新拉流
+                    getVideoUrl(shareId, shareToken, fileId);
+                    mediaMap = videosMap.get(fileId);
+                    if (mediaMap == null || !mediaMap.containsKey(mediaId)) {
+                        SpiderDebug.log("ProxyMedia: no cached video for file_id=" + fileId);
+                        return null;
+                    }
+                }
+                String url = mediaMap.get(mediaId);
+                long expires = 0;
+                try {
+                    expires = Long.parseLong(new UrlQuerySanitizer(url).getValue("x-oss-expires"));
+                } catch (Exception ignored) { }
+                if (expires > 0 && expires - getTimeSys() <= URL_EXPIRE_THRESHOLD) {
+                    getVideoUrl(shareId, shareToken, fileId);
+                    Map<String, String> cached = videosMap.get(fileId);
+                    if (cached != null && cached.containsKey(mediaId)) {
+                        url = cached.get(mediaId);
+                    }
+                }
+                okhttp3.Response response = OkHttp.newCall(url, getHeaders());
+                return new Object[]{200, "video/MP2T", response.body().byteStream()};
+            } finally {
+                rLock.unlock();
             }
-            rLock.unlock();
-            okhttp3.Response response = OkHttp.newCall(url, getHeaders());
-            return new Object[]{200, "video/MP2T", response.body().byteStream()};
         } catch (Exception e) {
             SpiderDebug.log(e);
             return null;
@@ -398,10 +418,11 @@ public class PushAgent extends Spider {
 
     public static Object[] vod(Map<String, String> map) {
         String type = map.get("type");
-        if (type.equals("m3u8")) {
+        if (type == null) return null;
+        if ("m3u8".equals(type)) {
             return File(map);
         }
-        if (type.equals("media")) {
+        if ("media".equals(type)) {
             return ProxyMedia(map);
         }
         return null;
@@ -625,7 +646,7 @@ public class PushAgent extends Spider {
     public String detailContent(List<String> ids) throws Exception {
         try {
             String url = ids.get(0);
-            if (Misc.isVip(url) && !url.contains("qq.com") && !url.contains("mgtv.com")) {
+            if (Util.isVip(url) && !url.contains("qq.com") && !url.contains("mgtv.com")) {
                 JSONObject result = new JSONObject();
                 JSONArray list = new JSONArray();
                 JSONObject vodAtom = new JSONObject();
@@ -680,7 +701,7 @@ public class PushAgent extends Spider {
                 lists.put(vodAtom);
                 result.put("list", lists);
                 return result.toString();
-            } else if (Misc.isVip(url) && url.contains("mgtv.com")) {
+            } else if (Util.isVip(url) && url.contains("mgtv.com")) {
                 List<String> vodItems = new ArrayList<>();
                 JSONObject result = new JSONObject();
                 JSONArray lists = new JSONArray();
@@ -723,7 +744,7 @@ public class PushAgent extends Spider {
                 lists.put(vodAtom);
                 result.put("list", lists);
                 return result.toString();
-            } else if (Misc.isVideoFormat(url)) {
+            } else if (Util.isVideoFormat(url)) {
                 JSONObject result = new JSONObject();
                 JSONArray list = new JSONArray();
                 JSONObject vodAtom = new JSONObject();
@@ -891,7 +912,7 @@ public class PushAgent extends Spider {
                     String url = getselfDownloadUrl(split[1], defaultDriveId);
                     result.put("url", url);
                 } else {
-                    String videoUrl = Proxy.getUrl() + "?do=push&type=openselfm3u8&file_id=" + split[1] + "&drive_id=" + defaultDriveId + "&delefile=fale";
+                    String videoUrl = Proxy.getUrl() + "?do=push&type=openselfm3u8&file_id=" + split[1] + "&drive_id=" + defaultDriveId + "&delefile=false";
                     result.put("url", videoUrl);
                 }
                 return result.toString();
@@ -906,7 +927,7 @@ public class PushAgent extends Spider {
                     String url = getshareAudioUrl(split[2], split[0]);
                     result.put("url", url);
                 } else {
-                    String videoUrl = Proxy.getUrl() + "?do=push&type=m3u8&share_id=" + split[0] + "&file_id=" + split[2] + "&drive_id=" + defaultDriveId + "&delefile=fale";
+                    String videoUrl = Proxy.getUrl() + "?do=push&type=m3u8&share_id=" + split[0] + "&file_id=" + split[2] + "&drive_id=" + defaultDriveId + "&delefile=false";
                     result.put("url", videoUrl);
                 }
                 return result.toString();
@@ -1590,14 +1611,34 @@ public class PushAgent extends Spider {
             String mediaId = params.get("media_id");
             String driveId = params.get("drive_id");
             rLock.lock();
-            String url = videosMap.get(fileId).get(mediaId);
-            if (Long.parseLong(new UrlQuerySanitizer(url).getValue(OSS_EXPIRES_PARAM)) - getTimeSys() <= URL_EXPIRE_THRESHOLD) {
-                getPreviewUrl(fileId, driveId, false);
-                url = videosMap.get(fileId).get(mediaId);
+            try {
+                Map<String, String> mediaMap = videosMap.get(fileId);
+                if (mediaMap == null || !mediaMap.containsKey(mediaId)) {
+                    // fileId 未缓存或 mediaId 缺失，重新拉流
+                    getPreviewUrl(fileId, driveId, false);
+                    mediaMap = videosMap.get(fileId);
+                    if (mediaMap == null || !mediaMap.containsKey(mediaId)) {
+                        SpiderDebug.log("ProxyopenMedia: no cached media for file_id=" + fileId);
+                        return null;
+                    }
+                }
+                String url = mediaMap.get(mediaId);
+                long expires = 0;
+                try {
+                    expires = Long.parseLong(new UrlQuerySanitizer(url).getValue(OSS_EXPIRES_PARAM));
+                } catch (Exception ignored) { }
+                if (expires > 0 && expires - getTimeSys() <= URL_EXPIRE_THRESHOLD) {
+                    getPreviewUrl(fileId, driveId, false);
+                    Map<String, String> cached = videosMap.get(fileId);
+                    if (cached != null && cached.containsKey(mediaId)) {
+                        url = cached.get(mediaId);
+                    }
+                }
+                okhttp3.Response response = OkHttp.newCall(url, getOpenHeaders());
+                return new Object[]{200, MIME_VIDEO_TS, response.body().byteStream()};
+            } finally {
+                rLock.unlock();
             }
-            rLock.unlock();
-            okhttp3.Response response = OkHttp.newCall(url, getOpenHeaders());
-            return new Object[]{200, MIME_VIDEO_TS, response.body().byteStream()};
         } catch (Exception e) {
             SpiderDebug.log(e);
             return null;
@@ -1710,7 +1751,7 @@ public class PushAgent extends Spider {
             String fileId = params.get("file_id");
             String driveId = params.get("drive_id");
             String m3u8Content = getOpenPreview(fileId, driveId, shareId);
-            return new Object[]{200, MIME_M3U8, new ByteArrayInputStream(m3u8Content.getBytes())};
+            return new Object[]{200, MIME_M3U8, new ByteArrayInputStream(m3u8Content.getBytes(java.nio.charset.StandardCharsets.UTF_8))};
         } catch (Exception e) {
             SpiderDebug.log(e);
             return null;
@@ -1728,7 +1769,7 @@ public class PushAgent extends Spider {
             String fileId = params.get("file_id");
             String driveId = params.get("drive_id");
             String m3u8Content = getPreviewUrl(fileId, driveId, false);
-            return new Object[]{200, MIME_M3U8, new ByteArrayInputStream(m3u8Content.getBytes())};
+            return new Object[]{200, MIME_M3U8, new ByteArrayInputStream(m3u8Content.getBytes(java.nio.charset.StandardCharsets.UTF_8))};
         } catch (Exception e) {
             SpiderDebug.log(e);
             return null;
