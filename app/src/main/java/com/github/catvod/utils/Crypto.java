@@ -8,7 +8,6 @@ import java.security.KeyFactory;
 import java.security.MessageDigest;
 import java.security.PrivateKey;
 import java.security.PublicKey;
-import java.security.SecureRandom;
 import java.security.spec.AlgorithmParameterSpec;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
@@ -123,11 +122,11 @@ public class Crypto {
         try {
             src = src.replace("\\", "");
             Cipher cipher = Cipher.getInstance(AES_CBC_PKCS5);
-            SecretKeySpec keySpec = new SecretKeySpec(KEY.getBytes(), AES);
-            AlgorithmParameterSpec paramSpec = new IvParameterSpec(IV.getBytes());
+            SecretKeySpec keySpec = new SecretKeySpec(KEY.getBytes(StandardCharsets.UTF_8), AES);
+            AlgorithmParameterSpec paramSpec = new IvParameterSpec(IV.getBytes(StandardCharsets.UTF_8));
             cipher.init(Cipher.DECRYPT_MODE, keySpec, paramSpec);
             byte[] decrypted = cipher.doFinal(Base64.decode(src, Base64.DEFAULT));
-            return new String(decrypted);
+            return new String(decrypted, StandardCharsets.UTF_8);
         } catch (Exception ignored) {
             return "";
         }
@@ -143,7 +142,7 @@ public class Crypto {
         Cipher cipher = Cipher.getInstance(AES_CBC_PKCS5);
         cipher.init(Cipher.ENCRYPT_MODE, secretKey, ivSpec);
         byte[] encrypted = cipher.doFinal(data.getBytes(StandardCharsets.UTF_8));
-        return Base64.encodeToString(encrypted, Base64.NO_PADDING);
+        return Base64.encodeToString(encrypted, Base64.NO_WRAP);
     }
 
     public static String aesEcbEncrypt(String data, String key) throws Exception {
@@ -306,5 +305,24 @@ public class Crypto {
             bytes[i] = (byte) (bytes[i] ^ key.charAt(i % keyLen));
         }
         return new String(bytes);
+    }
+
+    /**
+     * 通用哈希算法（支持任意算法名，如 MD5、SHA-1、SHA-256 等）
+     */
+    public static String hash(String algorithm, String src) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance(algorithm);
+            byte[] digest = md.digest(src.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            for (byte b : digest) {
+                String hex = Integer.toHexString(b & 0xFF);
+                if (hex.length() == 1) sb.append('0');
+                sb.append(hex);
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            return src;
+        }
     }
 }

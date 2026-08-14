@@ -4,7 +4,9 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.util.Base64;
+import android.util.TypedValue;
 
+import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.spider.Init;
 
 import java.io.UnsupportedEncodingException;
@@ -13,18 +15,23 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.text.DecimalFormat;
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
+import org.jsoup.select.Elements;
+
 public class Util {
 
     private static final Pattern THUNDER = Pattern.compile("(magnet|thunder|ed2k):.*");
     private static final Pattern HTML_TAG = Pattern.compile("<[^>]*>");
     private static final Pattern WHITESPACE = Pattern.compile("\\s+");
-    private static final Pattern DOMAIN_PREFIX = Pattern.compile("^(https?://)?(www\\.)?");
 
     private static final String[] USER_AGENTS = {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -56,6 +63,40 @@ public class Util {
         if (isEmpty(url)) return false;
         if (url.toLowerCase().startsWith("magnet:")) return false;
         return getExt(url).equals("torrent");
+    }
+
+    /** VIP 视频域名列表 */
+    private static final String[] VIP_DOMAINS = {
+            "iqiyi.com", "youku.com", "tudou.com", "v.qq.com", "mgtv.com",
+            "sohu.com", "le.com", "pptv.com", "vip.bd.com"
+    };
+
+    /** 视频格式扩展名（用于 isVideoFormat 关键词匹配） */
+    private static final String[] VIDEO_FORMAT_EXTS = {
+            ".m3u8", ".mp4", ".flv", ".avi", ".mkv", ".rm", ".wmv", ".mpg", ".m4a", ".mp3"
+    };
+
+    /**
+     * 判断 URL 是否指向 VIP 视频站点。
+     */
+    public static boolean isVip(String url) {
+        if (isEmpty(url)) return false;
+        for (String domain : VIP_DOMAINS) {
+            if (url.contains(domain)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * 判断 URL 是否为常见视频格式直链（关键词包含视频扩展名）。
+     */
+    public static boolean isVideoFormat(String url) {
+        if (isEmpty(url)) return false;
+        String lower = url.toLowerCase();
+        for (String ext : VIDEO_FORMAT_EXTS) {
+            if (lower.contains(ext)) return true;
+        }
+        return false;
     }
 
     public static boolean isSub(String text) {
@@ -217,12 +258,20 @@ public class Util {
     }
 
     public static String md5(String text) {
+        return md5(text, false);
+    }
+
+    /**
+     * MD5哈希（可指定大小写）
+     */
+    public static String md5(String text, boolean upperCase) {
         try {
             java.security.MessageDigest md = java.security.MessageDigest.getInstance("MD5");
             byte[] array = md.digest(text.getBytes(StandardCharsets.UTF_8));
             StringBuilder sb = new StringBuilder();
             for (byte b : array) {
-                sb.append(Integer.toHexString((b & 0xFF) | 0x100).substring(1, 3));
+                String hex = Integer.toHexString((b & 0xFF) | 0x100).substring(1, 3);
+                sb.append(upperCase ? hex.toUpperCase() : hex);
             }
             return sb.toString();
         } catch (java.security.NoSuchAlgorithmException e) {
@@ -563,6 +612,67 @@ public class Util {
         return baseUrl + separator + path;
     }
 
+    /**
+     * 修复相对URL为绝对URL
+     */
+    public static String repairUrl(String base, String url) {
+        try {
+            // 已是完整 URL
+            if (url.startsWith("http://") || url.startsWith("https://")) return url;
+            // 协议相对 URL
+            if (url.startsWith("//")) return (base != null && base.contains("://") ? base.split(":", 2)[0] : "http") + ":" + url;
+            android.net.Uri uri = android.net.Uri.parse(base);
+            String scheme = uri.getScheme();
+            String host = uri.getHost();
+            int port = uri.getPort();
+            String hostPart = host != null ? (port > 0 ? host + ":" + port : host) : "";
+            // 根相对路径
+            if (url.startsWith("/")) return scheme + "://" + hostPart + url;
+            // 相对路径：拼上 base 的目录部分
+            String basePath = uri.getPath();
+            if (basePath != null) {
+                int lastSlash = basePath.lastIndexOf('/');
+                if (lastSlash >= 0) basePath = basePath.substring(0, lastSlash + 1);
+                else basePath = "/";
+            } else {
+                basePath = "/";
+            }
+            return scheme + "://" + hostPart + basePath + url;
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+            return url;
+        }
+    }
+
+    /**
+     * 验证URL格式是否有效
+     */
+    public static boolean isValidUrl(String url) {
+        if (isEmpty(url)) return false;
+        try {
+            android.net.Uri uri = android.net.Uri.parse(url);
+            String host = uri.getHost();
+            return host != null && !host.isEmpty() && (url.startsWith("http://") || url.startsWith("https://"));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * 验证域名是否有效（排除google/facebook）
+     */
+    public static boolean isDomainValid(String url) {
+        if (isEmpty(url)) return false;
+        try {
+            android.net.Uri uri = android.net.Uri.parse(url);
+            String host = uri.getHost();
+            if (host == null || host.isEmpty()) return false;
+            return !host.contains("google") && !host.contains("facebook");
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     public static String randomString(int length) {
         String chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
         StringBuilder sb = new StringBuilder();
@@ -606,6 +716,69 @@ public class Util {
     public static String cleanWhitespace(String text) {
         if (text == null) return "";
         return WHITESPACE.matcher(text).replaceAll(" ").trim();
+    }
+
+    // ==================== CSS选择器HTML解析 ====================
+
+    /**
+     * 将 dp 单位转换为屏幕像素(px)
+     */
+    public static int dp2px(int dp) {
+        float density = Init.context().getResources().getDisplayMetrics().density;
+        return (int) (dp * density + 0.5f);
+    }
+
+    /**
+     * 根据CSS选择器提取元素并获取属性值，支持:eq(index)定位
+     *
+     * @param html HTML内容
+     * @param css  CSS选择器，支持 :eq(n) 取第 n+1 个元素
+     * @param attr 要提取的属性名，为空则提取文本
+     */
+    public static ArrayList<String> cssSelect(String html, String css, String attr) {
+        ArrayList<String> result = new ArrayList<>();
+        if (html == null || css == null) {
+            result.add("");
+            return result;
+        }
+        int eqIndex = css.indexOf(":eq(");
+        int targetIndex = -1;
+        if (eqIndex >= 0) {
+            int closeParen = css.indexOf(')', eqIndex);
+            if (closeParen > eqIndex) {
+                try {
+                    targetIndex = Integer.parseInt(css.substring(eqIndex + 4, closeParen));
+                } catch (NumberFormatException ignored) { }
+                css = css.substring(0, eqIndex).trim() + css.substring(closeParen + 1).trim();
+            }
+        }
+        String cssTrim = css.trim();
+        try {
+            Document doc = Jsoup.parse(html);
+            Elements elements = cssTrim.isEmpty() ? new Elements(doc.body()) : doc.select(cssTrim);
+            if (elements.isEmpty()) { result.add(""); return result; }
+            if (targetIndex >= 0 && targetIndex < elements.size()) {
+                Element el = elements.get(targetIndex);
+                String value = cssExtract(el, attr);
+                if (value != null && !value.isEmpty()) result.add(value);
+            } else if (targetIndex < 0) {
+                for (Element el : elements) {
+                    String value = cssExtract(el, attr);
+                    if (value != null && !value.isEmpty()) result.add(value);
+                }
+            }
+        } catch (Exception e) {
+            SpiderDebug.log("Jsoup error: " + cssTrim + " | " + e.getMessage());
+        }
+        if (result.isEmpty()) result.add("");
+        return result;
+    }
+
+    private static String cssExtract(Element el, String attr) {
+        if (attr == null || attr.isEmpty()) return el.text();
+        if ("*".equals(attr)) return el.text().trim();
+        try { return el.attr(attr); }
+        catch (Exception e) { return el.text().trim(); }
     }
 
     public static int toInt(String text, int defaultValue) {
