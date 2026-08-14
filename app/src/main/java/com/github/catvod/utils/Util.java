@@ -1137,30 +1137,26 @@ public class Util {
      */
     public static String encodeUnicode(String str) {
         if (str == null || str.isEmpty()) return str;
-        try {
-            StringWriter writer = new StringWriter(str.length() * 2);
-            int length = str.length();
-            int i = 0;
-            while (i < length) {
-                int codePoint = str.codePointAt(i);
-                if (codePoint >= 32 && codePoint <= 126) {
-                    writer.write(codePoint);
-                } else if (codePoint <= 0xFFFF) {
+        StringWriter writer = new StringWriter(str.length() * 2);
+        int length = str.length();
+        int i = 0;
+        while (i < length) {
+            int codePoint = str.codePointAt(i);
+            if (codePoint >= 32 && codePoint <= 126) {
+                writer.write(codePoint);
+            } else if (codePoint <= 0xFFFF) {
+                writer.write("\\u");
+                writer.write(padLeft(Integer.toHexString(codePoint).toUpperCase(Locale.ENGLISH), 4, '0'));
+            } else {
+                char[] chars = Character.toChars(codePoint);
+                for (char c : chars) {
                     writer.write("\\u");
-                    writer.write(padLeft(Integer.toHexString(codePoint).toUpperCase(Locale.ENGLISH), 4, '0'));
-                } else {
-                    char[] chars = Character.toChars(codePoint);
-                    for (char c : chars) {
-                        writer.write("\\u");
-                        writer.write(padLeft(Integer.toHexString(c).toUpperCase(Locale.ENGLISH), 4, '0'));
-                    }
+                    writer.write(padLeft(Integer.toHexString(c).toUpperCase(Locale.ENGLISH), 4, '0'));
                 }
-                i += Character.charCount(codePoint);
             }
-            return writer.toString();
-        } catch (IOException e) {
-            throw new RuntimeException("Unicode escape encoding failed", e);
+            i += Character.charCount(codePoint);
         }
+        return writer.toString();
     }
 
     private static int processDecodeUnicodeSequence(CharSequence seq, int index, Writer writer) throws IOException {
