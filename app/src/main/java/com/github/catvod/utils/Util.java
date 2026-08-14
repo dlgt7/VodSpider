@@ -1133,7 +1133,7 @@ public class Util {
     }
 
     /**
-     * 将字符串编码为 \uXXXX 格式
+     * 将字符串编码为 \\uXXXX 格式
      */
     public static String encodeUnicode(String str) {
         if (str == null || str.isEmpty()) return str;
