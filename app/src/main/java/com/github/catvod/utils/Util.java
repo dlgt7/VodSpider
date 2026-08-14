@@ -1173,7 +1173,10 @@ public class Util {
 
     private static int decodeHtmlEntity(CharSequence seq, int index, Writer writer) throws IOException {
         if (seq.length() <= index || seq.charAt(index) != '&') return 0;
-        int semi = seq.indexOf(';', index + 1);
+        int semi = -1;
+        for (int j = index + 1; j < seq.length() && j <= index + 10; j++) {
+            if (seq.charAt(j) == ';') { semi = j; break; }
+        }
         if (semi == -1 || semi > index + 10) return 0;
         String name = seq.subSequence(index + 1, semi).toString();
         String value = HTML_ENTITY_MAP.get(name);
