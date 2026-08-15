@@ -81,6 +81,7 @@ public class XBPQ extends Spider {
     );
 
     // ==================== 实例字段 - 基础配置 ====================
+    protected String name = "";
     private boolean isDebug = false;
     private int screenOrientation = -1; // 屏幕方向（Smali 实例字段 اۥۭ，来自 SpiderApi.getScreenOrientation()）
     private String homeUrl = "";
@@ -1623,20 +1624,6 @@ public class XBPQ extends Spider {
     }
 
     /**
-     * 获取验证状态缓存（供 XBPQAli 等子类使用）
-     */
-    public static String getVerifyState(String key) {
-        return verifyStateMap.get(key);
-    }
-
-    /**
-     * 设置验证状态缓存（供 XBPQAli 等子类使用）
-     */
-    public static void setVerifyState(String key, String value) {
-        verifyStateMap.put(key, value);
-    }
-
-    /**
      * 加载弹幕数据
      * 返回 Object[]{timeout, contentType, inputStream}
      */
@@ -1965,9 +1952,9 @@ public class XBPQ extends Spider {
     private int countJsonKeys(JSONObject obj) {
         if (obj == null) return 0;
         try {
-            java.util.Enumeration<String> it = obj.keys();
+            java.util.Iterator<String> it = obj.keys();
             int count = 0;
-            while (it.hasMoreElements()) { it.nextElement(); count++; }
+            while (it.hasNext()) { it.next(); count++; }
             return count;
         } catch (Exception e) {
             return 0;
