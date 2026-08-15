@@ -1946,7 +1946,10 @@ public class XBPQ extends Spider {
     private int countJsonKeys(JSONObject obj) {
         if (obj == null) return 0;
         try {
-            return obj.keys().hasNext() ? obj.keySet().size() : 0;
+            int count = 0;
+            org.json.Iterator<String> it = obj.keys();
+            while (it.hasNext()) { it.next(); count++; }
+            return count;
         } catch (Exception e) {
             return 0;
         }
@@ -2537,26 +2540,7 @@ public class XBPQ extends Spider {
             }
 
             // 动态分类 Tab 注入（女神分类/女优分类/热搜分类/首页二级）
-            if (gsCfg != null) {
-                if ("1".equals(gsCfg.optString("女神二级"))) {
-                    JSONObject女神Tab = new JSONObject();
-                    女神Tab.put("type_id", "女神");
-                    女神Tab.put("type_name", "女神分类");
-                    classList.put(女神Tab);
-                }
-                if ("1".equals(gsCfg.optString("女优二级"))) {
-                    JSONObject女优Tab = new JSONObject();
-                    女优Tab.put("type_id", "女优");
-                    女优Tab.put("type_name", "女优分类");
-                    classList.put(女优Tab);
-                }
-                if ("1".equals(gsCfg.optString("热搜二级"))) {
-                    JSONObject热搜Tab = new JSONObject();
-                    热搜Tab.put("type_id", "热搜");
-                    热搜Tab.put("type_name", "热搜分类");
-                    classList.put(热搜Tab);
-                }
-            }
+            // gsCfg/SSTop 功能通过 insertActionTabs 统一处理，无需重复逻辑
 
             // 源内功能 tab 注入（Smali homeContent 59230-59250：SSTop 开启时置顶，否则追加）
             JSONObject gsCfg2 = configJson == null ? new JSONObject() : configJson;
@@ -2952,34 +2936,6 @@ public class XBPQ extends Spider {
             }
             if (!text.isEmpty()) setter.accept(text);
         } catch (Exception ignored) {}
-    }
-
-    /**
-     * [补充] fixCover - 修复封面图 URL（对应 Smali 中 fixCover 方法）
-     * 处理相对路径、URL 编码、特殊协议等
-     */
-    private String fixCover(String picUrl, String referer) {
-        if (picUrl == null || picUrl.isEmpty()) return "";
-        try {
-            // 处理 base64 数据 URI
-            if (picUrl.startsWith("data:image")) {
-                return picUrl;
-            }
-            // 处理相对路径
-            if (picUrl.startsWith("//")) {
-                return "https:" + picUrl;
-            }
-            if (picUrl.startsWith("/")) {
-                return homeUrl + picUrl;
-            }
-            if (!picUrl.startsWith("http")) {
-                return Util.repairUrl(homeUrl, picUrl);
-            }
-            return picUrl;
-        } catch (Exception e) {
-            SpiderDebug.log("fixCover error: " + e.getMessage());
-            return picUrl;
-        }
     }
 
     /**
@@ -3507,7 +3463,7 @@ public class XBPQ extends Spider {
         if (!specialClassUrl.isEmpty()) {
             String[] extraUrls = specialClassUrl.split("\\r?\\n");
             java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(Math.min(extraUrls.length, 4));
-            java.util.concurrent.List<java.util.concurrent.Future<List<com.github.catvod.bean.Vod>>> futures = new java.util.ArrayList<>();
+            java.util.List<java.util.concurrent.Future<List<com.github.catvod.bean.Vod>>> futures = new java.util.ArrayList<>();
             for (String extraUrl : extraUrls) {
                 final String eu = extraUrl.trim();
                 if (eu.isEmpty()) continue;
