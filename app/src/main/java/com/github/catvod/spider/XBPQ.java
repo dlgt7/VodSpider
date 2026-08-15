@@ -162,6 +162,9 @@ public class XBPQ extends Spider {
     private String playRequestHeader = ""; // 播放请求头
     private String searchRequestHeader = ""; // 搜索请求头
     private String playSubtitle = "";   // 播放副标题
+    private boolean forcePlay = false;  // 强制直连播放标记（Smali 实例字段 إۧ，由 id 段标记/magnet 等前缀触发）
+    private String activeCate = "";     // 详情 id 中 activecate= 参数值（Smali 实例字段 اۣۣۧ）
+    private String parseSourceBlacklist = ""; // 解析源码黑名单（# 分隔，Smali 122344）
     private String filmType = "";       // 影片类型
     private String filmYear = "";       // 影片年代
     private String filmArea = "";       // 影片地区
@@ -330,7 +333,15 @@ public class XBPQ extends Spider {
             }
             parseConfig(configStr);
         } catch (Exception e) {
-            SpiderDebug.log("XBPQ init error: " + e.getMessage());
+            // key:value 格式兼容：非 JSON 时尝试解析
+            try {
+                JSONObject kvConfig = parseKeyValueConfig(configStr);
+                if (kvConfig != null) {
+                    parseConfig(kvConfig.toString());
+                }
+            } catch (Exception e2) {
+                SpiderDebug.log("XBPQ init error: " + e.getMessage());
+            }
         }
     }
 
@@ -407,6 +418,7 @@ public class XBPQ extends Spider {
         playSecondCut = config.optString("播放二次截取", config.optString("playSecondCut", playSecondCut));
         lineSecondCut = config.optString("线路二次截取", config.optString("lineSecondCut", lineSecondCut));
         searchSecondCut = config.optString("搜索二次截取", config.optString("searchSecondCut", searchSecondCut));
+        parseSourceBlacklist = config.optString("解析源码黑名单", config.optString("parseSourceBlacklist", parseSourceBlacklist));
         // ===== 布尔开关（中文Key优先） =====
         directPlay = "1".equals(config.optString("直接播放", String.valueOf(directPlay)))
                 || config.optBoolean("directPlay", directPlay);
@@ -600,6 +612,37 @@ public class XBPQ extends Spider {
         configJson = config;
         // 应用已保存的偏好菜单选择状态（Smali اۧۦ：SSTop/offTempFilter 等开关生效）
         applyPrefMenu();
+    }
+
+    /**
+     * 解析 key:value 格式的配置文件（非 JSON）
+     * 支持格式：key1:value1,key2:value2,... （用 \, 转义逗号）
+     */
+    private JSONObject parseKeyValueConfig(String raw) throws JSONException {
+        if (raw == null || raw.trim().isEmpty()) return new JSONObject();
+        try {
+            // 先尝试作为 JSON 解析（快速路径）
+            if (raw.trim().startsWith("{")) {
+                return new JSONObject(raw);
+            }
+            JSONObject result = new JSONObject();
+            // 处理转义逗号 \, → 临时标记
+            String processed = raw.replace("\\,", "\u0000");
+            String[] pairs = processed.split(",");
+            for (String pair : pairs) {
+                pair = pair.trim();
+                if (pair.isEmpty()) continue;
+                int colonIdx = pair.indexOf(':');
+                if (colonIdx < 0) continue;
+                String key = pair.substring(0, colonIdx).trim().replace("\u0000", ",");
+                String value = pair.substring(colonIdx + 1).trim().replace("\u0000", ",");
+                result.put(key, value);
+            }
+            return result;
+        } catch (Exception e) {
+            SpiderDebug.log("parseKeyValueConfig error: " + e.getMessage());
+            return new JSONObject();
+        }
     }
 
     /**
@@ -1067,12 +1110,21 @@ public class XBPQ extends Spider {
 
     /**
      * 应用二次截取规则
-     * 格式："前缀&&后缀"
+     * 格式："前缀&&后缀"，可带 [[index]] 指定返回第 N 块
+     * 对应 Smali 中 ۧۦۤ 方法（index 参数）
      */
-    private String applySecondCut(String content, String cutRule) {
+    private String applySecondCut(String content, String cutRule, int index) {
         if (content == null || content.isEmpty() || cutRule == null || cutRule.isEmpty()) return content;
         String[] parts = cutRule.split("&&");
         if (parts.length == 0) return content;
+        // 处理 [[N]] 索引标记
+        int blockIndex = 0;
+        if (parts.length > 0 && parts[0].contains("[[")) {
+            try {
+                blockIndex = Integer.parseInt(parts[0].replaceAll("\\[\\[|\\]\\]", ""));
+                parts[0] = "";
+            } catch (NumberFormatException ignored) {}
+        }
         int start = 0;
         if (!parts[0].isEmpty()) {
             start = content.indexOf(parts[0]);
@@ -1084,7 +1136,21 @@ public class XBPQ extends Spider {
             if (end < 0) return content.substring(start);
             return content.substring(start, end).trim();
         }
-        return content.substring(start).trim();
+        String result = content.substring(start).trim();
+        // 按 && 再切割，取第 blockIndex 块
+        if (blockIndex > 0) {
+            String[] blocks = result.split("&&");
+            if (blockIndex < blocks.length) return blocks[blockIndex].trim();
+            return result;
+        }
+        return result;
+    }
+
+    /**
+     * 应用二次截取规则（无索引版本，兼容旧调用）
+     */
+    private String applySecondCut(String content, String cutRule) {
+        return applySecondCut(content, cutRule, 0);
     }
 
     /**
@@ -1284,6 +1350,10 @@ public class XBPQ extends Spider {
     private String extractBySelector(String html, String selector) {
         if (Util.isEmpty(html) || Util.isEmpty(selector)) return "";
         try {
+            // 支持 && 二次截取（对应 Smali 中 selector 含 "&&" 时的文本截取模式）
+            if (selector.contains("&&")) {
+                return applySecondCut(html, selector);
+            }
             Document doc = Jsoup.parse(html);
             Elements elements = doc.select(selector);
             if (!elements.isEmpty()) {
@@ -1302,6 +1372,12 @@ public class XBPQ extends Spider {
         List<String> list = new ArrayList<>();
         if (Util.isEmpty(html) || Util.isEmpty(selector)) return list;
         try {
+            // 支持 && 二次截取
+            if (selector.contains("&&")) {
+                String cutResult = applySecondCut(html, selector);
+                if (!cutResult.isEmpty()) list.add(cutResult);
+                return list;
+            }
             Document doc = Jsoup.parse(html);
             Elements elements = doc.select(selector);
             for (Element el : elements) {
@@ -2351,6 +2427,36 @@ public class XBPQ extends Spider {
         return trimmed.startsWith("{") || trimmed.startsWith("[");
     }
 
+    /**
+     * 多 URL 详情获取（对应 Smali multiReq اۭۥ，92444-92669）：
+     * 输入含 $$$ 时按段并行抓取（每段 10s 超时），结果顺序拼接；
+     * 拼接结果以 ||| 开头则去掉前缀；单段/无分隔时直接抓取。
+     */
+    private String fetchDetailMulti(String urls) {
+        try {
+            if (urls == null || urls.indexOf("$$$") < 1) return fetchContent(urls);
+            java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newCachedThreadPool();
+            List<java.util.concurrent.Future<String>> futures = new ArrayList<>();
+            for (String u : urls.split("\\$\\$\\$")) {
+                futures.add(pool.submit(() -> fetchContent(u)));
+            }
+            StringBuilder sb = new StringBuilder();
+            for (java.util.concurrent.Future<String> f : futures) {
+                try {
+                    sb.append(f.get(10, java.util.concurrent.TimeUnit.SECONDS));
+                } catch (Exception ignored) {
+                }
+            }
+            pool.shutdown();
+            String result = sb.toString();
+            if (result.startsWith("|||")) result = result.substring(3);
+            return result;
+        } catch (Exception e) {
+            SpiderDebug.log("multiReq()错误！-->" + e.getMessage());
+            return "";
+        }
+    }
+
     // ==================== 业务方法 ====================
 
     /**
@@ -2430,9 +2536,31 @@ public class XBPQ extends Spider {
                 classList = reversed;
             }
 
+            // 动态分类 Tab 注入（女神分类/女优分类/热搜分类/首页二级）
+            if (gsCfg != null) {
+                if ("1".equals(gsCfg.optString("女神二级"))) {
+                    JSONObject女神Tab = new JSONObject();
+                    女神Tab.put("type_id", "女神");
+                    女神Tab.put("type_name", "女神分类");
+                    classList.put(女神Tab);
+                }
+                if ("1".equals(gsCfg.optString("女优二级"))) {
+                    JSONObject女优Tab = new JSONObject();
+                    女优Tab.put("type_id", "女优");
+                    女优Tab.put("type_name", "女优分类");
+                    classList.put(女优Tab);
+                }
+                if ("1".equals(gsCfg.optString("热搜二级"))) {
+                    JSONObject热搜Tab = new JSONObject();
+                    热搜Tab.put("type_id", "热搜");
+                    热搜Tab.put("type_name", "热搜分类");
+                    classList.put(热搜Tab);
+                }
+            }
+
             // 源内功能 tab 注入（Smali homeContent 59230-59250：SSTop 开启时置顶，否则追加）
-            JSONObject gsCfg = configJson == null ? new JSONObject() : configJson;
-            classList = insertActionTabs(classList, gsCfg.optBoolean("SSTop"));
+            JSONObject gsCfg2 = configJson == null ? new JSONObject() : configJson;
+            classList = insertActionTabs(classList, gsCfg2.optBoolean("SSTop"));
 
             result.put("class", classList);
 
@@ -2718,11 +2846,37 @@ public class XBPQ extends Spider {
     @Override
     public String detailContent(List<String> ids) throws Exception {
         if (ids == null || ids.isEmpty()) return "[]";
-        String url = buildUrl(homeUrl, ids.get(0));
-        // [新增] 支持 encodeHtmlUrl 编码请求
-        String html = (!encodeHtmlUrl.isEmpty()) ? fetchEncodedContent(url) : fetchContent(url);
+        // [补充 Smali 97059-97098] json搜索 标记剥离（json 模式搜索结果携带）
+        String rawId = ids.get(0);
+        if (rawId.contains("json搜索")) {
+            rawId = rawId.replace("json搜索", "");
+            ids.set(0, rawId);
+        }
+        // [补充 Smali 97120-97256] $$$ 多段 id 解析与强制播放标记
+        String[] segs = rawId.split("\\$\\$\\$");
+        forcePlay = (segs.length > 3 && ("playDirect".equals(segs[3]) || segs[3].startsWith("shortVideo")))
+                || extendText.contains("z"); // extendText 含 z → 直接播放配置生效
+        // URL 段优先级：segs[2] > segs[1] > segs[0]（Smali 97280-97450）
+        String idUrl = segs.length > 2 ? segs[2] : (segs.length > 1 ? segs[1] : segs[0]);
+        if (idUrl.startsWith("/") && !idUrl.startsWith("//")) idUrl = homeUrl + idUrl;
+        // [补充 Smali 97453-97513] activecate= 参数剥离
+        int acIdx = idUrl.indexOf("activecate=");
+        if (acIdx > 0) {
+            if (!idUrl.endsWith("=")) {
+                String[] acParts = idUrl.split("[\\?&]activecate=");
+                if (acParts.length > 1) activeCate = acParts[1];
+            }
+            idUrl = idUrl.substring(0, acIdx);
+        }
+        // [补充 Smali 97519-97576] magnet/push/file 前缀直连
+        if (!forcePlay && (idUrl.startsWith("magnet:") || idUrl.startsWith("push://") || idUrl.startsWith("file"))) {
+            forcePlay = true;
+        }
+        String url = buildUrl(homeUrl, idUrl);
+        // [补充 Smali 92444 multiReq] 多 URL（$$$ 分隔）并行获取拼接
+        String html = (!encodeHtmlUrl.isEmpty()) ? fetchEncodedContent(url) : fetchDetailMulti(url);
         com.github.catvod.bean.Vod vod = new com.github.catvod.bean.Vod();
-        vod.setVodId(ids.get(0));
+        vod.setVodId(rawId);
 
         if (isJsonMode(html)) {
             JSONObject obj = new JSONObject(html);
@@ -2740,7 +2894,11 @@ public class XBPQ extends Spider {
             }
             if (!pic.isEmpty()) {
                 Element el = doc.selectFirst(pic);
-                if (el != null) vod.setVodPic(extractPicAttr(el));
+                if (el != null) {
+                    String picUrl = extractPicAttr(el);
+                    // [补充] fixCover 调用（对应 Smali detailContent 中图片修复逻辑）
+                    vod.setVodPic(fixCover(picUrl, homeUrl));
+                }
             }
             if (!content.isEmpty()) {
                 Element el = doc.selectFirst(content);
@@ -2775,7 +2933,7 @@ public class XBPQ extends Spider {
     }
 
     /**
-     * 解析详情页扩展字段（影片类型/年代/地区/状态/导演/主演）
+     * 解析详情页扩展字段（影片类型/年代/地区/状态/导演/主演/vod_play_url）
      * 支持 CSS 选择器格式（如 "导　　演&&<br>"）和纯文本截取格式
      */
     private void parseDetailField(Document doc, String selector, java.util.function.Consumer<String> setter) {
@@ -2785,8 +2943,7 @@ public class XBPQ extends Spider {
             // 尝试 CSS 选择器
             if (selector.contains("&&")) {
                 // 文本截取格式：前缀&&后缀
-                String afterCut = applySecondCut(doc.html(), selector);
-                if (!afterCut.isEmpty()) text = afterCut;
+                text = applySecondCut(doc.html(), selector);
             }
             // 尝试 Jsoup CSS 选择器
             if (text.isEmpty() && !selector.contains("&&")) {
@@ -2795,6 +2952,34 @@ public class XBPQ extends Spider {
             }
             if (!text.isEmpty()) setter.accept(text);
         } catch (Exception ignored) {}
+    }
+
+    /**
+     * [补充] fixCover - 修复封面图 URL（对应 Smali 中 fixCover 方法）
+     * 处理相对路径、URL 编码、特殊协议等
+     */
+    private String fixCover(String picUrl, String referer) {
+        if (picUrl == null || picUrl.isEmpty()) return "";
+        try {
+            // 处理 base64 数据 URI
+            if (picUrl.startsWith("data:image")) {
+                return picUrl;
+            }
+            // 处理相对路径
+            if (picUrl.startsWith("//")) {
+                return "https:" + picUrl;
+            }
+            if (picUrl.startsWith("/")) {
+                return homeUrl + picUrl;
+            }
+            if (!picUrl.startsWith("http")) {
+                return Util.repairUrl(homeUrl, picUrl);
+            }
+            return picUrl;
+        } catch (Exception e) {
+            SpiderDebug.log("fixCover error: " + e.getMessage());
+            return picUrl;
+        }
     }
 
     /**
@@ -3312,6 +3497,40 @@ public class XBPQ extends Spider {
             vodList = parseHomeVodList(html);
         }
 
+        // [新增] xml搜索分支：当配置包含 xml搜索=1 时，重新用 XML 解析器解析
+        if (configJson != null && "1".equals(configJson.optString("xml搜索"))) {
+            List<com.github.catvod.bean.Vod> xmlList = parseXmlVodList(html);
+            if (!xmlList.isEmpty()) vodList = xmlList;
+        }
+
+        // [新增] 特殊分类链接多源合并（Smali：读取特殊分类链接配置，并行搜索后合并）
+        if (!specialClassUrl.isEmpty()) {
+            String[] extraUrls = specialClassUrl.split("\\r?\\n");
+            java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(Math.min(extraUrls.length, 4));
+            java.util.concurrent.List<java.util.concurrent.Future<List<com.github.catvod.bean.Vod>>> futures = new java.util.ArrayList<>();
+            for (String extraUrl : extraUrls) {
+                final String eu = extraUrl.trim();
+                if (eu.isEmpty()) continue;
+                futures.add(pool.submit(() -> {
+                    try {
+                        String extraHtml = fetchContent(buildUrl(homeUrl, eu.replace("{wd}", java.net.URLEncoder.encode(keyword, "UTF-8"))));
+                        if (extraHtml.isEmpty()) return new ArrayList<com.github.catvod.bean.Vod>();
+                        if (isJsonMode(extraHtml)) return parseJsonVodList(extraHtml);
+                        if (!searchArray.isEmpty()) return parseSearchVodList(extraHtml);
+                        if (!ruleSearchArray.isEmpty() || !ruleSearchTitle.isEmpty()) return parseSearchByRule(extraHtml);
+                        return parseHomeVodList(extraHtml);
+                    } catch (Exception e) {
+                        SpiderDebug.log("特殊分类搜索失败: " + e.getMessage());
+                        return new ArrayList<com.github.catvod.bean.Vod>();
+                    }
+                }));
+            }
+            for (java.util.concurrent.Future<List<com.github.catvod.bean.Vod>> f : futures) {
+                try { vodList.addAll(f.get(10, java.util.concurrent.TimeUnit.SECONDS)); } catch (Exception ignored) {}
+            }
+            pool.shutdown();
+        }
+
         // [新增] 支持 searchIndex 过滤：只保留 index 位置的条目
         if (searchIndex >= 0 && searchIndex < vodList.size()) {
             List<com.github.catvod.bean.Vod> filtered = new ArrayList<>();
@@ -3379,6 +3598,47 @@ public class XBPQ extends Spider {
     }
 
     /**
+     * XML/HTML 搜索解析（对应 Smali xml搜索=1 分支）
+     * 复用 searchArray/searchTitle/searchLink/searchPic/searchDesc 等选择器规则
+     */
+    private List<com.github.catvod.bean.Vod> parseXmlVodList(String html) {
+        List<com.github.catvod.bean.Vod> list = new ArrayList<>();
+        if (Util.isEmpty(html)) return list;
+        try {
+            Document doc = Jsoup.parse(html);
+            String cssArr = parseCssShortSyntax(searchArray.isEmpty() ? "li,a" : searchArray);
+            Elements items = doc.select(cssArr);
+            for (Element el : items) {
+                com.github.catvod.bean.Vod vod = new com.github.catvod.bean.Vod();
+                if (!searchTitle.isEmpty()) {
+                    Element titleEl = el.selectFirst(parseCssShortSyntax(searchTitle));
+                    vod.setVodName(titleEl != null ? titleEl.text().trim() : el.text().trim());
+                } else {
+                    vod.setVodName(el.text().trim());
+                }
+                if (!searchLink.isEmpty()) {
+                    Element linkEl = el.selectFirst(parseCssShortSyntax(searchLink));
+                    vod.setVodId(linkEl != null ? linkEl.attr("href").trim() : "");
+                }
+                if (!searchPic.isEmpty()) {
+                    Element picEl = el.selectFirst(parseCssShortSyntax(searchPic));
+                    vod.setVodPic(picEl != null ? picEl.attr("src").trim() : "");
+                }
+                if (!searchDesc.isEmpty()) {
+                    Element descEl = el.selectFirst(parseCssShortSyntax(searchDesc));
+                    vod.setVodRemarks(descEl != null ? descEl.text().trim() : "");
+                }
+                if (!vod.getVodId().isEmpty() && !vod.getVodName().isEmpty()) {
+                    list.add(vod);
+                }
+            }
+        } catch (Exception e) {
+            SpiderDebug.log("parseXmlVodList error: " + e.getMessage());
+        }
+        return list;
+    }
+
+    /**
      * 内联字幕参数标记：id 形如 "videoUrl?zimu=subtitleUrl"（对应 Smali 中 [?&]zimu= 的拆分）
      */
     private static final Pattern SUBTITLE_PARAM_PATTERN = Pattern.compile("[?&]zimu=");
@@ -3418,6 +3678,41 @@ public class XBPQ extends Spider {
             playId = playId.substring(0, activateMatcher.start());
         }
 
+        // ===== 1.5 [补充 Smali 121893-122203] json播放：短 id 且无 url= 标记时从页面 player json 提取直链 =====
+        if (playId.length() <= 10 && !playId.contains("url=") && !playId.contains("Url=")) {
+            try {
+                String pageUrl = buildUrl(homeUrl, playId);
+                String pageHtml = fetchContent(pageUrl);
+                // Smali 121931 规则：<script>*var player_&&</script> 截取播放器脚本块
+                String block = applySecondCut(pageHtml, "<script>*var player_&&</script>");
+                if (block.length() > 50) {
+                    int b0 = block.indexOf('{');
+                    int b1 = block.lastIndexOf('}');
+                    if (b0 >= 0 && b1 > b0) {
+                        JSONObject playJson = new JSONObject(block.substring(b0, b1 + 1));
+                        String jsonUrl = playJson.optString("url", "");
+                        // Smali 121995-122148：encrypt 字段解码（条件：extendText 含 u 且不含 u0）
+                        if (playJson.has("encrypt") && jsonUrl.length() > 0) {
+                            int enc = playJson.getInt("encrypt");
+                            boolean decodeAble = extendText.contains("u") && !extendText.contains("u0");
+                            if (enc == 1) {
+                                if (decodeAble) jsonUrl = java.net.URLDecoder.decode(jsonUrl, "UTF-8");
+                            } else if (enc == 2) {
+                                String decoded = new String(android.util.Base64.decode(jsonUrl, 0), "UTF-8");
+                                jsonUrl = decodeAble ? java.net.URLDecoder.decode(decoded, "UTF-8") : decoded;
+                            }
+                        }
+                        if (jsonUrl.length() > 6) {
+                            SpiderDebug.log("免嗅获得直链--> " + jsonUrl);
+                            playId = jsonUrl;
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                SpiderDebug.log("json播放 error: " + e.getMessage());
+            }
+        }
+
         // ===== 2. 解析接口处理（activate 优先于全局 parseUrl）=====
         String effectiveParseUrl = !activateParseUrl.isEmpty() ? activateParseUrl : parseUrl;
         boolean isDirectVideo = Util.isVideoFormat(playId);
@@ -3434,6 +3729,59 @@ public class XBPQ extends Spider {
                 }
             } catch (Exception e) {
                 SpiderDebug.log("playerContent parse error: " + e.getMessage());
+            }
+        }
+
+        // ===== 2.5 [补充 Smali 122205-122700] vipFlags 多解析源尝试 =====
+        // id 非直链且带 vipFlags 时：逐个解析源构建候选页，黑名单（解析源码黑名单，# 分隔）过滤后
+        // 以 "url"*"&&" / 'url'*'&&' 规则抓取解析结果，取第一条有效直链
+        if (vipFlags != null && !vipFlags.isEmpty() && !isDirectVideo && !Util.isVideoFormat(playId)) {
+            for (int vi = 0; vi < vipFlags.size(); vi++) {
+                try {
+                    String vFlag = vipFlags.get(vi);
+                    String cand;
+                    if (vi == 0) {
+                        cand = playId;
+                    } else {
+                        try {
+                            String[] sp = playId.split("[uU]rl=");
+                            cand = vFlag + (sp.length > 1 ? sp[1] : playId);
+                        } catch (Exception e2) {
+                            cand = vFlag + playId;
+                        }
+                    }
+                    String candUrl = buildUrl(homeUrl, cand);
+                    // 黑名单过滤：命中则跳过该源
+                    boolean blackHit = false;
+                    if (!parseSourceBlacklist.isEmpty()) {
+                        for (String word : parseSourceBlacklist.split("#")) {
+                            if (!word.isEmpty() && candUrl.contains(word)) {
+                                blackHit = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (blackHit) continue;
+                    SpiderDebug.log("开始解析\n解析源码--> " + candUrl);
+                    String parsePage = fetchContent(candUrl);
+                    String picked = "";
+                    // 规则1："url"*"&&" 截取；失败则 'url'*'&&'（Smali 122468/122525）
+                    String r1 = applyWildcardCut(parsePage, "\"url\"", "&&");
+                    if (r1 != null && r1.trim().length() >= 6) {
+                        picked = r1.trim();
+                    } else {
+                        String r2 = applyWildcardCut(parsePage, "'url'", "&&");
+                        if (r2 != null && r2.trim().length() >= 6) picked = r2.trim();
+                    }
+                    if (picked.length() > 6 && Util.isVideoFormat(picked)) {
+                        SpiderDebug.log("免嗅获得直链--> " + picked);
+                        playId = picked;
+                        isDirectVideo = true;
+                        break;
+                    }
+                } catch (Exception e) {
+                    SpiderDebug.log("vipFlags 源尝试失败: " + e.getMessage());
+                }
             }
         }
 
@@ -3459,6 +3807,26 @@ public class XBPQ extends Spider {
             }
         }
 
+        // ===== 3.5 云盘/磁力链接直接透传（Smali：aliyundrive/alipan/quark/uc/magnet 不走解析）=====
+        if (playId.contains("quark.cn") || playId.contains("夸克视频")) {
+            SpiderDebug.log("quarkDrive url:" + playId);
+            com.github.catvod.bean.Result qResult = com.github.catvod.bean.Result.get();
+            qResult.url(playId);
+            return qResult.string();
+        }
+        if (playId.contains("uczyzy") || playId.contains("uc\.cn")) {
+            SpiderDebug.log("ucDrive url:" + playId);
+            com.github.catvod.bean.Result uResult = com.github.catvod.bean.Result.get();
+            uResult.url(playId);
+            return uResult.string();
+        }
+        if (playId.startsWith("magnet:")) {
+            SpiderDebug.log("magnet url:" + playId);
+            com.github.catvod.bean.Result mResult = com.github.catvod.bean.Result.get();
+            mResult.url(playId);
+            return mResult.string();
+        }
+
         // ===== 4. 视频 URL 有效性验证 + 远程视频 URL 处理 =====
         if (!isVideoUrl(playId)) {
             SpiderDebug.log("playerContent: invalid video URL: " + playId);
@@ -3470,19 +3838,36 @@ public class XBPQ extends Spider {
 
         com.github.catvod.bean.Result result = com.github.catvod.bean.Result.get();
 
-        // ===== 5. 字幕注入（内联 zimu 参数优先，其次嗅探词字幕配置）=====
+        // ===== 5. 字幕注入（内联 zimu 参数优先；=lrc 标记时下载并转 SRT，对应 Smali 124862-125010）=====
         if (!subTitleUrl.isEmpty()) {
             try {
                 com.github.catvod.bean.Sub sub = com.github.catvod.bean.Sub.create();
-                sub.url(subTitleUrl);
-                sub.name("subtitle");
-                String lowerSub = subTitleUrl.toLowerCase();
-                if (lowerSub.contains(".vtt")) {
-                    sub.format("vtt");
-                } else if (lowerSub.contains(".ass")) {
-                    sub.format("ass");
+                if (subTitleUrl.contains("=lrc")) {
+                    // [补充 Smali 124862-124937] LRC 字幕：下载内容 → lrcToSrt → data URL 内嵌
+                    String lrcContent = fetchContent(buildUrl(homeUrl, subTitleUrl));
+                    String srtText = lrcContent.isEmpty() ? "" : lrcToSrt(lrcContent);
+                    if (!srtText.isEmpty()) {
+                        String dataUrl = "data:application/x-subrip;base64,"
+                                + android.util.Base64.encodeToString(srtText.getBytes("UTF-8"), android.util.Base64.NO_WRAP);
+                        sub.url(dataUrl);
+                        sub.name((flag == null || flag.isEmpty() ? "subtitle" : flag) + ".srt");
+                        sub.format("application/x-subrip");
+                    } else {
+                        sub.url(subTitleUrl);
+                        sub.name("subtitle");
+                        sub.format("application/x-subrip");
+                    }
                 } else {
-                    sub.format("srt");
+                    sub.url(subTitleUrl);
+                    sub.name("subtitle");
+                    String lowerSub = subTitleUrl.toLowerCase();
+                    if (lowerSub.contains(".vtt")) {
+                        sub.format("vtt");
+                    } else if (lowerSub.contains(".ass")) {
+                        sub.format("ass");
+                    } else {
+                        sub.format("srt");
+                    }
                 }
                 List<com.github.catvod.bean.Sub> subList = new ArrayList<>();
                 subList.add(sub);
@@ -3511,6 +3896,81 @@ public class XBPQ extends Spider {
         }
 
         return result.string();
+    }
+
+    /**
+     * 通配截取（对应 Smali 规则 "url"*"&&" / 'url'*'&&'，122468/122525）：
+     * 从 content 中找到 start 标记后，取到 end 标记（&&）之间的内容；
+     * 首个引号闭合处截断（提取 "url":"value" 的 value）。
+     */
+    private String applyWildcardCut(String content, String startMark, String endMark) {
+        try {
+            if (content == null || content.isEmpty()) return null;
+            int s = content.indexOf(startMark);
+            if (s < 0) return null;
+            s += startMark.length();
+            int e = content.indexOf(endMark, s);
+            if (e < 0) e = content.length();
+            String seg = content.substring(s, e);
+            // 取引号内的值（"url":"xxx" 或 'url':'xxx'）
+            java.util.regex.Matcher vm = java.util.regex.Pattern.compile("['\"]([^'\"]+)['\"]").matcher(seg);
+            return vm.find() ? vm.group(1) : seg;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * LRC 字幕转 SRT（对应 Smali 124913 SpiderApi.lrcToSrt）：
+     * 解析 [mm:ss.xx] 时间标签（支持一行多标签），按时间排序后逐行生成 SRT 段，
+     * 结束时间取下一行起始时间（末行 +3s）。
+     */
+    private String lrcToSrt(String lrc) {
+        try {
+            java.util.regex.Pattern tp = java.util.regex.Pattern.compile("\\[(\\d{1,2}):(\\d{1,2})(?:[.:](\\d{1,3}))?]");
+            List<long[]> times = new ArrayList<>();
+            List<String> lines = new ArrayList<>();
+            for (String line : lrc.split("\\r?\\n")) {
+                java.util.regex.Matcher m = tp.matcher(line);
+                List<Long> ts = new ArrayList<>();
+                while (m.find()) {
+                    long ms = Long.parseLong(m.group(1)) * 60000L + Long.parseLong(m.group(2)) * 1000L;
+                    if (m.group(3) != null) {
+                        String frac = (m.group(3) + "00").substring(0, 3);
+                        ms += Long.parseLong(frac);
+                    }
+                    ts.add(ms);
+                }
+                String text = tp.matcher(line).replaceAll("").trim();
+                if (ts.isEmpty() || text.isEmpty()) continue;
+                for (long t : ts) {
+                    times.add(new long[]{t});
+                    lines.add(text);
+                }
+            }
+            // 按时间稳定排序（索引配对）
+            Integer[] idx = new Integer[lines.size()];
+            for (int i = 0; i < idx.length; i++) idx[i] = i;
+            final List<long[]> ft = times;
+            java.util.Arrays.sort(idx, (a, b) -> Long.compare(ft.get(a)[0], ft.get(b)[0]));
+            StringBuilder sb = new StringBuilder();
+            for (int n = 0; n < idx.length; n++) {
+                long start = times.get(idx[n])[0];
+                long end = n + 1 < idx.length ? times.get(idx[n + 1])[0] : start + 3000L;
+                sb.append(n + 1).append('\n');
+                sb.append(fmtSrtTime(start)).append(" --> ").append(fmtSrtTime(end)).append('\n');
+                sb.append(lines.get(idx[n])).append("\n\n");
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            SpiderDebug.log("lrcToSrt error: " + e.getMessage());
+            return "";
+        }
+    }
+
+    /** 毫秒 → SRT 时间戳 HH:MM:SS,mmm */
+    private String fmtSrtTime(long ms) {
+        return String.format("%02d:%02d:%02d,%03d", ms / 3600000, (ms / 60000) % 60, (ms / 1000) % 60, ms % 1000);
     }
 
     /**
