@@ -2489,9 +2489,12 @@ public class XBPQ extends Spider {
     @Override
     public String homeContent(boolean filter) throws Exception {
         try {
-            if (homeJson != null) return homeJson.toString();
-            // 当 homeUrl 为空但 className 有配置时，直接生成分类列表（如 mb.json 配置）
+            // 当 homeUrl 为空但 className 有配置时（如 mb.json），必须重新生成分类列表
+            // 不能直接返回缓存的 homeJson，因为分类信息可能已改变
             boolean noHomeUrl = homeUrl == null || homeUrl.isEmpty();
+            if (homeJson != null && !(noHomeUrl && !className.isEmpty())) {
+                return homeJson.toString();
+            }
             String html = noHomeUrl ? "" : fetchContent(homeUrl);
             // Smali homeContent 117045-117139：响应码非 200 或内容含"网站维护中"
             // → 返回消息弹窗 tab（msgbox），而非空列表
