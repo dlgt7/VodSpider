@@ -71,9 +71,14 @@ public class XBPQ extends Spider {
     private static String apiAddress = "";   // SpiderApi 服务地址（Smali ا۫ۥ，来自 getAddress(false)）
     private static String unusedField = "";
     private static Map<String, String> headerMap = new HashMap<>();
+    private static Map<String, String> verifyStateMap = new HashMap<>();
     private static JSONObject configJson = null;
     private static String configStr = "";
     private static String cacheJson = "";
+    // 阿里云盘分享链接正则（供 XBPQAli 等子类使用）
+    public static final Pattern ALIYUN_PATTERN = Pattern.compile(
+        "(https://www\\.(alipan|aliyundrive)\\.com/s[^\"]+)"
+    );
 
     // ==================== 实例字段 - 基础配置 ====================
     private boolean isDebug = false;
@@ -1618,6 +1623,20 @@ public class XBPQ extends Spider {
     }
 
     /**
+     * 获取验证状态缓存（供 XBPQAli 等子类使用）
+     */
+    public static String getVerifyState(String key) {
+        return verifyStateMap.get(key);
+    }
+
+    /**
+     * 设置验证状态缓存（供 XBPQAli 等子类使用）
+     */
+    public static void setVerifyState(String key, String value) {
+        verifyStateMap.put(key, value);
+    }
+
+    /**
      * 加载弹幕数据
      * 返回 Object[]{timeout, contentType, inputStream}
      */
@@ -1946,9 +1965,9 @@ public class XBPQ extends Spider {
     private int countJsonKeys(JSONObject obj) {
         if (obj == null) return 0;
         try {
+            java.util.Enumeration<String> it = obj.keys();
             int count = 0;
-            org.json.Iterator<String> it = obj.keys();
-            while (it.hasNext()) { it.next(); count++; }
+            while (it.hasMoreElements()) { it.nextElement(); count++; }
             return count;
         } catch (Exception e) {
             return 0;

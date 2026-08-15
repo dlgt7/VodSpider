@@ -84,7 +84,7 @@ public class XBPQAli extends XBPQ {
             String processedUrl = vodId.replace("http:", "https:");
 
             // 检测阿里盘分享链接（复用父类的 ALIYUN_PATTERN）
-            if (!ALIYUN_PATTERN.matcher(processedUrl).find()) {
+            if (!XBPQ.ALIYUN_PATTERN.matcher(processedUrl).find()) {
                 return Result.error("无效的阿里盘链接").toString();
             }
 
