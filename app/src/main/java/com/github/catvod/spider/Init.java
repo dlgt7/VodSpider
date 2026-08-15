@@ -213,6 +213,9 @@ public class Init {
 
     private static String localProxyPort;
 
+    /** SpiderApi 端口（对应 Smali Init.ۣ۟，XBPQ storeSpiderApi 写入） */
+    public static String port = "";
+
     public static String getLocalProxyPort() {
         return localProxyPort;
     }
