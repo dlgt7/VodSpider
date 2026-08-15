@@ -2490,10 +2490,12 @@ public class XBPQ extends Spider {
     public String homeContent(boolean filter) throws Exception {
         try {
             if (homeJson != null) return homeJson.toString();
-            String html = fetchContent(homeUrl);
+            // 当 homeUrl 为空但 className 有配置时，直接生成分类列表（如 mb.json 配置）
+            boolean noHomeUrl = homeUrl == null || homeUrl.isEmpty();
+            String html = noHomeUrl ? "" : fetchContent(homeUrl);
             // Smali homeContent 117045-117139：响应码非 200 或内容含"网站维护中"
             // → 返回消息弹窗 tab（msgbox），而非空列表
-            if (requestFailed || html.isEmpty() || html.contains("网站维护中")) {
+            if (!noHomeUrl && (requestFailed || html.isEmpty() || html.contains("网站维护中"))) {
                 return new JSONObject().put("list",
                         msgTabBuild(html, "访问失败: " + lastResponseCode)).toString();
             }
@@ -2502,8 +2504,8 @@ public class XBPQ extends Spider {
 
             // 提取分类（支持二次截取）
             JSONArray classList = new JSONArray();
-            String rawClassData = html;
-            if (!arraySecondCut.isEmpty()) {
+            String rawClassData = noHomeUrl ? "" : html;
+            if (!arraySecondCut.isEmpty() && !noHomeUrl) {
                 rawClassData = applySecondCut(html, arraySecondCut);
             }
 
@@ -2527,22 +2529,38 @@ public class XBPQ extends Spider {
                     classList.put(cls);
                 }
             } else if (!className.isEmpty()) {
-                // 支持两种分隔符：| 或 >（传统格式）和 &（API 格式）
-                String nameSep = className.contains("&") ? "&" : "[|>]";
-                String urlSep = classUrl.contains("&") ? "&" : "[|>]";
-                String[] nameArr = className.split(nameSep);
-                // 分类值（classValue）支持 & 分隔，与 className 一一对应
+                // 支持多种格式的 className 配置
+                // 格式1: "名称$ID#名称$ID" (如 mb.json: "电影$20#电视剧$21#...")
+                // 格式2: "名称|ID>名称|ID" (传统格式)
+                // 格式3: "名称&ID&名称&ID" (API 格式)
+                String[] nameArr;
                 String[] urlArr;
-                if (!classValue.isEmpty() && classValue.contains("&")) {
-                    urlArr = classValue.split("&");
-                } else if (!classUrl.isEmpty()) {
-                    urlArr = classUrl.split(urlSep);
+                if (className.contains("#") && className.contains("$")) {
+                    // 格式1: "名称$ID#名称$ID"
+                    String[] pairs = className.split("#");
+                    nameArr = new String[pairs.length];
+                    urlArr = new String[pairs.length];
+                    for (int i = 0; i < pairs.length; i++) {
+                        String[] parts = pairs[i].split("\\$");
+                        nameArr[i] = parts[0].trim();
+                        urlArr[i] = parts.length > 1 ? parts[1].trim() : "";
+                    }
                 } else {
-                    urlArr = nameArr;
+                    // 传统格式: 使用 | 或 > 分隔
+                    String nameSep = className.contains("&") ? "&" : "[|>]";
+                    String urlSep = classUrl.contains("&") ? "&" : "[|>]";
+                    nameArr = className.split(nameSep);
+                    if (!classValue.isEmpty() && classValue.contains("&")) {
+                        urlArr = classValue.split("&");
+                    } else if (!classUrl.isEmpty()) {
+                        urlArr = classUrl.split(urlSep);
+                    } else {
+                        urlArr = nameArr;
+                    }
                 }
                 for (int i = 0; i < nameArr.length; i++) {
                     JSONObject cls = new JSONObject();
-                    String tid = (i == 0) ? ""
+                    String tid = (i == 0 && urlArr.length <= i) ? ""
                             : (urlArr.length > i && !urlArr[i].isEmpty()) ? urlArr[i] : nameArr[i].trim();
                     cls.put("type_id", tid);
                     cls.put("type_name", nameArr[i].trim());
