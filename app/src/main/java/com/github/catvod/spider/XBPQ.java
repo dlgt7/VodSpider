@@ -1624,6 +1624,20 @@ public class XBPQ extends Spider {
     }
 
     /**
+     * 获取验证状态缓存（供 XBPQAli 等子类使用）
+     */
+    public static String getVerifyState(String key) {
+        return verifyStateMap.get(key);
+    }
+
+    /**
+     * 设置验证状态缓存（供 XBPQAli 等子类使用）
+     */
+    public static void setVerifyState(String key, String value) {
+        verifyStateMap.put(key, value);
+    }
+
+    /**
      * 加载弹幕数据
      * 返回 Object[]{timeout, contentType, inputStream}
      */
