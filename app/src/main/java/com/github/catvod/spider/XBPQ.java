@@ -3814,7 +3814,7 @@ public class XBPQ extends Spider {
             qResult.url(playId);
             return qResult.string();
         }
-        if (playId.contains("uczyzy") || playId.contains("uc\.cn")) {
+        if (playId.contains("uczyzy") || playId.contains("uc.cn")) {
             SpiderDebug.log("ucDrive url:" + playId);
             com.github.catvod.bean.Result uResult = com.github.catvod.bean.Result.get();
             uResult.url(playId);
