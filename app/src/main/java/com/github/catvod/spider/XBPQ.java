@@ -1,8 +1,6 @@
 package com.github.catvod.spider;
 
 import android.content.Context;
-import android.text.TextUtils;
-
 import com.github.catvod.crawler.Spider;
 import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.net.OkHttp;
@@ -30,6 +28,7 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Collections;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
@@ -69,12 +68,9 @@ public class XBPQ extends Spider {
     private static com.github.catvod.crawler.SpiderApi spiderApiRef = null; // SpiderApi 引用（Smali ا۪ۭ）
     private static String apiPort = "";      // SpiderApi 端口（Smali اۣ۫，同时写入 Init.port）
     private static String apiAddress = "";   // SpiderApi 服务地址（Smali ا۫ۥ，来自 getAddress(false)）
-    private static String unusedField = "";
     private static Map<String, String> headerMap = new HashMap<>();
     private static Map<String, String> verifyStateMap = new HashMap<>();
     private static JSONObject configJson = null;
-    private static String configStr = "";
-    private static String cacheJson = "";
     // 阿里云盘分享链接正则（供 XBPQAli 等子类使用）
     public static final Pattern ALIYUN_PATTERN = Pattern.compile(
         "(https://www\\.(alipan|aliyundrive)\\.com/s[^\"]+)"
@@ -123,11 +119,13 @@ public class XBPQ extends Spider {
     private String playListTitle = "";
     private String playLinkUrl = "";
     private String playPrefix = "";
+    private String playListArray = ""; // 播放列表过滤器（对应JSON "播放列表"，支持 [不包含:xxx] 后处理器）
     private String searchArray = "";
     private String searchTitle = "";
     private String searchLink = "";
     private String searchPic = "";
     private String searchDesc = "";
+    private String listSubtitle = "";     // 列表项副标题（用于首页/分类列表，非搜索）
     private String searchSuffix = "";
     private String arraySecondCut = "";
     private String playSecondCut = "";
@@ -140,6 +138,8 @@ public class XBPQ extends Spider {
     private String startPage = "1";
     private int firstPage = 1;
     private String redirectUrl = "";
+    private String jumpArray = "";    // 跳转数组（如 "numList&&</a>"）
+    private String jumpLink = "";     // 跳转链接（如 "href=\"&&\"")
     private String filterList = "";
     private Map<String, String> variableMap = new HashMap<>();
 
@@ -169,6 +169,7 @@ public class XBPQ extends Spider {
     private String searchRequestHeader = ""; // 搜索请求头
     private String playSubtitle = "";   // 播放副标题
     private boolean forcePlay = false;  // 强制直连播放标记（Smali 实例字段 إۧ，由 id 段标记/magnet 等前缀触发）
+    private boolean imageNoProxy = false;  // 图片代理开关（false=使用代理，true/0=不使用代理）
     private String activeCate = "";     // 详情 id 中 activecate= 参数值（Smali 实例字段 اۣۣۧ）
     private String parseSourceBlacklist = ""; // 解析源码黑名单（# 分隔，Smali 122344）
     private String filmType = "";       // 影片类型
@@ -180,9 +181,17 @@ public class XBPQ extends Spider {
     private String filterSwitch = "";   // 筛选开关
     private String typeFilter = "";     // 类型筛选
     private String sortType = "";       // 排序
-    private String sortOrder = "";      // 顺序
+    private String sortValues = "";     // 排序值（"time&hits&score" 格式）
     private String classValue = "";     // 分类值
-    private boolean decodeHtmlEnabled = false; // 解码html开关
+    private String areaFilter = "";     // 地区筛选（名称）
+    private String yearFilter = "";     // 年份筛选（名称）
+    private String langFilter = "";     // 语言筛选（名称）
+    private String letterFilter = "";   // 字母筛选（名称）
+    private String plotFilter = "";     // 剧情筛选（名称）
+    private String areaValue = "";      // 地区筛选值（与地区筛选名称对应）
+    private String yearValue = "";      // 年份筛选值
+    private String langValue = "";      // 语言筛选值
+    private String plotValue = "";      // 剧情筛选值
     private String copyUrl = "";        // 复制链接选择器（用于 detailContent）
     private String encodeHtml = "";     // 编码html内容
     private String encodeHtmlUrl = "";  // 编码html请求的URL模板
@@ -265,12 +274,11 @@ public class XBPQ extends Spider {
     private String pageTo = "";            // 分页结束页
     private String pageCountRule = "";     // 页数提取规则
     private String listRule = "";          // 列表选择器（首页/分类通用）
-    private String contentRule = "";       // 内容规则
-    private String descRule = "";          // 简介规则
-    private String picRule = "";           // 图片规则
-    private String titleRule = "";         // 标题规则
-    private String idRule = "";            // ID规则
-    private String pageSizeRule = "";
+    private String contentRule = "";       // 内容规则（与 content 字段合并读取）
+    private String descRule = "";          // 简介规则（与 desc 字段合并读取）
+    private String picRule = "";           // 图片规则（与 pic 字段合并读取）
+    private String titleRule = "";         // 标题规则（与 title 字段合并读取）
+    private String idRule = "";            // ID规则（与 id 字段合并读取）
     private int maxResultSize = 200;
     private String errorCodes = "";
     private String failCodes = "";
@@ -377,12 +385,12 @@ public class XBPQ extends Spider {
         classUrl = config.optString("分类url", config.optString("classUrl", classUrl));
         url = config.optString("url", url);
         searchUrl = config.optString("搜索url", config.optString("searchUrl", searchUrl));
-        title = config.optString("标题", config.optString("title", title));
-        pic = config.optString("图片", config.optString("pic", pic));
-        id = config.optString("链接", config.optString("id", id));
-        desc = config.optString("简介", config.optString("desc", desc));
-        content = config.optString("内容", config.optString("content", content));
-        parseUrl = config.optString("解析url", config.optString("parseUrl", parseUrl));
+        title = config.optString("标题", config.optString("title", config.optString("titleRule", title)));
+        pic = config.optString("图片", config.optString("pic", config.optString("picRule", pic)));
+        id = config.optString("链接", config.optString("id", config.optString("idRule", id)));
+        desc = config.optString("简介", config.optString("desc", config.optString("descRule", desc)));
+        content = config.optString("内容", config.optString("content", config.optString("contentRule", content)));
+        parseUrl = config.optString("解析url", config.optString("parseUrl", config.optString("解析", parseUrl)));
         parseHeader = config.optString("解析请求头", config.optString("parseHeader", parseHeader));
         parseUa = config.optString("解析UA", config.optString("parseUa", parseUa));
         parseReferer = config.optString("解析Referer", config.optString("parseReferer", parseReferer));
@@ -395,8 +403,18 @@ public class XBPQ extends Spider {
         filterSwitch = config.optString("筛选", config.optString("filterSwitch", filterSwitch));
         typeFilter = config.optString("类型", config.optString("typeFilter", typeFilter));
         sortType = config.optString("排序", config.optString("sortType", sortType));
-        sortOrder = config.optString("顺序", config.optString("sortOrder", sortOrder));
+        sortValues = config.optString("排序值", config.optString("sortValues", sortValues));
         classValue = config.optString("分类值", config.optString("classValue", classValue));
+        // 筛选维度字段（中文 Key 优先）
+        areaFilter = config.optString("地区", config.optString("areaFilter", areaFilter));
+        yearFilter = config.optString("年份", config.optString("yearFilter", yearFilter));
+        langFilter = config.optString("语言", config.optString("langFilter", langFilter));
+        letterFilter = config.optString("字母", config.optString("letterFilter", letterFilter));
+        plotFilter = config.optString("剧情", config.optString("plotFilter", plotFilter));
+        // 筛选值（纯名称格式时的补充值）
+        areaValue = config.optString("地区值", config.optString("areaValue", areaValue));
+        yearValue = config.optString("年份值", config.optString("yearValue", yearValue));
+        langValue = config.optString("语言值", config.optString("langValue", langValue));
         // ===== 数组/选择器规则 =====
         arraySecondCut = config.optString("数组二次截取", config.optString("arraySecondCut",
                 config.optString("数组", "")));
@@ -407,14 +425,16 @@ public class XBPQ extends Spider {
         }
         // ===== 播放相关（中文Key优先） =====
         playJsonPath = config.optString("playJsonPath", playJsonPath);
-        playTitle = config.optString("播放标题", config.optString("playTitle", playTitle));
-        playLink = config.optString("播放链接", config.optString("playLink", playLink));
+        // 播放标题/链接：优先读专用版（playListTitle/playLinkUrl），回退到全局版（playTitle/playLink）
+        playTitle = config.optString("播放标题", config.optString("playListTitle", config.optString("playTitle", playTitle)));
+        playLink = config.optString("播放链接", config.optString("playLinkUrl", config.optString("playLink", playLink)));
+        playListTitle = playTitle;
+        playLinkUrl = playLink;
         lineArray = config.optString("线路数组", config.optString("lineArray", lineArray));
         lineTitle = config.optString("线路标题", config.optString("lineTitle", lineTitle));
         playArray = config.optString("播放数组", config.optString("playArray", playArray));
-        playListTitle = config.optString("播放标题", config.optString("playListTitle", playListTitle));
-        playLinkUrl = config.optString("播放链接", config.optString("playLinkUrl", playLinkUrl));
         playPrefix = config.optString("播放链接前缀", config.optString("playPrefix", playPrefix));
+        playListArray = config.optString("播放列表", config.optString("playListArray", playListArray));
         searchArray = config.optString("搜索数组", config.optString("searchArray", searchArray));
         searchTitle = config.optString("搜索标题", config.optString("searchTitle", searchTitle));
         searchLink = config.optString("搜索链接", config.optString("searchLink", searchLink));
@@ -432,12 +452,23 @@ public class XBPQ extends Spider {
                 || config.optBoolean("noSniff", noSniff);
         reverseOrder = "1".equals(config.optString("倒序", String.valueOf(reverseOrder)))
                 || config.optBoolean("reverseOrder", reverseOrder);
-        decodeHtmlEnabled = config.optBoolean("解码html", decodeHtmlEnabled);
+        // ===== 副标题（列表页） =====
+        listSubtitle = config.optString("副标题", config.optString("listSubtitle", listSubtitle));
+        // ===== 图片代理 =====
+        // 图片代理：字符串 "0" 或 optBoolean true = 不使用代理（imageNoProxy=true）
+        String imgProxyStr = config.optString("图片代理", "");
+        if ("0".equals(imgProxyStr)) {
+            imageNoProxy = true;
+        } else {
+            imageNoProxy = config.optBoolean("图片代理", imageNoProxy);
+        }
         // ===== 搜索/分页 =====
         searchMode = config.optInt("搜索模式", config.optInt("searchMode", searchMode));
         startPage = config.optString("起始页", config.optString("startPage", startPage));
         firstPage = config.optInt("首页", config.optInt("firstPage", firstPage));
         redirectUrl = config.optString("跳转播放链接", config.optString("redirectUrl", redirectUrl));
+        jumpArray = config.optString("跳转数组", config.optString("jumpArray", jumpArray));
+        jumpLink = config.optString("跳转链接", config.optString("jumpLink", jumpLink));
         pageUrl = config.optString("分页url", config.optString("pageUrl", pageUrl));
         pageCount = config.optString("页数", config.optString("pageCount", pageCount));
         pageFlag = config.optString("分页标识", config.optString("pageFlag", pageFlag));
@@ -446,13 +477,13 @@ public class XBPQ extends Spider {
         pageCountRule = config.optString("页数规则", config.optString("pageCountRule", pageCountRule));
         // ===== 列表规则 =====
         listRule = config.optString("列表数组", config.optString("listRule", listRule));
-        contentRule = config.optString("内容", config.optString("contentRule", contentRule));
-        descRule = config.optString("简介", config.optString("descRule", descRule));
-        picRule = config.optString("图片", config.optString("picRule", picRule));
-        titleRule = config.optString("标题", config.optString("titleRule", titleRule));
-        idRule = config.optString("链接", config.optString("idRule", idRule));
+        // contentRule/descRule/picRule/titleRule/idRule 已在上方统一读取，此处同步赋值
+        titleRule = title;
+        picRule = pic;
+        idRule = id;
+        descRule = desc;
+        contentRule = content;
         // ===== 高级配置 =====
-        pageSizeRule = config.optString("页数规则", config.optString("pageSizeRule", pageSizeRule));
         maxResultSize = config.optInt("最大结果", config.optInt("maxResultSize", maxResultSize));
         errorCodes = config.optString("错误码", config.optString("errorCodes", errorCodes));
         failCodes = config.optString("失败码", config.optString("failCodes", failCodes));
@@ -479,19 +510,19 @@ public class XBPQ extends Spider {
         filmType = config.optString("影片类型", config.optString("filmType", filmType));
         filmYear = config.optString("影片年代", config.optString("filmYear", filmYear));
         filmArea = config.optString("影片地区", config.optString("filmArea", filmArea));
-        filmStatus = config.optString("状态", config.optString("filmStatus", filmStatus));
+        filmStatus = config.optString("状态", config.optString("影片状态", config.optString("filmStatus", filmStatus)));
         director = config.optString("导演", config.optString("director", director));
         actor = config.optString("主演", config.optString("actor", actor));
         // ===== 高级功能 =====
         sniffWords = config.optString("嗅探词", config.optString("sniffWords", sniffWords));
-        filterWords = config.optString("过滤词", config.optString("filterWords", filterWords));
+        filterWords = config.optString("过滤词", config.optString("滤词", config.optString("filterWords", filterWords)));
         releasePage = config.optString("发布页", config.optString("releasePage", releasePage));
         dynamicDomain = config.optString("域名-c", config.optString("dynamicDomain", dynamicDomain));
         originalUrlBak = config.optString("原始网址-b", config.optString("originalUrlBak", originalUrlBak));
         releaseSiteBak = config.optString("发布站-b", config.optString("releaseSiteBak", releaseSiteBak));
         overseasPermanent = config.optString("境外永久", config.optString("overseasPermanent", overseasPermanent));
         domainSuffix = config.optString("后缀", config.optString("domainSuffix", domainSuffix));
-        urlPrefix = config.optString("前缀", config.optString("前缀", urlPrefix));
+        urlPrefix = config.optString("前缀", config.optString("urlPrefix", urlPrefix));
         fixedDirectUrl = config.optString("固定直链", config.optString("fixedDirectUrl", fixedDirectUrl));
         backupPath = config.optString("回家的路", config.optString("backupPath", backupPath));
         keyExtractRule = config.optString("key截取", config.optString("keyExtractRule", keyExtractRule));
@@ -703,6 +734,26 @@ public class XBPQ extends Spider {
     }
 
     /**
+     * 将纯名称格式筛选值合并为 "名称$值" 格式。
+     * 当 raw 中不含 '$' 时（如 "大陆&香港&台湾"），用 values 作为统一值（如 "*"）。
+     * 支持 "&"、"|"、"#" 三种分隔符。
+     */
+    private String mergeFilterNamesWithValues(String raw, String values) {
+        if (raw.isEmpty() || values.isEmpty()) return raw;
+        // 检测 raw 是否已含 $（已完整格式则直接返回）
+        if (raw.contains("$")) return raw;
+        String[] names = raw.split("[&|#]");
+        StringBuilder sb = new StringBuilder();
+        for (String name : names) {
+            name = name.trim();
+            if (name.isEmpty()) continue;
+            if (sb.length() > 0) sb.append("#");
+            sb.append(name).append("$").append(values);
+        }
+        return sb.toString();
+    }
+
+    /**
      * [新增] 将 typeFilter/sortType 格式字符串解析为筛选条件加入 filterListJson
      * 格式："名称$值#名称$值"（用 # 分隔，$ 分隔 name/value），"||" 分隔分组
      */
@@ -772,14 +823,24 @@ public class XBPQ extends Spider {
                     result.append(hexDecode(segment));
                     continue;
                 }
-                // GZIP 解压：以 "gzip:" 开头
+                // GZIP 解压：以 "gzip:" 开头（使用 ByteArrayOutputStream 动态扩容）
                 if (segment.startsWith("gzip:")) {
                     byte[] compressed = Base64.getDecoder().decode(segment.substring(5));
-                    Inflater inflater = new Inflater();
-                    inflater.setInput(compressed);
-                    byte[] output = new byte[compressed.length * 2];
-                    int decompressedLen = inflater.inflate(output);
-                    result.append(new String(output, 0, decompressedLen));
+                    java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+                    try {
+                        Inflater inflater = new Inflater(true); // nowrap: 纯 deflate，不含 gzip/zlib 头
+                        inflater.setInput(compressed);
+                        byte[] buffer = new byte[4096];
+                        int len;
+                        while (!inflater.finished()) {
+                            len = inflater.inflate(buffer);
+                            if (len > 0) bos.write(buffer, 0, len);
+                        }
+                        result.append(bos.toString(StandardCharsets.UTF_8.name()));
+                    } finally {
+                        inflater.end();
+                        bos.close();
+                    }
                     continue;
                 }
                 // CSS/JSONPath 选择器提取（含 CSS 简写语法 p:tag->attr）
@@ -1083,9 +1144,17 @@ public class XBPQ extends Spider {
             String type = m.group(1);
             String param = m.group(2);
             if ("替换".equals(type)) {
-                String[] kv = param.split(">>");
-                if (kv.length == 2) {
-                    str = str.replace(kv[0].trim(), kv[1].trim());
+                // 支持多段替换：from>>to#from2>>to2#... 或单段 from>>to
+                // 用 # 分割各替换段，每段用 >> 分割 from/to
+                String[] pairs = param.split("#");
+                for (String pair : pairs) {
+                    pair = pair.trim();
+                    if (pair.isEmpty()) continue;
+                    int sepIdx = pair.indexOf(">>");
+                    if (sepIdx < 0) continue;
+                    String from = pair.substring(0, sepIdx).trim();
+                    String to = pair.substring(sepIdx + 2).trim();
+                    if (!from.isEmpty()) str = str.replace(from, to);
                 }
             } else if ("包含".equals(type)) {
                 str = str.contains(param.trim()) ? str : "";
@@ -1122,7 +1191,6 @@ public class XBPQ extends Spider {
     private String applySecondCut(String content, String cutRule, int index) {
         if (content == null || content.isEmpty() || cutRule == null || cutRule.isEmpty()) return content;
         String[] parts = cutRule.split("&&");
-        if (parts.length == 0) return content;
         // 处理 [[N]] 索引标记
         int blockIndex = 0;
         if (parts.length > 0 && parts[0].contains("[[")) {
@@ -1161,24 +1229,71 @@ public class XBPQ extends Spider {
 
     /**
      * CSS 简写语法解析：p:div[class*="xxx"]->text  或  p:div->attr
-     * 返回 Jsoup CSS 选择器字符串
+     * 返回 Jsoup CSS 选择器字符串（不含后处理器，后处理器在调用方处理）
+     * 支持格式：
+     *   p:div->text          → "div"
+     *   p:div->href          → "div[href]"
+     *   p:div->src           → "div[src]"
+     *   p:.class->text       → ".class"
+     *   p:div[attr*=val]->text → "div[attr*=val]"
+     *   p:->text             → "*"（空标签选所有元素）
      */
     private String parseCssShortSyntax(String selector) {
         if (selector == null || !selector.startsWith("p:")) return selector;
-        String cssExpr = selector.substring(2); // 去掉 "p:"
+        // 移除后处理器标记 [替换:...][包含:...][不包含:...][序号:...][含序号:...][排序:...]
+        String clean = selector.replaceAll("\\[([^\\]]+)\\]", "");
+        String cssExpr = clean.substring(2); // 去掉 "p:"
         if (!cssExpr.contains("->")) return cssExpr;
-        String[] parts = cssExpr.split("->");
+        String[] parts = cssExpr.split("->", 2); // 只分两段，避免 attr 中含 "->" 被错误分割
         String tagPart = parts[0].trim();
         String attrPart = parts.length > 1 ? parts[1].trim() : "";
-        // tagPart 可能是 "div.class" 或 "div[attr*=val]"
-        if (attrPart.equals("text")) {
-            return tagPart; // Jsoup select 直接返回文本
-        } else if (attrPart.equals("href") || attrPart.equals("src")) {
+        // 空标签部分（p:->title）→ 选所有元素
+        if (tagPart.isEmpty()) tagPart = "*";
+        if (attrPart.equals("href") || attrPart.equals("src")) {
             return tagPart + "[" + attrPart + "]";
-        } else if (!attrPart.isEmpty()) {
-            return tagPart;
         }
         return tagPart;
+    }
+
+    /**
+     * 从 CSS 简写原始选择器中提取所有后处理器，按顺序执行并返回最终结果
+     * 支持的后处理器：
+     *   [序号:N] / [含序号:N] → 取逗号分隔结果的第 N 个（1-based）
+     *   [替换:a>>b]           → 对结果执行字符串替换（只替换第一个匹配的 >>）
+     *   [包含:关键词]          → 结果不含该词则返回空
+     *   [不包含:关键词]        → 结果含该词则返回空
+     *   [排序:a>>b]           → 暂未实现（后续扩展）
+     */
+    private String applyCssShortPostProcessor(String rawSelector, String result) {
+        if (result == null || !rawSelector.startsWith("p:")) return result;
+        // 按出现顺序提取并执行所有后处理器
+        java.util.regex.Pattern p = java.util.regex.Pattern.compile("\\[([^\\]]+)\\]");
+        java.util.regex.Matcher m = p.matcher(rawSelector);
+        while (m.find()) {
+            String param = m.group(1);
+            if (param.startsWith("含序号:") || param.startsWith("序号:")) {
+                int idx = Integer.parseInt(param.replaceAll("[^0-9]", ""));
+                String[] items = result.split(",");
+                if (idx <= items.length) {
+                    result = items[idx - 1].trim();
+                }
+            } else if (param.startsWith("替换:")) {
+                int sepIdx = param.indexOf(">>");
+                if (sepIdx >= 0) {
+                    String from = param.substring(7, sepIdx).trim();
+                    String to = param.substring(sepIdx + 2).trim();
+                    result = result.replace(from, to);
+                }
+            } else if (param.startsWith("包含:")) {
+                String keyword = param.substring(5).trim();
+                if (!result.contains(keyword)) result = "";
+            } else if (param.startsWith("不包含:")) {
+                String keyword = param.substring(5).trim();
+                if (result.contains(keyword)) result = "";
+            }
+            // [排序:] 暂不支持
+        }
+        return result;
     }
 
     /**
@@ -1363,7 +1478,10 @@ public class XBPQ extends Spider {
             Document doc = Jsoup.parse(html);
             Elements elements = doc.select(selector);
             if (!elements.isEmpty()) {
-                return elements.first().text().trim();
+                String result = elements.first().text().trim();
+                // 应用 CSS 简写后处理器（序号/替换/包含/不包含）
+                result = applyCssShortPostProcessor(selector, result);
+                return result;
             }
         } catch (Exception e) {
             SpiderDebug.log("extractBySelector error: " + e.getMessage());
@@ -1388,6 +1506,26 @@ public class XBPQ extends Spider {
             Elements elements = doc.select(selector);
             for (Element el : elements) {
                 list.add(el.text().trim());
+            }
+            // 应用 CSS 简写后处理器（序号/替换/包含/不包含）
+            if (selector.startsWith("p:")) {
+                // [含序号:N] / [序号:N] → 从列表取第 N 个
+                java.util.regex.Pattern p = java.util.regex.Pattern.compile("\\[([^\\]]+)\\]");
+                java.util.regex.Matcher m = p.matcher(selector);
+                while (m.find()) {
+                    String param = m.group(1);
+                    if (param.startsWith("含序号:") || param.startsWith("序号:")) {
+                        int idx = Integer.parseInt(param.replaceAll("[^0-9]", ""));
+                        if (idx <= list.size()) return Collections.singletonList(list.get(idx - 1));
+                    }
+                }
+                // [替换:a>>b] / [包含:x] / [不包含:x] → 对每个元素单独处理
+                List<String> filtered = new ArrayList<>();
+                for (String item : list) {
+                    String processed = applyCssShortPostProcessor(selector, item);
+                    if (!processed.isEmpty()) filtered.add(processed);
+                }
+                list = filtered;
             }
         } catch (Exception e) {
             SpiderDebug.log("extractBySelectorAll error: " + e.getMessage());
@@ -1798,6 +1936,9 @@ public class XBPQ extends Spider {
         int idx = str.indexOf("$$");
         if (idx > 0) str = str.substring(0, idx);
         // str2 可用于额外处理（如添加 imgFlag），此处兼容 Smali 接口
+        // 图片代理开关："0"=关闭代理直接返回原图，其他值/空=启用代理
+        // 注意：此字段由 parseConfig 设置为 imageNoProxy，此方法为静态方法需通过实例判断
+        // 由于此方法无法访问实例字段，图片代理逻辑在调用方处理（见 categoryContent 等）
         // 处理 imgFlag 和 secretKey 编码
         if (!XBPQ.imgFlag.isEmpty() && !XBPQ.secretKey.isEmpty()) {
             try {
@@ -2635,6 +2776,33 @@ public class XBPQ extends Spider {
             }
             if (filter && !sortType.isEmpty()) {
                 appendTypeFilter(filterListJson, "排序", sortType);
+            } else if (filter && !sortValues.isEmpty()) {
+                // 兼容 "排序值"（"time&hits&score" 格式），构建默认排序筛选
+                JSONArray sortVals = new JSONArray();
+                for (String v : sortValues.split("&")) {
+                    String sv = v.trim();
+                    if (!sv.isEmpty()) sortVals.put(sv);
+                }
+                JSONObject sortObj = new JSONObject();
+                sortObj.put("key", "order");
+                sortObj.put("name", "排序");
+                sortObj.put("value", sortVals);
+                filterListJson.put(sortObj);
+            }
+            if (filter && !areaFilter.isEmpty()) {
+                appendTypeFilter(filterListJson, "地区", mergeFilterNamesWithValues(areaFilter, areaValue));
+            }
+            if (filter && !yearFilter.isEmpty()) {
+                appendTypeFilter(filterListJson, "年份", mergeFilterNamesWithValues(yearFilter, yearValue));
+            }
+            if (filter && !langFilter.isEmpty()) {
+                appendTypeFilter(filterListJson, "语言", mergeFilterNamesWithValues(langFilter, langValue));
+            }
+            if (filter && !letterFilter.isEmpty()) {
+                appendTypeFilter(filterListJson, "字母", letterFilter);
+            }
+            if (filter && !plotFilter.isEmpty()) {
+                appendTypeFilter(filterListJson, "剧情", mergeFilterNamesWithValues(plotFilter, plotValue));
             }
             // 来自 filters 配置的筛选条件
             if (filter && filterList != null && !filterList.isEmpty()) {
@@ -2789,6 +2957,16 @@ public class XBPQ extends Spider {
                 .replace("{cateid}", tid)
                 .replace("{catepg}", String.valueOf(pageNum))
                 .replace("{cstePg}", String.valueOf(pageNum));
+        // 补充常见筛选变量：{class}剧情 {area}地区 {by}排序 {lang}语言 {year}年份
+        if (extend != null) {
+            classPath = classPath
+                    .replace("{class}", extend.getOrDefault("class", ""))
+                    .replace("{area}", extend.getOrDefault("area", ""))
+                    .replace("{by}", extend.getOrDefault("by", extend.getOrDefault("order", "")))
+                    .replace("{lang}", extend.getOrDefault("lang", ""))
+                    .replace("{year}", extend.getOrDefault("year", ""))
+                    .replace("{letter}", extend.getOrDefault("letter", ""));
+        }
         // 解析 classUrl 中的 ;;模式 后缀（如 /music/id-{cateId}-{catePg}.html;;mrcRAD）
         // ;;后为模式标识，仅影响请求方式（暂保留，不影响实际请求逻辑）
         String modeSuffix = "";
@@ -3061,11 +3239,49 @@ public class XBPQ extends Spider {
                 for (int i = 0; i < lineEls.size(); i++) {
                     String lineName = lineNames.size() > i ? lineNames.get(i) : "线路" + (i + 1);
                     Element lineEl = lineEls.get(i);
-                    // 在当前线路块内查找播放列表
+                    // 如果配置了跳转链接，从线路元素中提取跳转URL并获取跳转页内容
                     String epHtml = lineEl.outerHtml();
-                    // 播放二次截取
+                    if (!jumpArray.isEmpty() && !jumpLink.isEmpty()) {
+                        try {
+                            String jumpUrl = "";
+                            String cssJumpArr = parseCssShortSyntax(jumpArray);
+                            Elements jumpEls = lineEl.select(cssJumpArr);
+                            if (jumpEls.isEmpty() && jumpArray.contains("&&")) {
+                                // 文本截取格式
+                                String jumpBlock = applySecondCut(epHtml, jumpArray);
+                                if (!jumpBlock.isEmpty()) {
+                                    Document jumpDoc = Jsoup.parse(jumpBlock);
+                                    String cssJLink = parseCssShortSyntax(jumpLink);
+                                    Element jLinkEl = jumpDoc.selectFirst(cssJLink);
+                                    jumpUrl = jLinkEl != null ? jLinkEl.attr("href") : "";
+                                }
+                            } else {
+                                String cssJLink = parseCssShortSyntax(jumpLink);
+                                Element jLinkEl = jumpEls.isEmpty() ? null : jumpEls.first().selectFirst(cssJLink);
+                                jumpUrl = jLinkEl != null ? jLinkEl.attr("href") : "";
+                            }
+                            if (!jumpUrl.isEmpty()) {
+                                jumpUrl = buildUrl(homeUrl, jumpUrl);
+                                String jumpContent = fetchContent(jumpUrl);
+                                if (!jumpContent.isEmpty()) {
+                                    epHtml = jumpContent;
+                                }
+                            }
+                        } catch (Exception e) {
+                            SpiderDebug.log("跳转解析 error: " + e.getMessage());
+                        }
+                    }
+                    // 播放二次截取（支持后处理器，如 [替换:...]）
                     if (!playSecondCut.isEmpty()) {
-                        epHtml = applySecondCut(epHtml, playSecondCut);
+                        String rawCut = applySecondCut(epHtml, playSecondCut);
+                        // 检查原始规则是否包含后处理器，如有则对截取结果执行
+                        String processedRule = applyPostProcessors(playSecondCut);
+                        boolean hasPostProcessor = !processedRule.equals(playSecondCut);
+                        if (hasPostProcessor) {
+                            epHtml = applyPostProcessors(rawCut);
+                        } else {
+                            epHtml = rawCut;
+                        }
                     }
                     // 解析播放链接
                     List<String> episodes = parsePlayEpisodes(epHtml, lineName);
@@ -3135,33 +3351,70 @@ public class XBPQ extends Spider {
     }
 
     /**
-     * 解析播放链接列表（支持播放数组、播放标题、播放链接、播放链接前缀）
+     * 解析播放链接列表（支持播放数组、播放标题、播放链接、播放链接前缀、播放列表过滤器）
      */
     private List<String> parsePlayEpisodes(String html, String sourceName) {
         List<String> episodes = new ArrayList<>();
         if (Util.isEmpty(html)) return episodes;
+
+        // 先应用播放列表过滤器（对应JSON "播放列表"，如 "<a&&/a>[不包含:展开全部]"）
+        if (!playListArray.isEmpty()) {
+            html = applyPlayListFilter(html, playListArray);
+        }
 
         String cssPlayArr = parseCssShortSyntax(playArray);
         Document doc = Jsoup.parse(html);
 
         if (!playArray.isEmpty()) {
             Elements playEls = doc.select(cssPlayArr);
+            // fallback：当CSS选择器无效时（如文本截取格式 "hl-sort-list&&</ul>"），尝试文本截取后再选
+            if (playEls.isEmpty() && playArray.contains("&&")) {
+                String cutHtml = applySecondCut(html, playArray);
+                if (!cutHtml.isEmpty()) {
+                    Document cutDoc = Jsoup.parse(cutHtml);
+                    playEls = cutDoc.select(cssPlayArr.isEmpty() ? "a" : cssPlayArr);
+                    // 重新构建doc以便后续使用
+                    doc = cutDoc;
+                }
+            }
             for (Element el : playEls) {
                 String epText = "";
                 String epUrl = "";
+                // 提取单集HTML（如播放列表格式 "表&&表" 先截取再处理）
+                String itemHtml = el.outerHtml();
+                if (!playListArray.isEmpty() && playListArray.contains("&&")) {
+                    itemHtml = applySecondCut(itemHtml, playListArray);
+                }
+                Document itemDoc = Jsoup.parse(itemHtml);
                 if (!playListTitle.isEmpty()) {
+                    // 优先尝试CSS选择器
                     String cssTitle = parseCssShortSyntax(playListTitle);
-                    Element titleEl = el.selectFirst(cssTitle);
-                    epText = titleEl != null ? titleEl.text().trim() : el.text().trim();
+                    Element titleEl = itemDoc.selectFirst(cssTitle);
+                    if (titleEl != null) {
+                        epText = titleEl.text().trim();
+                    } else if (playListTitle.contains("&&")) {
+                        // 文本截取格式 fallback
+                        epText = applySecondCut(itemHtml, playListTitle);
+                    } else {
+                        epText = itemDoc.text().trim();
+                    }
                 } else {
-                    epText = el.text().trim();
+                    epText = itemDoc.text().trim();
                 }
                 if (!playLinkUrl.isEmpty()) {
+                    // 优先尝试CSS选择器
                     String cssLink = parseCssShortSyntax(playLinkUrl);
-                    Element linkEl = el.selectFirst(cssLink);
-                    epUrl = linkEl != null ? linkEl.attr("href") : "";
+                    Element linkEl = itemDoc.selectFirst(cssLink);
+                    if (linkEl != null) {
+                        epUrl = linkEl.attr("href");
+                    } else if (playLinkUrl.contains("&&")) {
+                        // 文本截取格式 fallback
+                        epUrl = applySecondCut(itemHtml, playLinkUrl);
+                    } else {
+                        epUrl = itemDoc.attr("href");
+                    }
                 } else {
-                    epUrl = el.attr("href");
+                    epUrl = itemDoc.attr("href");
                 }
                 if (epUrl.isEmpty()) continue;
                 // 应用播放链接前缀
@@ -3188,6 +3441,38 @@ public class XBPQ extends Spider {
             }
         }
         return episodes;
+    }
+
+    /**
+     * 应用播放列表过滤器
+     * 格式："选择器[不包含:关键词]" 或 "前缀&&后缀"（二次截取）
+     * 例如 "<a&&/a>[不包含:展开全部]" → 先按 <a&&/a> 截取，再排除含"展开全部"的条目
+     */
+    private String applyPlayListFilter(String html, String rule) {
+        if (html == null || html.isEmpty() || rule == null || rule.isEmpty()) return html;
+        try {
+            // 处理 [不包含:xxx] / [包含:xxx] 后处理器
+            String processed = applyPostProcessors(rule);
+            // 如果处理后与原始 rule 不同（说明有后处理器），再对内容执行后处理
+            boolean hasPostProcessor = processed != null && !processed.equals(rule);
+            // 先按 "&&" 二次截取
+            String cutResult = applySecondCut(html, processed);
+            if (!cutResult.isEmpty() && cutResult != html) {
+                // 如果有后处理器，对截取结果执行后处理
+                if (hasPostProcessor) {
+                    return applyPostProcessors(cutResult);
+                }
+                return cutResult;
+            }
+            // 退回到原文，如有后处理器则处理后返回
+            if (hasPostProcessor) {
+                return applyPostProcessors(html);
+            }
+            return html;
+        } catch (Exception e) {
+            SpiderDebug.log("applyPlayListFilter error: " + e.getMessage());
+            return html;
+        }
     }
 
     /**
@@ -5010,7 +5295,13 @@ public class XBPQ extends Spider {
             } else if (!pic.isEmpty()) {
                 vod.setVodPic(extractPic(el));
             }
-            if (!descRule.isEmpty()) {
+            // 副标题（优先于 descRule/desc，用于列表项备注）
+            if (!listSubtitle.isEmpty()) {
+                Element subEl = el.selectFirst(parseCssShortSyntax(listSubtitle));
+                if (subEl != null) {
+                    vod.setVodRemarks(subEl.text().trim());
+                }
+            } else if (!descRule.isEmpty()) {
                 Element dEl = el.selectFirst(parseCssShortSyntax(descRule));
                 vod.setVodRemarks(dEl != null ? dEl.text().trim() : "");
             } else if (!desc.isEmpty()) {
@@ -5030,7 +5321,7 @@ public class XBPQ extends Spider {
             // 常见路径
             Integer pageCount = obj.optInt("pagecount", -1);
             if (pageCount <= 0) pageCount = obj.optInt("total_page", -1);
-            if (pageCount <= 0) pageCount = obj.optInt(" totalPages", -1);
+            if (pageCount <= 0) pageCount = obj.optInt("totalPages", -1);
             if (pageCount <= 0) {
                 JSONObject pageInfo = obj.optJSONObject("page");
                 if (pageInfo != null) pageCount = pageInfo.optInt("pagecount", -1);
@@ -5126,7 +5417,12 @@ public class XBPQ extends Spider {
      * 从 Element 中提取图片 URL（支持多种属性名）
      */
     private String extractPicAttr(Element el) {
-        String attr = pic.contains(":") ? pic.split(":")[1] : "src";
+        // 取最后一个冒号后的属性名，支持 "img:data-original:src" 等多级配置
+        String attr = "src";
+        if (pic.contains(":")) {
+            int lastColon = pic.lastIndexOf(':');
+            attr = pic.substring(lastColon + 1).trim();
+        }
         String val = el.attr(attr);
         if (val.isEmpty()) {
             // 尝试 data-original / data-src 等常见属性
