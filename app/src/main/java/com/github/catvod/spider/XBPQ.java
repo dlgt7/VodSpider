@@ -380,11 +380,11 @@ public class XBPQ extends Spider {
         author = config.optString("作者", "");
         charset = config.optString("编码", "");
         // ===== 基础配置（中文Key优先，英文fallback） =====
-        homeUrl = config.optString("主页url", config.optString("homeUrl", homeUrl));
+        homeUrl = config.optString("主页url", config.optString("homeUrl", homeUrl)).replaceAll("^`+|`+$", "");
         className = config.optString("分类", config.optString("className", className));
-        classUrl = config.optString("分类url", config.optString("classUrl", classUrl));
-        url = config.optString("url", url);
-        searchUrl = config.optString("搜索url", config.optString("searchUrl", searchUrl));
+        classUrl = config.optString("分类url", config.optString("classUrl", classUrl)).replaceAll("^`+|`+$", "");
+        url = config.optString("url", url).replaceAll("^`+|`+$", "");
+        searchUrl = config.optString("搜索url", config.optString("searchUrl", searchUrl)).replaceAll("^`+|`+$", "");
         title = config.optString("标题", config.optString("title", config.optString("titleRule", title)));
         pic = config.optString("图片", config.optString("pic", config.optString("picRule", pic)));
         id = config.optString("链接", config.optString("id", config.optString("idRule", id)));
