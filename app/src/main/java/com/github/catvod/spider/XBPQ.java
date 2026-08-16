@@ -2397,6 +2397,12 @@ public class XBPQ extends Spider {
             if (idx <= 0) continue;
             String key = pair.substring(0, idx).trim();
             String value = pair.substring(idx + 1).trim();
+            // 支持 UA 简写替换（MOBILE_UA/手机 等）
+            if (key.equalsIgnoreCase("User-Agent")) {
+                if (value.equals("MOBILE_UA") || value.equals("手机")) {
+                    value = "Mozilla/5.0 (Linux; Android 13; Xiaomi 13 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.5672.131 Mobile Safari/537.36";
+                }
+            }
             if (!key.isEmpty() && !value.isEmpty()) {
                 headers.put(key, value);
             }
@@ -2749,7 +2755,8 @@ public class XBPQ extends Spider {
                 .replace("{cateId}", tid)
                 .replace("{catePg}", String.valueOf(pageNum))
                 .replace("{cateid}", tid)
-                .replace("{catepg}", String.valueOf(pageNum));
+                .replace("{catepg}", String.valueOf(pageNum))
+                .replace("{cstePg}", String.valueOf(pageNum));
         // 解析 classUrl 中的 ;;模式 后缀（如 /music/id-{cateId}-{catePg}.html;;mrcRAD）
         // ;;后为模式标识，仅影响请求方式（暂保留，不影响实际请求逻辑）
         String modeSuffix = "";
