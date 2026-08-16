@@ -340,8 +340,8 @@ public class XBPQ extends Spider {
         }
         this.extendText = extend == null ? "" : extend;
         if (extend == null || extend.isEmpty()) return;
+        String configStr = extend;
         try {
-            String configStr = extend;
             if (extend.trim().startsWith("http")) {
                 configStr = OkHttp.string(extend);
             }
@@ -827,8 +827,9 @@ public class XBPQ extends Spider {
                 if (segment.startsWith("gzip:")) {
                     byte[] compressed = Base64.getDecoder().decode(segment.substring(5));
                     java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+                    Inflater inflater = null;
                     try {
-                        Inflater inflater = new Inflater(true); // nowrap: 纯 deflate，不含 gzip/zlib 头
+                        inflater = new Inflater(true); // nowrap: 纯 deflate，不含 gzip/zlib 头
                         inflater.setInput(compressed);
                         byte[] buffer = new byte[4096];
                         int len;
@@ -838,7 +839,7 @@ public class XBPQ extends Spider {
                         }
                         result.append(bos.toString(StandardCharsets.UTF_8.name()));
                     } finally {
-                        inflater.end();
+                        if (inflater != null) inflater.end();
                         bos.close();
                     }
                     continue;
