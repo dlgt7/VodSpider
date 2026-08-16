@@ -2505,8 +2505,38 @@ public class XBPQ extends Spider {
             // Smali homeContent 117045-117139：响应码非 200 或内容含"网站维护中"
             // → 返回消息弹窗 tab（msgbox），而非空列表
             if (!noHomeUrl && (requestFailed || html.isEmpty() || html.contains("网站维护中"))) {
-                return new JSONObject().put("list",
-                        msgTabBuild(html, "访问失败: " + lastResponseCode)).toString();
+                JSONObject result = new JSONObject();
+                // 即使请求失败，也尝试从 className 生成分类列表
+                if (!className.isEmpty()) {
+                    JSONArray classList = new JSONArray();
+                    String[] nameArr;
+                    String[] urlArr;
+                    if (className.contains("#") && className.contains("$")) {
+                        String[] pairs = className.split("#");
+                        nameArr = new String[pairs.length];
+                        urlArr = new String[pairs.length];
+                        for (int i = 0; i < pairs.length; i++) {
+                            String[] parts = pairs[i].split("\\$");
+                            nameArr[i] = parts[0].trim();
+                            urlArr[i] = parts.length > 1 ? parts[1].trim() : "";
+                        }
+                    } else {
+                        String nameSep = className.contains("&") ? "&" : "[|>]";
+                        nameArr = className.split(nameSep);
+                        urlArr = nameArr;
+                    }
+                    for (int i = 0; i < nameArr.length; i++) {
+                        JSONObject cls = new JSONObject();
+                        String tid = (i == 0 && urlArr.length <= i) ? ""
+                                : (urlArr.length > i && !urlArr[i].isEmpty()) ? urlArr[i] : nameArr[i].trim();
+                        cls.put("type_id", tid);
+                        cls.put("type_name", nameArr[i].trim());
+                        classList.put(cls);
+                    }
+                    result.put("class", classList);
+                }
+                result.put("list", msgTabBuild(html, "访问失败: " + lastResponseCode));
+                return result.toString();
             }
 
             JSONObject result = new JSONObject();
@@ -2518,7 +2548,9 @@ public class XBPQ extends Spider {
                 rawClassData = applySecondCut(html, arraySecondCut);
             }
 
-            if (!className.isEmpty() && !classUrl.isEmpty()) {
+            // 当 className 为 "名称$ID#名称$ID" 格式时，直接生成分类，不使用 CSS 选择器
+            boolean isNameIdFormat = className.contains("#") && className.contains("$");
+            if (!isNameIdFormat && !className.isEmpty() && !classUrl.isEmpty()) {
                 List<String> names = extractBySelectorAll(rawClassData, parseCssShortSyntax(className));
                 List<String> urls = extractBySelectorAll(rawClassData, parseCssShortSyntax(classUrl));
                 int count = Math.min(names.size(), urls.size());
