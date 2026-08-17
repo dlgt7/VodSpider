@@ -2128,7 +2128,10 @@ public class XBPQ extends Spider {
                     play_url_title = HtmlNodeHlper.trimHtmlString(HtmlNodeHlper.nodeString(str, blockPos));
                     int dd = 3;
                 }
-                if (play_url_title.contains("展开全部")) continue;
+                if (play_url_title.contains("展开全部")) {
+                    pos += Math.max(1, play_url.length());
+                    continue;
+                }
                 tmp.add(play_url_title + "$" + play_url);
 //                SpiderDebug.log(String.format("%s$%s", play_url_title, play_url));
                 pos += play_url.length();
@@ -2198,14 +2201,21 @@ public class XBPQ extends Spider {
 
             JSONObject detail = rule.optJSONObject("detail");
             if (detail == null) return "";
-            // 如果不存在url,则使用list中的vod_id来生成url
-            if (!detail.has("url")) {
+            // 生成详情页 URL
+            String vid = vinfo.optString("vod_id", "");
+            String url;
+            if (detail.has("url")) {
+                // 规则里显式写了详情 url
+                url = detail.getString("url").replace("{vid}", vid);
+            } else if (vid.startsWith("http://") || vid.startsWith("https://") || vid.startsWith("/")) {
+                // XYQ 风格：链接字段已是完整路径或 URL
+                url = addHttpPrefix(vid);
+            } else {
+                // 原生 XBPQ：list.vod_id 是 [前缀, 后缀] 模板
                 JSONObject list = rule.getJSONObject("list");
                 JSONArray tmp = list.getJSONArray("vod_id");
-                String u = addHttpPrefix(tmp.getString(0) + "{vid}" + tmp.getString(1));
-                detail.put("url", u);
+                url = addHttpPrefix(tmp.getString(0) + vid + tmp.getString(1));
             }
-            String url = detail.getString("url").replace("{vid}", vinfo.getString("vod_id"));
             String body = fetchUrl(url, detail.optJSONObject("header"));
             String str = Utils.getRegion(body, detail);
             int startPos = 0;
