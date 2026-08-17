@@ -98,6 +98,8 @@ public class XBPQ extends Spider {
         CHINESE_KEY_MAP.put("搜索链接", "search_id");
         CHINESE_KEY_MAP.put("搜索副标题", "search_remarks");
         CHINESE_KEY_MAP.put("搜索二次截取", "search_twice");
+        CHINESE_KEY_MAP.put("搜索请求头", "search_header");
+        CHINESE_KEY_MAP.put("搜索后缀", "search_suffix");
         CHINESE_KEY_MAP.put("线路二次截取", "line_second_cut");
         CHINESE_KEY_MAP.put("多线二次截取", "multi_line_twice");
         CHINESE_KEY_MAP.put("多线数组", "multi_line_array");
@@ -484,6 +486,27 @@ public class XBPQ extends Spider {
         return headers;
     }
 
+    // 解析 header 字符串为 JSONObject（格式: "Key1$Value1#Key2$Value2"）
+    protected JSONObject parseHeader(String headerStr) {
+        try {
+            JSONObject hdr = new JSONObject();
+            if (headerStr.startsWith("{")) {
+                return new JSONObject(headerStr);
+            }
+            String[] pairs = headerStr.split("#");
+            for (String pair : pairs) {
+                String[] kv = pair.split("\\$", 2);
+                if (kv.length >= 2) {
+                    hdr.put(kv[0].trim(), kv[1].trim());
+                }
+            }
+            return hdr;
+        } catch (JSONException e) {
+            SpiderDebug.log(e);
+        }
+        return new JSONObject();
+    }
+
     // 提取子内容（来自XBiubiu/XYQBiu）
     protected ArrayList<String> subContent(String content, String startFlag, String endFlag) {
         ArrayList<String> result = new ArrayList<>();
@@ -492,7 +515,10 @@ public class XBPQ extends Spider {
             return result;
         }
         try {
-            Pattern pattern = Pattern.compile(escapeExprSpecialWord(startFlag) + "(.*?)" + escapeExprSpecialWord(endFlag));
+            String escapedStart = escapeExprSpecialWord(startFlag);
+            String escapedEnd = escapeExprSpecialWord(endFlag);
+            // endFlag 为空时，只匹配 startFlag 之后的内容（不含 startFlag 本身）
+            Pattern pattern = Pattern.compile(escapedStart + "(.*?)" + (escapedEnd.isEmpty() ? "$" : escapedEnd));
             Matcher matcher = pattern.matcher(content);
             while (matcher.find()) {
                 result.add(matcher.group(1).trim());
@@ -1499,6 +1525,27 @@ public class XBPQ extends Spider {
                 }
             }
 
+            // 兜底：如果 classes 为空且有 fenlei 字段（单值分类名），尝试从 class_url 提取 cateId
+            if (classes.isEmpty() && !rule.optString("fenlei", "").isEmpty()) {
+                String classUrl = rule.optString("class_url", "");
+                String cateId = "";
+                if (classUrl.contains("tid=")) {
+                    int start = classUrl.indexOf("tid=") + 4;
+                    int end = classUrl.indexOf("&", start);
+                    cateId = end > start ? classUrl.substring(start, end) : classUrl.substring(start);
+                } else if (classUrl.contains("{cateId}")) {
+                    cateId = "1";
+                } else if (classUrl.contains("?")) {
+                    cateId = "1";
+                }
+                if (!cateId.isEmpty()) {
+                    JSONObject jsonObject = new JSONObject();
+                    jsonObject.put("type_name", rule.optString("fenlei", ""));
+                    jsonObject.put("type_id", cateId);
+                    classes.put(jsonObject);
+                }
+            }
+
             result.put("class", classes);
             if (z && rule.has("filter")) {
                 result.put("filters", rule.getJSONObject("filter"));
@@ -1518,6 +1565,31 @@ public class XBPQ extends Spider {
                             e.printStackTrace();
                         }
                     }
+                }
+            }
+            // 构建排序筛选（来自XBiubiu），格式: "排序名1&排序名2" → "排序值1&排序值2"
+            if (z && !getRuleVal("sort_type").isEmpty() && !getRuleVal("sort_value").isEmpty()) {
+                String sortNames = getRuleVal("sort_type");
+                String sortValues = getRuleVal("sort_value");
+                String[] names = sortNames.split("&");
+                String[] values = sortValues.split("&");
+                // 检查 class_url 中是否有 {by} 占位符
+                String classUrl = rule.optString("class_url", "");
+                if (classUrl.contains("{by}")) {
+                    JSONObject filter = new JSONObject();
+                    JSONObject byItem = new JSONObject();
+                    byItem.put("key", "by");
+                    JSONArray listArr = new JSONArray();
+                    int len = Math.min(names.length, values.length);
+                    for (int i = 0; i < len; i++) {
+                        JSONObject opt = new JSONObject();
+                        opt.put("n", names[i].trim());
+                        opt.put("v", values[i].trim());
+                        listArr.put(opt);
+                    }
+                    byItem.put("value", listArr);
+                    filter.put("by", byItem);
+                    result.put("filters", filter);
                 }
             }
             return result.toString();
@@ -1762,17 +1834,17 @@ public class XBPQ extends Spider {
                     String[] parts = cutRule.split("&&");
                     if (parts.length >= 2) {
                         String start = parts[0].trim();
-                        String end = parts[1].trim();
+                        String end = parts.length > 1 ? parts[1].trim() : "";
                         int linePos = 0;
                         ArrayList<String> lines = new ArrayList<>();
                         while (lines.size() < sz) {
                             int startPos = str.indexOf(start, linePos);
                             if (startPos < 0) break;
                             int startIndex = startPos + start.length();
-                            int endIndex = str.indexOf(end, startIndex);
-                            if (endIndex < 0) break;
+                            int endIndex = end.isEmpty() ? str.length() : str.indexOf(end, startIndex);
+                            if (endIndex < 0 && !end.isEmpty()) break;
                             lines.add(str.substring(startIndex, endIndex).trim());
-                            linePos = endIndex + end.length();
+                            linePos = end.isEmpty() ? str.length() : endIndex + end.length();
                         }
                         if (!lines.isEmpty()) return new ArrayList<>(lines);
                     }
@@ -2502,7 +2574,21 @@ public class XBPQ extends Spider {
                 url = (search != null && search.has("url"))
                         ? search.getString("url").replace("{wd}", wd)
                         : searchUrl.replace("{wd}", URLEncoder.encode(wd));
-                str = fetchUrl(url, search != null ? search.optJSONObject("header") : null);
+                url = addHttpPrefix(url);
+                // 应用 search_suffix 后缀
+                String searchSuffix = getRuleVal("search_suffix");
+                if (!searchSuffix.isEmpty()) {
+                    url = url + searchSuffix;
+                }
+                // 使用 search_header 请求头（优先于 search 对象内的 header）
+                String searchHeader = getRuleVal("search_header");
+                JSONObject searchHeaders = null;
+                if (!searchHeader.isEmpty()) {
+                    searchHeaders = parseHeader(searchHeader);
+                } else if (search != null) {
+                    searchHeaders = search.optJSONObject("header");
+                }
+                str = fetchUrl(url, searchHeaders);
             }
             str = Utils.getRegion(str, search);
             // 应用 search_twice 二次截取（支持 || 条件选择器 + key--前缀 + [替换] 后处理器）
