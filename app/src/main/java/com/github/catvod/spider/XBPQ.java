@@ -128,6 +128,7 @@ public class XBPQ extends Spider {
     private String listSubtitle = "";     // 列表项副标题（用于首页/分类列表，非搜索）
     private String searchSuffix = "";
     private String arraySecondCut = "";
+    private String listArray = "";          // 列表数组二次截取（分类/首页视频列表专用，不影响首页分类提取）
     private String playSecondCut = "";
     private String lineSecondCut = "";
     private String searchSecondCut = "";
@@ -415,14 +416,11 @@ public class XBPQ extends Spider {
         areaValue = config.optString("地区值", config.optString("areaValue", areaValue));
         yearValue = config.optString("年份值", config.optString("yearValue", yearValue));
         langValue = config.optString("语言值", config.optString("langValue", langValue));
-        // ===== 数组/选择器规则 =====
-        arraySecondCut = config.optString("数组二次截取", config.optString("arraySecondCut",
-                config.optString("数组", "")));
-        // 兼容：如果只配了"数组"而没有"数组二次截取"，将"数组"值赋给 arraySecondCut（部分用法）
-        String arrayRule = config.optString("数组", "");
-        if (!arrayRule.isEmpty() && arraySecondCut.isEmpty()) {
-            arraySecondCut = arrayRule;
-        }
+        // ===== 数组/选择器规则（职责严格分离，互不影响）=====
+        // 1. listArray（列表数组）→ 首页/分类页视频列表二次截取，完全不触碰分类提取逻辑
+        listArray = config.optString("列表数组", config.optString("listArray", listArray));
+        // 2. arraySecondCut（数组二次截取）→ 仅用于首页HTML截取，用于特殊站点从首页DOM提取分类区域
+        arraySecondCut = config.optString("数组二次截取", config.optString("arraySecondCut", ""));
         // ===== 播放相关（中文Key优先） =====
         playJsonPath = config.optString("playJsonPath", playJsonPath);
         // 播放标题/链接：优先读专用版（playListTitle/playLinkUrl），回退到全局版（playTitle/playLink）
@@ -2356,9 +2354,9 @@ public class XBPQ extends Spider {
         try {
             if (html.isEmpty()) return new ArrayList<>();
             String extracted = html;
-            // 应用数组二次截取
-            if (!arraySecondCut.isEmpty()) {
-                extracted = applySecondCut(extracted, arraySecondCut);
+            // 应用列表数组二次截取（列表数组/首页视频列表专用，不影响首页分类提取）
+            if (!listArray.isEmpty()) {
+                extracted = applySecondCut(extracted, listArray);
             }
             // 如果有独立首页视频数组规则
             if (!listStr.isEmpty()) {
@@ -3026,9 +3024,9 @@ public class XBPQ extends Spider {
             }
         }
 
-        // 应用数组二次截取
-        if (!arraySecondCut.isEmpty()) {
-            html = applySecondCut(html, arraySecondCut);
+        // 应用列表数组二次截取（分类页视频列表专用，不影响首页分类提取）
+        if (!listArray.isEmpty()) {
+            html = applySecondCut(html, listArray);
         }
 
         List<com.github.catvod.bean.Vod> vodList;
