@@ -49,7 +49,7 @@ public class XBPQ extends Spider {
         CHINESE_KEY_MAP.put("请求头", "header");
         CHINESE_KEY_MAP.put("编码", "encoding");
         CHINESE_KEY_MAP.put("起始页", "firstpage");
-        CHINESE_KEY_MAP.put("首页", "homeContent");
+        CHINESE_KEY_MAP.put("首页", "firstpage");
         CHINESE_KEY_MAP.put("UserAgent", "User-Agent");
         CHINESE_KEY_MAP.put("Referer", "Referer");
         // 分类相关
@@ -1532,22 +1532,25 @@ public class XBPQ extends Spider {
     public String homeVideoContent() {
         try {
             fetchRule();
-            if (!rule.optString("homeContent", "0").equals("1")) return "";
+            // "首页" 字段非空即开启，值为最大展示条数（如 "200"）
+            String homeVal = getRuleVal("firstpage");
+            if (homeVal.isEmpty()) return "";
+            int maxVideos = 20;
+            try { maxVideos = Integer.parseInt(homeVal); } catch (NumberFormatException e) { maxVideos = 20; }
             JSONArray videos = new JSONObject(homeContent(true)).optJSONArray("class");
             if (videos == null) return "";
             // 取前5个分类的视频
             int count = 0;
             JSONArray allVideos = new JSONArray();
-            for (int i = 0; i < videos.length() && count < 20; i++) {
+            for (int i = 0; i < videos.length() && count < maxVideos; i++) {
                 String tid = videos.getJSONObject(i).getString("type_id");
-                String pagecount = rule.optString("firstpage", "1");
                 try {
                     String content = categoryContent(tid, "1", false, new HashMap<>());
                     if (!content.isEmpty()) {
                         JSONObject data = new JSONObject(content);
                         JSONArray list = data.optJSONArray("list");
                         if (list != null) {
-                            for (int j = 0; j < list.length() && count < 20; j++) {
+                            for (int j = 0; j < list.length() && count < maxVideos; j++) {
                                 allVideos.put(list.getJSONObject(j));
                                 count++;
                             }
