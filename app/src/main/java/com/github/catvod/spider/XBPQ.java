@@ -2106,9 +2106,7 @@ public class XBPQ extends Spider {
             while (lookback != null) {
                 JSONArray rule_vod_play_url = playlist.getJSONArray("vod_play_url");
                 String prefix = rule_vod_play_url.getString(0);
-                // 从 pos 开始找下一个 <a>，限制在当前 block 范围内避免跨线路重复
-                int searchFrom = pos;
-                pos = str.indexOf(prefix, searchFrom);
+                pos = str.indexOf(prefix, pos);
                 if (pos == -1) break;
                 ArrayList<Integer> arr = HtmlNodeHlper.findUpNodes(str, pos - 1, lookback.getInt(4));
 
@@ -2128,12 +2126,10 @@ public class XBPQ extends Spider {
                 } else {
                     blockPos = Utils.findBlockPos(urlnodes, arr);
                 }
-//                String bs = str.substring(blockPos, blockPos + 1000);
-//                String b = this.findNodeString(str, blockPos);
                 // 处理play_url 为空的情况
                 String play_url = addHttpPrefix(Utils.findSubString(str, blockPos, playlist.getJSONArray("vod_play_url")));
 
-                if (map.containsKey(play_url)) { // 如果以经找过当前播放的url,那么认为之前找到的都是垃圾数据，清空之间的成果
+                if (map.containsKey(play_url)) { // 如果已经找过当前播放的url,那么认为之前找到的都是垃圾数据，清空之间的成果
                     SpiderDebug.log("发现重复播放连接，清空已解析到的播放列表");
                     rmset.add(map.get(play_url)); // 添加移除标志
                 }
@@ -2143,19 +2139,17 @@ public class XBPQ extends Spider {
                     play_url_title = HtmlNodeHlper.trimHtmlString(HtmlNodeHlper.nodeString(str, blockPos));
                 }
                 if (play_url_title.contains("展开全部")) {
-                    pos += Math.max(1, play_url.length());
+                    // 跳过"展开全部"：将 pos 移到当前 blockPos 范围内最后一个 </a> 之后
+                    int lastCloseA = str.lastIndexOf("</a>", blockPos + 2000);
+                    pos = lastCloseA >= 0 ? lastCloseA + 4 : blockPos + 1;
                     continue;
                 }
                 tmp.add(play_url_title + "$" + play_url);
 //                SpiderDebug.log(String.format("%s$%s", play_url_title, play_url));
-                // 推进 pos 到当前 <a> 标签结束后，避免下次 indexOf 找到同一个链接
-                // 找到当前 pos 位置的 </a> 或相邻的下一个同级别 <a>
-                int closeTag = str.indexOf("</a>", pos);
-                if (closeTag >= 0) {
-                    pos = closeTag + 4;
-                } else {
-                    pos += 1;
-                }
+                // 将 pos 推进到当前 <a> 标签的 </a> 闭合处，确保从下一个兄弟节点开始
+                // 在 blockPos 之后、pos 之后的范围内找下一个 </a>，这就是当前 <a> 的闭合位置
+                int closeA = str.indexOf("</a>", pos);
+                pos = closeA >= 0 ? closeA + 4 : pos + 1;
             }
 
             if (!tmp.isEmpty()) {
