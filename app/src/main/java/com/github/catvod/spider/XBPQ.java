@@ -3072,20 +3072,4 @@ public class XBPQ extends Spider {
     }
 
 }
-            }
-            Object[] result = OkHttp.proxy(pic, XBPQPicHeader);
-            if (result != null && ((Integer) result[0]) == 200) {
-                java.io.ByteArrayInputStream stream = new java.io.ByteArrayInputStream((byte[]) result[2]);
-                Object[] proxyResult = new Object[3];
-                proxyResult[0] = 200;
-                proxyResult[1] = (String) result[1];
-                proxyResult[2] = stream;
-                return proxyResult;
-            }
-        } catch (Throwable th) {
-            th.printStackTrace();
-        }
-        return null;
-    }
 
-}
