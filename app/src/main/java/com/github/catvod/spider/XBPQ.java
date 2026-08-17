@@ -438,31 +438,28 @@ public class XBPQ extends Spider {
                     applyStringCutRules(rule.optJSONObject("playlist"), "from_array");
                     applyStringCutRules(rule.optJSONObject("detail"), "detail_array");
 
-                    // playlist 扁平字段注入：播放链接/标题走 url_url/url_title，线路名走 from_array 不改 vod_play_url
+                    // playlist 扁平字段注入
                     JSONObject playlist = rule.getJSONObject("playlist");
+                    // url_url / url_array → vod_play_url（单集链接规则）
                     String urlUrl = getRuleVal("url_url");
                     if (!urlUrl.isEmpty() && !playlist.has("vod_play_url")) {
-                        // url_url 是播放列表里的单个链接规则（如 href="&&"），不是列表容器
-                        // 只有当 play_array 未设置时才用 url_url 作为 vod_play_url（兼容无 play_array 的情况）
-                        String playArray = getRuleVal("play_array");
-                        if (playArray.isEmpty()) {
-                            JSONArray lb = stringCutToLookback(applyOrSelector(urlUrl));
-                            if (lb != null) playlist.put("vod_play_url", lb);
-                        }
+                        JSONArray lb = stringCutToLookback(applyOrSelector(urlUrl));
+                        if (lb != null) playlist.put("vod_play_url", lb);
                     }
                     if (!playlist.has("vod_play_url")) {
-                        String playArray = getRuleVal("play_array");
-                        if (!playArray.isEmpty()) {
-                            JSONArray lb = stringCutToLookback(applyOrSelector(playArray));
+                        String urlArray = getRuleVal("url_array");
+                        if (!urlArray.isEmpty()) {
+                            JSONArray lb = stringCutToLookback(applyOrSelector(urlArray));
                             if (lb != null) playlist.put("vod_play_url", lb);
                         }
                     }
+                    // url_title → vod_play_url_title（集标题）
                     String urlTitle = getRuleVal("url_title");
                     if (!urlTitle.isEmpty() && !playlist.has("vod_play_url_title")) {
                         JSONArray lb = stringCutToLookback(applyOrSelector(urlTitle));
                         if (lb != null) playlist.put("vod_play_url_title", lb);
                     }
-                    // 播放数组作为 region，缩小选集范围
+                    // play_array → region（播放区域，不写入 vod_play_url）
                     String playArray = getRuleVal("play_array");
                     if (!playArray.isEmpty() && !playlist.has("region")) {
                         String processed = applyOrSelector(playArray);
