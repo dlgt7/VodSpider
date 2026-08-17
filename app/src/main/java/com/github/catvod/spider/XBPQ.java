@@ -456,9 +456,9 @@ public class XBPQ extends Spider {
                         }
                         String url =  this.guess_rule_search_url(body);
                         if(!url.isEmpty()){
-                            JSONObject search = new JSONObject();
-                            search.put("url", url);
-                            rule.put("search", search);
+                            JSONObject searchRule = new JSONObject();
+                            searchRule.put("url", url);
+                            rule.put("search", searchRule);
                         }
                     }
 
