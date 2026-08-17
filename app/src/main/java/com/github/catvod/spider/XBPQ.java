@@ -369,10 +369,10 @@ public class XBPQ extends Spider {
 
                     // 应用字符串截取格式：list_array/search_array/play_array/from_array
                     applyStringCutRules(list, "list_array");
-                    applyStringCutRules(search, "search_array");
-                    applyStringCutRules(playlist, "play_array");
-                    applyStringCutRules(playlist, "from_array");
-                    applyStringCutRules(detail, "detail_array");
+                    applyStringCutRules(rule.optJSONObject("search"), "search_array");
+                    applyStringCutRules(rule.optJSONObject("playlist"), "play_array");
+                    applyStringCutRules(rule.optJSONObject("playlist"), "from_array");
+                    applyStringCutRules(rule.optJSONObject("detail"), "detail_array");
                     // 线路二次截取和多线字段处理
                     String lineSecondCut = getRuleVal("line_second_cut");
                     String multiLineTwice = getRuleVal("multi_line_twice");
