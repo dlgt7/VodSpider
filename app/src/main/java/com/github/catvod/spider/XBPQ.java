@@ -2602,6 +2602,20 @@ public class XBPQ extends Spider {
                         ArrayList<String> results = subContent(html, startFlag, endFlag);
                         if (!results.isEmpty()) parsedUrl = results.get(0);
                     }
+                    // 尝试处理 encrypt（MacCMS 常见）
+                    try {
+                        Pattern ep = Pattern.compile("\"encrypt\"\\s*:\\s*(\\d+)");
+                        Matcher em = ep.matcher(html);
+                        if (em.find()) {
+                            int encrypt = Integer.parseInt(em.group(1));
+                            if (encrypt == 1) {
+                                parsedUrl = java.net.URLDecoder.decode(parsedUrl, "UTF-8");
+                            } else if (encrypt == 2) {
+                                parsedUrl = new String(Base64.decode(parsedUrl, Base64.DEFAULT), "UTF-8");
+                                parsedUrl = java.net.URLDecoder.decode(parsedUrl, "UTF-8");
+                            }
+                        }
+                    } catch (Exception ignored) {}
                     parsedUrl = parsedUrl.replace("\\/", "/");
                     if (!parsedUrl.isEmpty()) {
                         if (Util.isVideoFormat(parsedUrl) || isVideoFormat(parsedUrl)) {
