@@ -213,20 +213,26 @@ public class XBPQ extends Spider {
     // 将JSON中的中文字段名转换为英文key
     protected JSONObject convertChineseKeys(JSONObject json) {
         try {
+            // 先收集要重命名的键，避免边遍历边修改导致跳键
+            java.util.ArrayList<String> toRename = new java.util.ArrayList<>();
             Iterator<String> keys = json.keys();
             while (keys.hasNext()) {
                 String key = keys.next();
                 if (CHINESE_KEY_MAP.containsKey(key)) {
-                    String enKey = CHINESE_KEY_MAP.get(key);
-                    Object val = json.get(key);
-                    json.remove(key);
-                    json.put(enKey, val);
+                    toRename.add(key);
                 }
             }
+            for (String key : toRename) {
+                String enKey = CHINESE_KEY_MAP.get(key);
+                Object val = json.get(key);
+                json.remove(key);
+                json.put(enKey, val);
+            }
             // 递归处理嵌套的JSONObject和JSONArray
+            java.util.ArrayList<String> allKeys = new java.util.ArrayList<>();
             keys = json.keys();
-            while (keys.hasNext()) {
-                String key = keys.next();
+            while (keys.hasNext()) allKeys.add(keys.next());
+            for (String key : allKeys) {
                 Object val = json.get(key);
                 if (val instanceof JSONObject) {
                     json.put(key, convertChineseKeys((JSONObject) val));
@@ -425,10 +431,29 @@ public class XBPQ extends Spider {
                     // 倒序开关（参考 XBPQ202608150244.java）
                     reverseOrder = "1".equals(getRuleVal("reverse"));
 
-                    // 猜cateManaul
+                    // 有扁平搜索字段时，确保 search 对象存在
+                    if (!rule.has("search")) {
+                        boolean hasSearchField = !getRuleVal("search_url").isEmpty()
+                                || !getRuleVal("search_array").isEmpty()
+                                || !getRuleVal("search_name").isEmpty()
+                                || !getRuleVal("search_pic").isEmpty()
+                                || !getRuleVal("search_id").isEmpty();
+                        if (hasSearchField) {
+                            JSONObject searchObj = new JSONObject();
+                            String searchUrlFlat = getRuleVal("search_url");
+                            if (!searchUrlFlat.isEmpty()) {
+                                searchObj.put("url", searchUrlFlat);
+                            }
+                            rule.put("search", searchObj);
+                        }
+                    }
+
+                    // 猜cateManual：用户已显式配置分类时跳过猜测，避免多余网络请求
                     JSONObject cateManual = rule.optJSONObject("cateManual");
                     String body = "";
-                    if (cateManual == null) {
+                    boolean hasExplicitCate = !getRuleVal("fenlei").isEmpty()
+                            || (!getRuleVal("class_name").isEmpty() && !getRuleVal("class_value").isEmpty());
+                    if (cateManual == null && !hasExplicitCate) {
                         // 重建 cateManaul规则
                         body = this.fetchUrl(rule.getString("homeUrl"), rule.optJSONObject("header"));
                         if(body.length() > 32*1024) { body = body.substring(0, 32 * 1024); }
@@ -691,6 +716,7 @@ public class XBPQ extends Spider {
      * 用于 list_array、search_array、play_array、from_array、detail_array 等字段
      */
     protected void applyStringCutRules(JSONObject target, String ruleKey) {
+        if (target == null) return;
         String ruleVal = getRuleVal(ruleKey);
         if (ruleVal.isEmpty()) return;
         // 应用 || 条件选择器，去掉 key-- 前缀
