@@ -414,24 +414,7 @@ public class XBPQ extends Spider {
                         }
                     }
 
-                    // 应用字符串截取格式：list_array/search_array/play_array/from_array
-                    applyStringCutRules(list, "list_array");
-                    applyStringCutRules(rule.optJSONObject("search"), "search_array");
-                    applyStringCutRules(rule.optJSONObject("playlist"), "play_array");
-                    applyStringCutRules(rule.optJSONObject("playlist"), "from_array");
-                    applyStringCutRules(rule.optJSONObject("detail"), "detail_array");
-                    // 线路二次截取和多线字段处理
-                    String lineSecondCut = getRuleVal("line_second_cut");
-                    String multiLineTwice = getRuleVal("multi_line_twice");
-                    String multiLineArray = getRuleVal("multi_line_array");
-                    String multiLineUrl = getRuleVal("multi_line_url");
-                    String multiLinePrefix = getRuleVal("multi_line_prefix");
-                    String multiLineSuffix = getRuleVal("multi_line_suffix");
-
-                    // 倒序开关（参考 XBPQ202608150244.java）
-                    reverseOrder = "1".equals(getRuleVal("reverse"));
-
-                    // 有扁平搜索字段时，确保 search 对象存在
+                    // 有扁平搜索字段时，确保 search 对象存在（必须在 applyStringCutRules 之前）
                     if (!rule.has("search")) {
                         boolean hasSearchField = !getRuleVal("search_url").isEmpty()
                                 || !getRuleVal("search_array").isEmpty()
@@ -447,6 +430,56 @@ public class XBPQ extends Spider {
                             rule.put("search", searchObj);
                         }
                     }
+
+                    // 应用字符串截取格式：list_array/search_array/play_array/from_array
+                    applyStringCutRules(list, "list_array");
+                    applyStringCutRules(rule.optJSONObject("search"), "search_array");
+                    applyStringCutRules(rule.optJSONObject("playlist"), "play_array");
+                    applyStringCutRules(rule.optJSONObject("playlist"), "from_array");
+                    applyStringCutRules(rule.optJSONObject("detail"), "detail_array");
+
+                    // playlist 扁平字段注入：url_url/url_array → vod_play_url，url_title → vod_play_url_title
+                    JSONObject playlist = rule.getJSONObject("playlist");
+                    String urlUrl = getRuleVal("url_url");
+                    if (!urlUrl.isEmpty() && !playlist.has("vod_play_url")) {
+                        JSONArray lb = stringCutToLookback(applyOrSelector(urlUrl));
+                        if (lb != null) playlist.put("vod_play_url", lb);
+                    }
+                    if (!playlist.has("vod_play_url")) {
+                        String urlArray = getRuleVal("url_array");
+                        if (!urlArray.isEmpty()) {
+                            JSONArray lb = stringCutToLookback(applyOrSelector(urlArray));
+                            if (lb != null) playlist.put("vod_play_url", lb);
+                        }
+                    }
+                    String urlTitle = getRuleVal("url_title");
+                    if (!urlTitle.isEmpty() && !playlist.has("vod_play_url_title")) {
+                        JSONArray lb = stringCutToLookback(applyOrSelector(urlTitle));
+                        if (lb != null) playlist.put("vod_play_url_title", lb);
+                    }
+                    // 播放数组作为 region，缩小选集范围
+                    String playArray = getRuleVal("play_array");
+                    if (!playArray.isEmpty() && !playlist.has("region")) {
+                        String processed = applyOrSelector(playArray);
+                        String[] parts = applyPostProcessors(processed).split("&&");
+                        if (parts.length >= 1) {
+                            JSONArray region = new JSONArray();
+                            region.put(parts[0].trim());
+                            region.put(parts.length >= 2 ? parts[1].trim() : "");
+                            playlist.put("region", region);
+                        }
+                    }
+
+                    // 线路二次截取和多线字段处理
+                    String lineSecondCut = getRuleVal("line_second_cut");
+                    String multiLineTwice = getRuleVal("multi_line_twice");
+                    String multiLineArray = getRuleVal("multi_line_array");
+                    String multiLineUrl = getRuleVal("multi_line_url");
+                    String multiLinePrefix = getRuleVal("multi_line_prefix");
+                    String multiLineSuffix = getRuleVal("multi_line_suffix");
+
+                    // 倒序开关（参考 XBPQ202608150244.java）
+                    reverseOrder = "1".equals(getRuleVal("reverse"));
 
                     // 猜cateManual：用户已显式配置分类时跳过猜测，避免多余网络请求
                     JSONObject cateManual = rule.optJSONObject("cateManual");
@@ -1839,6 +1872,20 @@ public class XBPQ extends Spider {
                 blockPos = 0;
                 String vod_id = Utils.findSubString(nd, blockPos, list.getJSONArray("vod_id"));
                 if (!set.contains(vod_id)) { // 排除重复数据
+                    // filter_word：列表过滤词（包含即跳过）
+                    String filterWord = getRuleVal("filter_word");
+                    if (!filterWord.isEmpty()) {
+                        String vodName = Utils.findSubString(nd, blockPos, list.optJSONArray("vod_name"));
+                        boolean containsFilter = false;
+                        for (String word : filterWord.split(",")) {
+                            String trimmed = word.trim();
+                            if (!trimmed.isEmpty() && (vod_id.contains(trimmed) || vodName.contains(trimmed))) {
+                                containsFilter = true;
+                                break;
+                            }
+                        }
+                        if (containsFilter) continue;
+                    }
                     set.add(vod_id);
                     JSONObject v = new JSONObject();
                     v.put("vod_id", vod_id);
@@ -2081,6 +2128,7 @@ public class XBPQ extends Spider {
                     play_url_title = HtmlNodeHlper.trimHtmlString(HtmlNodeHlper.nodeString(str, blockPos));
                     int dd = 3;
                 }
+                if (play_url_title.contains("展开全部")) continue;
                 tmp.add(play_url_title + "$" + play_url);
 //                SpiderDebug.log(String.format("%s$%s", play_url_title, play_url));
                 pos += play_url.length();
@@ -3007,6 +3055,23 @@ public class XBPQ extends Spider {
                 XBPQPicHeader = new HashMap<>();
                 XBPQPicHeader.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.54 Safari/537.36");
                 XBPQPicHeader.put("referer", site);
+            }
+            Object[] result = OkHttp.proxy(pic, XBPQPicHeader);
+            if (result != null && ((Integer) result[0]) == 200) {
+                java.io.ByteArrayInputStream stream = new java.io.ByteArrayInputStream((byte[]) result[2]);
+                Object[] proxyResult = new Object[3];
+                proxyResult[0] = 200;
+                proxyResult[1] = (String) result[1];
+                proxyResult[2] = stream;
+                return proxyResult;
+            }
+        } catch (Throwable th) {
+            th.printStackTrace();
+        }
+        return null;
+    }
+
+}
             }
             Object[] result = OkHttp.proxy(pic, XBPQPicHeader);
             if (result != null && ((Integer) result[0]) == 200) {
