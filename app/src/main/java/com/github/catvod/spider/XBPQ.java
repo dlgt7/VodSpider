@@ -2045,8 +2045,9 @@ public class XBPQ extends Spider {
             ArrayList<String> tmp = new ArrayList<String>();
 
             JSONArray lookback = Utils.getLookbackArray(playlist);
-            JSONArray rule_vod_play_url = playlist.getJSONArray("vod_play_url");
-            String prefix = rule_vod_play_url.getString(0);
+            JSONArray rule_vod_play_url = playlist.optJSONArray("vod_play_url");
+            String prefix = (rule_vod_play_url != null && rule_vod_play_url.length() > 0)
+                    ? rule_vod_play_url.getString(0) : "";
 
             // 处理多线模式（PPT等特殊站点）
             String multiLineTwiceVal = getRuleVal("multi_line_twice");
@@ -2115,6 +2116,7 @@ public class XBPQ extends Spider {
                 }
 
                 int listPos = 0;
+                int blockCount = 0;
                 while (true) {
                     int ls = str.indexOf(listStart, listPos);
                     if (ls < 0) break;
@@ -2122,6 +2124,7 @@ public class XBPQ extends Spider {
                     if (le < 0) break;
                     String block = str.substring(ls, le);
                     listPos = le + listEnd.length();
+                    blockCount++;
 
                     ArrayList<String> eps = new ArrayList<>();
                     int hp = 0;
@@ -2151,12 +2154,15 @@ public class XBPQ extends Spider {
                     }
                 }
                 if (!tmp_vod_play_url.isEmpty()) {
+                    SpiderDebug.log("playArray: blocks=" + blockCount + " episodes=" + tmp_vod_play_url.size());
                     for (int i = 0; i < tmp_vod_play_url.size(); ++i) {
                         if (!rmset.contains(i)) {
                             vod_play_url.add(tmp_vod_play_url.get(i));
                         }
                     }
                     return vod_play_url;
+                } else {
+                    SpiderDebug.log("playArray: blocks=" + blockCount + " tmp_vod_play_url empty");
                 }
             }
 
@@ -2418,38 +2424,41 @@ public class XBPQ extends Spider {
             vod_play_url = this.findVodPlayUrl(str);
             ArrayList<String> vod_play_from = this.findVodPlayFrom(str, vod_play_url.size());
 
-            // 如果有说明播放源的名称，那么对播放源进行排序
-            String f1 = TextUtils.join("$$$", vod_play_from);
-            String f2 = TextUtils.join("$$$", makeVodPlayFrom(vod_play_url.size()));
+            // 如果有说明播放源的名称，且规则里配置了 vod_play_from，才做别名排序
+            if (playlist.has("vod_play_from") && vod_play_url != null && !vod_play_url.isEmpty()) {
+                String f1 = TextUtils.join("$$$", vod_play_from);
+                String f2 = TextUtils.join("$$$", makeVodPlayFrom(vod_play_url.size()));
 
-            if (!f1.equals(f2)) {
-                ArrayList<String> urls = new ArrayList<>();
-                ArrayList<String> froms = new ArrayList<>();
+                if (!f1.equals(f2)) {
+                    ArrayList<String> urls = new ArrayList<>();
+                    ArrayList<String> froms = new ArrayList<>();
 
-                JSONArray rule_vod_play_from = playlist.getJSONArray("vod_play_from");
-                for (int i = 0; i < rule_vod_play_from.length(); ++i) {
-                    String s = rule_vod_play_from.get(i).getClass().getSimpleName();
-                    String alias = "";
-                    if (s.equals("String")) {
-                        alias = rule_vod_play_from.getString(i);
-                    } else if (s.equals("JSONArray")) {
-                        JSONArray item = rule_vod_play_from.getJSONArray(i);
-                        alias = item.getString(0);
-                        if (item.length() > 1) {
-                            alias = item.getString(1);
+                    JSONArray rule_vod_play_from = playlist.getJSONArray("vod_play_from");
+                    for (int i = 0; i < rule_vod_play_from.length(); ++i) {
+                        String s = rule_vod_play_from.get(i).getClass().getSimpleName();
+                        String alias = "";
+                        if (s.equals("String")) {
+                            alias = rule_vod_play_from.getString(i);
+                        } else if (s.equals("JSONArray")) {
+                            JSONArray item = rule_vod_play_from.getJSONArray(i);
+                            alias = item.getString(0);
+                            if (item.length() > 1) {
+                                alias = item.getString(1);
+                            }
+                        }
+
+                        for (int j = 0; j < vod_play_from.size(); ++j) {
+                            if (vod_play_from.get(j).equals(alias)) {
+                                urls.add(vod_play_url.get(j));
+                                froms.add(vod_play_from.get(j));
+                            }
                         }
                     }
-
-                    for (int j = 0; j < vod_play_from.size(); ++j) {
-                        if (vod_play_from.get(j).equals(alias)) {
-                            urls.add(vod_play_url.get(j));
-                            froms.add(vod_play_from.get(j));
-                        }
+                    if (!urls.isEmpty()) {
+                        vod_play_url = urls;
+                        vod_play_from = froms;
                     }
-
                 }
-                vod_play_url = urls;
-                vod_play_from = froms;
             }
             vod.put("vod_play_url", TextUtils.join("$$$", vod_play_url));
             vod.put("vod_play_from", TextUtils.join("$$$", vod_play_from));
