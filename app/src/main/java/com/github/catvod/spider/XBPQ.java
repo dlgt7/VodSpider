@@ -617,8 +617,12 @@ public class XBPQ extends Spider {
         JSONArray lookback = stringCutToLookback(processed);
         if (lookback != null) {
             String fieldName = ruleKey.replace("_array", "");
-            if (!target.has(fieldName)) {
-                target.put(fieldName, lookback);
+            try {
+                if (!target.has(fieldName)) {
+                    target.put(fieldName, lookback);
+                }
+            } catch (JSONException e) {
+                SpiderDebug.log(e);
             }
         }
     }
