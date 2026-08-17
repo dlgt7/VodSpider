@@ -2792,13 +2792,14 @@ public class XBPQ extends Spider {
             fetchRule();
             // 支持搜索url的两种格式：search.url（嵌套）和 search_url（扁平）
             JSONObject search = rule.optJSONObject("search");
-            String searchUrl = rule.optString("search_url", "");
-            if ((search == null || !search.has("url")) && searchUrl.isEmpty()) return "";
+            String searchUrlFlat = rule.optString("search_url", "");
+            if ((search == null || !search.has("url")) && searchUrlFlat.isEmpty()) return "";
 
+            String str = "";
+            String url = "";
             // 扁平 search_url 优先于 search.url（suggest）
-            String searchUrl = rule.optString("search_url", "");
-            if (!searchUrl.isEmpty()) {
-                url = addHttpPrefix(searchUrl.replace("{wd}", URLEncoder.encode(wd, "UTF-8")));
+            if (!searchUrlFlat.isEmpty()) {
+                url = addHttpPrefix(searchUrlFlat.replace("{wd}", URLEncoder.encode(wd, "UTF-8")));
                 // 应用 search_suffix 后缀
                 String searchSuffix = getRuleVal("search_suffix");
                 if (!searchSuffix.isEmpty()) {
