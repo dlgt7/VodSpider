@@ -1526,7 +1526,7 @@ public class XBPQ extends Spider {
             }
 
             // 兜底：如果 classes 为空且有 fenlei 字段（单值分类名），尝试从 class_url 提取 cateId
-            if (classes.isEmpty() && !rule.optString("fenlei", "").isEmpty()) {
+            if (classes.length() == 0 && !rule.optString("fenlei", "").isEmpty()) {
                 String classUrl = rule.optString("class_url", "");
                 String cateId = "";
                 if (classUrl.contains("tid=")) {
