@@ -1395,8 +1395,7 @@ public class XBPQ extends Spider {
                 if (!catArrayRule.isEmpty() && !catTitleRule.isEmpty() && !catIdRule.isEmpty()) {
                     String body = fetchUrl(rule.getString("homeUrl"), rule.optJSONObject("header"));
                     if(body.length() > 32*1024) { body = body.substring(0, 32 * 1024); }
-                    // 先应用二次截取
-                    String catTwice = getRuleVal("cat_twice");
+                    // 先应用二次截取（catTwice 已在上方定义）
                     if (!catTwice.isEmpty()) {
                         body = applySecondCut(body, applyOrSelector(catTwice));
                     }
