@@ -438,17 +438,22 @@ public class XBPQ extends Spider {
                     applyStringCutRules(rule.optJSONObject("playlist"), "from_array");
                     applyStringCutRules(rule.optJSONObject("detail"), "detail_array");
 
-                    // playlist 扁平字段注入：url_url/url_array → vod_play_url，url_title → vod_play_url_title
+                    // playlist 扁平字段注入：播放链接/标题走 url_url/url_title，线路名走 from_array 不改 vod_play_url
                     JSONObject playlist = rule.getJSONObject("playlist");
                     String urlUrl = getRuleVal("url_url");
                     if (!urlUrl.isEmpty() && !playlist.has("vod_play_url")) {
-                        JSONArray lb = stringCutToLookback(applyOrSelector(urlUrl));
-                        if (lb != null) playlist.put("vod_play_url", lb);
+                        // url_url 是播放列表里的单个链接规则（如 href="&&"），不是列表容器
+                        // 只有当 play_array 未设置时才用 url_url 作为 vod_play_url（兼容无 play_array 的情况）
+                        String playArray = getRuleVal("play_array");
+                        if (playArray.isEmpty()) {
+                            JSONArray lb = stringCutToLookback(applyOrSelector(urlUrl));
+                            if (lb != null) playlist.put("vod_play_url", lb);
+                        }
                     }
                     if (!playlist.has("vod_play_url")) {
-                        String urlArray = getRuleVal("url_array");
-                        if (!urlArray.isEmpty()) {
-                            JSONArray lb = stringCutToLookback(applyOrSelector(urlArray));
+                        String playArray = getRuleVal("play_array");
+                        if (!playArray.isEmpty()) {
+                            JSONArray lb = stringCutToLookback(applyOrSelector(playArray));
                             if (lb != null) playlist.put("vod_play_url", lb);
                         }
                     }
@@ -1976,10 +1981,17 @@ public class XBPQ extends Spider {
                             int startPos = str.indexOf(start, linePos);
                             if (startPos < 0) break;
                             int startIndex = startPos + start.length();
-                            int endIndex = end.isEmpty() ? str.length() : str.indexOf(end, startIndex);
-                            if (endIndex < 0 && !end.isEmpty()) break;
+                            int endIndex;
+                            if (end.isEmpty()) {
+                                // endFlag 为空时，匹配到下一个同层级 start（单条提取），而非截到字符串末尾
+                                int nextStart = str.indexOf(start, startIndex);
+                                endIndex = nextStart >= 0 ? nextStart : str.length();
+                            } else {
+                                endIndex = str.indexOf(end, startIndex);
+                                if (endIndex < 0) break;
+                            }
                             lines.add(str.substring(startIndex, endIndex).trim());
-                            linePos = end.isEmpty() ? str.length() : endIndex + end.length();
+                            linePos = endIndex + (end.isEmpty() ? 0 : end.length());
                         }
                         if (!lines.isEmpty()) return new ArrayList<>(lines);
                     }
@@ -2093,7 +2105,10 @@ public class XBPQ extends Spider {
             JSONArray lookback = Utils.getLookbackArray(playlist);
             while (lookback != null) {
                 JSONArray rule_vod_play_url = playlist.getJSONArray("vod_play_url");
-                pos = str.indexOf(rule_vod_play_url.getString(0), pos);
+                String prefix = rule_vod_play_url.getString(0);
+                // 从 pos 开始找下一个 <a>，限制在当前 block 范围内避免跨线路重复
+                int searchFrom = pos;
+                pos = str.indexOf(prefix, searchFrom);
                 if (pos == -1) break;
                 ArrayList<Integer> arr = HtmlNodeHlper.findUpNodes(str, pos - 1, lookback.getInt(4));
 
@@ -2101,7 +2116,7 @@ public class XBPQ extends Spider {
                 if (urlnodes == null || arr.size() != urlnodes.size() || arr.get(arr.size() - 1).intValue() != urlnodes.get(urlnodes.size() - 1).intValue()) {
                     urlnodes = arr;
                     blockPos = arr.get(Math.max(0, arr.size() - 2));
-                    // 如果上级节点不同，说明当前播放列表已经结束，可以
+                    // 如果上级节点不同，说明当前播放列表已经结束，保存并重置
                     if (!tmp.isEmpty()) {
                         SpiderDebug.log("change play list ");
                         if (sort != 0) {
@@ -2126,7 +2141,6 @@ public class XBPQ extends Spider {
                 String play_url_title = Utils.findSubString(str, blockPos, playlist.optJSONArray("vod_play_url_title"));
                 if (play_url_title.isEmpty()) {
                     play_url_title = HtmlNodeHlper.trimHtmlString(HtmlNodeHlper.nodeString(str, blockPos));
-                    int dd = 3;
                 }
                 if (play_url_title.contains("展开全部")) {
                     pos += Math.max(1, play_url.length());
@@ -2134,7 +2148,14 @@ public class XBPQ extends Spider {
                 }
                 tmp.add(play_url_title + "$" + play_url);
 //                SpiderDebug.log(String.format("%s$%s", play_url_title, play_url));
-                pos += play_url.length();
+                // 推进 pos 到当前 <a> 标签结束后，避免下次 indexOf 找到同一个链接
+                // 找到当前 pos 位置的 </a> 或相邻的下一个同级别 <a>
+                int closeTag = str.indexOf("</a>", pos);
+                if (closeTag >= 0) {
+                    pos = closeTag + 4;
+                } else {
+                    pos += 1;
+                }
             }
 
             if (!tmp.isEmpty()) {
