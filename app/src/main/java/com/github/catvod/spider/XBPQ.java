@@ -335,13 +335,16 @@ public class XBPQ extends Spider {
                         rule.put("playlist", new JSONObject());
                     }
 
-                    // 如果没有search，则生成一个默认的search规则，大部分网站的search规则都一样
-                    // 省掉一个search json
-                    if (!rule.has("search")) {
+                    // 如果没有search，且没有配置任何搜索字段，则生成默认的suggest搜索
+                    boolean hasFlatSearch = !getRuleVal("search_url").isEmpty()
+                            || !getRuleVal("search_array").isEmpty()
+                            || !getRuleVal("search_name").isEmpty()
+                            || !getRuleVal("search_pic").isEmpty()
+                            || !getRuleVal("search_id").isEmpty();
+                    if (!rule.has("search") && !hasFlatSearch) {
                        String url = addHttpPrefix("index.php/ajax/suggest?mid=1&wd=阿凡达");
                         try {
-                            // 尝试访问这个json接口，如果返回了正确的json格式，就认为支持json搜索
-                            JSONObject result = new JSONObject( OkHttp.string(url, getHeaders(url)));
+                            JSONObject result = new JSONObject(OkHttp.string(url, getHeaders(url)));
                             JSONObject search = new JSONObject();
                             search.put("vod_id", "id");
                             search.put("vod_name", "name");
@@ -349,8 +352,32 @@ public class XBPQ extends Spider {
                             search.put("url", addHttpPrefix("index.php/ajax/suggest?mid=1&wd={wd}"));
                             rule.put("search", search);
                         }
-                        catch (Exception e){
+                        catch (Exception e){}
+                    }
 
+                    // 有扁平搜索字段时，强制用配置覆盖 suggest
+                    if (hasFlatSearch) {
+                        if (!rule.has("search")) {
+                            rule.put("search", new JSONObject());
+                        }
+                        JSONObject searchObj = rule.getJSONObject("search");
+                        String searchUrlFlat = getRuleVal("search_url");
+                        if (!searchUrlFlat.isEmpty()) {
+                            searchObj.put("url", searchUrlFlat);
+                        }
+                        // 强制覆盖 vod_* 字段（不判断 has，让配置优先）
+                        String[][] flatSearchFields = {
+                                {"search_name", "vod_name"},
+                                {"search_pic", "vod_pic"},
+                                {"search_id", "vod_id"},
+                                {"search_remarks", "vod_remarks"}
+                        };
+                        for (String[] pair : flatSearchFields) {
+                            String val = getRuleVal(pair[0]);
+                            if (!val.isEmpty()) {
+                                JSONArray lb = stringCutToLookback(applyOrSelector(val));
+                                if (lb != null) searchObj.put(pair[1], lb);
+                            }
                         }
                     }
 
@@ -2768,25 +2795,30 @@ public class XBPQ extends Spider {
             String searchUrl = rule.optString("search_url", "");
             if ((search == null || !search.has("url")) && searchUrl.isEmpty()) return "";
 
-            String str = "";
-            String url = "";
-            if (searchUrl.contains(";post")) {
-                str = fetchPost(searchUrl);
-                url = searchUrl;
-            } else if (search != null && search.has("post")) {
-                str = postSearch(wd, z);
-                url = search.getString("url");
-            } else {
-                url = (search != null && search.has("url"))
-                        ? search.getString("url").replace("{wd}", wd)
-                        : searchUrl.replace("{wd}", URLEncoder.encode(wd));
+            // 扁平 search_url 优先于 search.url（suggest）
+            String searchUrl = rule.optString("search_url", "");
+            if (!searchUrl.isEmpty()) {
+                url = addHttpPrefix(searchUrl.replace("{wd}", URLEncoder.encode(wd, "UTF-8")));
+                // 应用 search_suffix 后缀
+                String searchSuffix = getRuleVal("search_suffix");
+                if (!searchSuffix.isEmpty()) {
+                    url = url + searchSuffix;
+                }
+                String searchHeader = getRuleVal("search_header");
+                JSONObject searchHeaders = null;
+                if (!searchHeader.isEmpty()) {
+                    searchHeaders = parseHeader(searchHeader);
+                }
+                str = fetchUrl(url, searchHeaders);
+            } else if (search != null && search.has("url")) {
+                url = search.getString("url").replace("{wd}", wd);
                 url = addHttpPrefix(url);
                 // 应用 search_suffix 后缀
                 String searchSuffix = getRuleVal("search_suffix");
                 if (!searchSuffix.isEmpty()) {
                     url = url + searchSuffix;
                 }
-                // 使用 search_header 请求头（优先于 search 对象内的 header）
+                // 使用 search_header 请求头
                 String searchHeader = getRuleVal("search_header");
                 JSONObject searchHeaders = null;
                 if (!searchHeader.isEmpty()) {
