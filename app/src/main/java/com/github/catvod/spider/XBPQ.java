@@ -2054,6 +2054,10 @@ public class XBPQ extends Spider {
 //            String tmp = "";
             ArrayList<String> tmp = new ArrayList<String>();
 
+            JSONArray lookback = Utils.getLookbackArray(playlist);
+            JSONArray rule_vod_play_url = playlist.getJSONArray("vod_play_url");
+            String prefix = rule_vod_play_url.getString(0);
+
             // 处理多线模式（PPT等特殊站点）
             String multiLineTwiceVal = getRuleVal("multi_line_twice");
             String multiLineArrayVal = getRuleVal("multi_line_array");
@@ -2099,54 +2103,42 @@ public class XBPQ extends Spider {
                 }
             }
 
-            JSONArray lookback = Utils.getLookbackArray(playlist);
-            while (lookback != null) {
-                JSONArray rule_vod_play_url = playlist.getJSONArray("vod_play_url");
-                String prefix = rule_vod_play_url.getString(0);
-                pos = str.indexOf(prefix, pos);
-                if (pos == -1) break;
-                ArrayList<Integer> arr = HtmlNodeHlper.findUpNodes(str, pos - 1, lookback.getInt(4));
+            // 按 hl-tabs-box 分隔各线路选集（MacCMS 标准结构）
+            String boxStart = "hl-tabs-box";
+            String boxEnd = "</div>";
+            int lineStart = 0;
+            while (true) {
+                int boxPos = str.indexOf(boxStart, lineStart);
+                if (boxPos < 0) break;
+                int boxEndPos = str.indexOf(boxEnd, boxPos);
+                if (boxEndPos < 0) break;
+                String boxContent = str.substring(boxPos, boxEndPos + boxEnd.length());
 
-                int blockPos = 0;
-                if (urlnodes == null || arr.size() != urlnodes.size() || arr.get(arr.size() - 1).intValue() != urlnodes.get(urlnodes.size() - 1).intValue()) {
-                    urlnodes = arr;
-                    blockPos = arr.get(Math.max(0, arr.size() - 2));
-                    // 如果上级节点不同，说明当前播放列表已经结束，保存并重置
-                    if (!tmp.isEmpty()) {
-                        SpiderDebug.log("change play list ");
-                        if (sort != 0) {
-                            Collections.reverse(tmp);
-                        }
-                        tmp_vod_play_url.add(TextUtils.join("#", tmp));
-                        tmp = new ArrayList<String>();
+                ArrayList<String> tmp = new ArrayList<String>();
+                pos = 0;
+                urlnodes = null;
+                map.clear();
+                while (true) {
+                    pos = boxContent.indexOf(prefix, pos);
+                    if (pos < 0) break;
+                    ArrayList<Integer> arr = HtmlNodeHlper.findUpNodes(boxContent, pos - 1, lookback.getInt(4));
+                    int bPos = arr.get(Math.max(0, arr.size() - 2));
+                    String play_url = addHttpPrefix(Utils.findSubString(boxContent, bPos, rule_vod_play_url));
+                    if (map.containsKey(play_url)) { pos += 1; continue; }
+                    map.put(play_url, tmp_vod_play_url.size());
+                    String play_url_title = Utils.findSubString(boxContent, bPos, playlist.optJSONArray("vod_play_url_title"));
+                    if (play_url_title.isEmpty()) {
+                        play_url_title = HtmlNodeHlper.trimHtmlString(HtmlNodeHlper.nodeString(boxContent, bPos));
                     }
-                } else {
-                    blockPos = Utils.findBlockPos(urlnodes, arr);
+                    if (play_url_title.contains("展开全部")) { pos += 1; continue; }
+                    tmp.add(play_url_title + "$" + play_url);
+                    pos += 1;
                 }
-                // 处理play_url 为空的情况
-                String play_url = addHttpPrefix(Utils.findSubString(str, blockPos, playlist.getJSONArray("vod_play_url")));
-
-                if (map.containsKey(play_url)) { // 如果已经找过当前播放的url,那么认为之前找到的都是垃圾数据，清空之间的成果
-                    SpiderDebug.log("发现重复播放连接，清空已解析到的播放列表");
-                    rmset.add(map.get(play_url)); // 添加移除标志
+                if (!tmp.isEmpty()) {
+                    if (sort != 0) Collections.reverse(tmp);
+                    tmp_vod_play_url.add(TextUtils.join("#", tmp));
                 }
-                map.put(play_url, tmp_vod_play_url.size());
-                String play_url_title = Utils.findSubString(str, blockPos, playlist.optJSONArray("vod_play_url_title"));
-                if (play_url_title.isEmpty()) {
-                    play_url_title = HtmlNodeHlper.trimHtmlString(HtmlNodeHlper.nodeString(str, blockPos));
-                }
-                if (play_url_title.contains("展开全部")) {
-                    // 跳过"展开全部"：将 pos 移到当前 blockPos 范围内最后一个 </a> 之后
-                    int lastCloseA = str.lastIndexOf("</a>", blockPos + 2000);
-                    pos = lastCloseA >= 0 ? lastCloseA + 4 : blockPos + 1;
-                    continue;
-                }
-                tmp.add(play_url_title + "$" + play_url);
-//                SpiderDebug.log(String.format("%s$%s", play_url_title, play_url));
-                // 将 pos 推进到当前 <a> 标签的 </a> 闭合处，确保从下一个兄弟节点开始
-                // 在 blockPos 之后、pos 之后的范围内找下一个 </a>，这就是当前 <a> 的闭合位置
-                int closeA = str.indexOf("</a>", pos);
-                pos = closeA >= 0 ? closeA + 4 : pos + 1;
+                lineStart = boxEndPos + boxEnd.length();
             }
 
             if (!tmp.isEmpty()) {
