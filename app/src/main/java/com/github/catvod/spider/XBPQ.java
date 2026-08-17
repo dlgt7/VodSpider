@@ -1479,7 +1479,6 @@ public class XBPQ extends Spider {
                         }
                     }
                 }
-            }
             // 支持 fenlei 格式（来自XBiubiu），格式: "名称$id#名称2$id2"
             } else {
                 String fenlei = rule.optString("fenlei", "");
