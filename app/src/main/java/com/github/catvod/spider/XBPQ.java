@@ -2845,7 +2845,14 @@ public class XBPQ extends Spider {
                 return r;
             }
 
+            // search 没有 vod_id 规则时，从 list 继承
             if (!search.has("vod_id")) {
+                JSONObject list = rule.getJSONObject("list");
+                search.put("vod_id", list.getJSONArray("vod_id"));
+            }
+            // 如果是 suggest 模式（vod_id 是数字映射），覆盖为列表的 vod_id 规则
+            // 保证点击搜索结果能正确进入详情页
+            if (search.has("vod_id") && "id".equals(search.optString("vod_id", ""))) {
                 JSONObject list = rule.getJSONObject("list");
                 search.put("vod_id", list.getJSONArray("vod_id"));
             }
