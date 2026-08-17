@@ -2487,12 +2487,15 @@ public class XBPQ extends Spider {
      */
     private Map<String, String> buildHeaders() {
         Map<String, String> headers = new HashMap<>();
-        headers.put("User-Agent", ua.isEmpty() ? Util.randomUA() : ua);
         headers.put("Accept", "*/*");
         headers.put("Accept-Language", "zh-CN,zh;q=0.9");
         if (!referer.isEmpty()) headers.put("Referer", referer);
         // 解析"请求头"字段（支持 User-Agent$...#Referer$... 格式）
         parseCustomHeaders(headers, ua);
+        // 若 parseCustomHeaders 未设置 UA（ua字段为空或格式不匹配），使用随机UA兜底
+        if (headers.get("User-Agent") == null || headers.get("User-Agent").isEmpty()) {
+            headers.put("User-Agent", Util.randomUA());
+        }
         return headers;
     }
 
