@@ -2586,14 +2586,35 @@ public class XBPQ extends Spider {
             String jumpUrl = rule.optString("jump_url", "");
             if (!jumpUrl.isEmpty()) {
                 try {
+                    String html = fetchUrl(webUrl, null);
                     jumpUrl = applyPostProcessors(jumpUrl);
-                    ArrayList<String> results = subContent(str2, jumpUrl.split("&&")[0], jumpUrl.split("&&")[1]);
-                    if (!results.isEmpty()) {
-                        String parsedUrl = results.get(0);
-                        if (!parsedUrl.isEmpty() && isVideoFormat(parsedUrl)) {
+                    String[] jparts = jumpUrl.split("&&", 2);
+                    String startFlag = jparts[0];
+                    String endFlag = jparts.length > 1 ? jparts[1] : "";
+                    String parsedUrl = "";
+                    // 支持 * 通配：var player_*"url":"&&" → 用正则匹配
+                    if (startFlag.contains("*")) {
+                        Pattern p = Pattern.compile(
+                            "var player_\\w+\\s*=\\s*\\{[^}]*?\"url\"\\s*:\\s*\"([^\"]+)\"");
+                        Matcher m = p.matcher(html);
+                        if (m.find()) parsedUrl = m.group(1);
+                    } else {
+                        ArrayList<String> results = subContent(html, startFlag, endFlag);
+                        if (!results.isEmpty()) parsedUrl = results.get(0);
+                    }
+                    parsedUrl = parsedUrl.replace("\\/", "/");
+                    if (!parsedUrl.isEmpty()) {
+                        if (Util.isVideoFormat(parsedUrl) || isVideoFormat(parsedUrl)) {
                             JSONObject result = new JSONObject();
                             result.put("parse", 0);
                             result.put("playUrl", "");
+                            result.put("url", parsedUrl);
+                            return result.toString();
+                        }
+                        if (Util.isVip(parsedUrl)) {
+                            JSONObject result = new JSONObject();
+                            result.put("parse", 1);
+                            result.put("jx", "1");
                             result.put("url", parsedUrl);
                             return result.toString();
                         }
