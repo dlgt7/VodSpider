@@ -459,18 +459,8 @@ public class XBPQ extends Spider {
                         JSONArray lb = stringCutToLookback(applyOrSelector(urlTitle));
                         if (lb != null) playlist.put("vod_play_url_title", lb);
                     }
-                    // play_array → region（播放区域，不写入 vod_play_url）
-                    String playArray = getRuleVal("play_array");
-                    if (!playArray.isEmpty() && !playlist.has("region")) {
-                        String processed = applyOrSelector(playArray);
-                        String[] parts = applyPostProcessors(processed).split("&&");
-                        if (parts.length >= 1) {
-                            JSONArray region = new JSONArray();
-                            region.put(parts[0].trim());
-                            region.put(parts.length >= 2 ? parts[1].trim() : "");
-                            playlist.put("region", region);
-                        }
-                    }
+                    // play_array 只用于 findVodPlayUrl 内部按 ul 分线路，不写入 region
+                    // （region 若写成 hl-sort-list&&</ul> 会只截到第一段，丢失后续线路）
 
                     // 线路二次截取和多线字段处理
                     String lineSecondCut = getRuleVal("line_second_cut");
@@ -2103,49 +2093,71 @@ public class XBPQ extends Spider {
                 }
             }
 
-            // 按 hl-tabs-box 分隔各线路选集（MacCMS 标准结构）
-            String boxStart = "hl-tabs-box";
-            String boxEnd = "</div>";
-            int lineStart = 0;
-            while (true) {
-                int boxPos = str.indexOf(boxStart, lineStart);
-                if (boxPos < 0) break;
-                int boxEndPos = str.indexOf(boxEnd, boxPos);
-                if (boxEndPos < 0) break;
-                String boxContent = str.substring(boxPos, boxEndPos + boxEnd.length());
+            // 按 play_array 分块解析各线路选集（通用方案，支持 hl-sort-list 等）
+            String playArrayRule = getRuleVal("play_array");
+            String urlUrlRule = getRuleVal("url_url");
+            if (!playArrayRule.isEmpty() && !urlUrlRule.isEmpty()
+                    && playArrayRule.contains("&&") && urlUrlRule.contains("&&")) {
+                String[] pa = applyPostProcessors(applyOrSelector(playArrayRule)).split("&&", 2);
+                String[] ua = applyPostProcessors(applyOrSelector(urlUrlRule)).split("&&", 2);
+                String listStart = pa[0].trim();
+                String listEnd = pa.length > 1 ? pa[1].trim() : "</ul>";
+                String hrefStart = ua[0].trim();
+                String hrefEnd = ua.length > 1 ? ua[1].trim() : "\"";
 
-                ArrayList<String> eps = new ArrayList<String>();
-                pos = 0;
-                urlnodes = null;
-                map.clear();
+                String titleStart = ">";
+                String titleEnd = "<";
+                String urlTitleRule = getRuleVal("url_title");
+                if (!urlTitleRule.isEmpty() && urlTitleRule.contains("&&")) {
+                    String[] ta = applyPostProcessors(applyOrSelector(urlTitleRule)).split("&&", 2);
+                    titleStart = ta[0];
+                    titleEnd = ta.length > 1 ? ta[1] : "<";
+                }
+
+                int listPos = 0;
                 while (true) {
-                    pos = boxContent.indexOf(prefix, pos);
-                    if (pos < 0) break;
-                    ArrayList<Integer> arr = HtmlNodeHlper.findUpNodes(boxContent, pos - 1, lookback.getInt(4));
-                    int bPos = arr.get(Math.max(0, arr.size() - 2));
-                    String play_url = addHttpPrefix(Utils.findSubString(boxContent, bPos, rule_vod_play_url));
-                    if (map.containsKey(play_url)) { pos += 1; continue; }
-                    map.put(play_url, tmp_vod_play_url.size());
-                    String play_url_title = Utils.findSubString(boxContent, bPos, playlist.optJSONArray("vod_play_url_title"));
-                    if (play_url_title.isEmpty()) {
-                        play_url_title = HtmlNodeHlper.trimHtmlString(HtmlNodeHlper.nodeString(boxContent, bPos));
-                    }
-                    if (play_url_title.contains("展开全部")) { pos += 1; continue; }
-                    eps.add(play_url_title + "$" + play_url);
-                    pos += 1;
-                }
-                if (!eps.isEmpty()) {
-                    if (sort != 0) Collections.reverse(eps);
-                    tmp_vod_play_url.add(TextUtils.join("#", eps));
-                }
-                lineStart = boxEndPos + boxEnd.length();
-            }
+                    int ls = str.indexOf(listStart, listPos);
+                    if (ls < 0) break;
+                    int le = str.indexOf(listEnd, ls + listStart.length());
+                    if (le < 0) break;
+                    String block = str.substring(ls, le);
+                    listPos = le + listEnd.length();
 
-            if (!tmp.isEmpty()) {
-                if (sort != 0) {
-                    Collections.reverse(tmp);
+                    ArrayList<String> eps = new ArrayList<>();
+                    int hp = 0;
+                    while (true) {
+                        int hs = block.indexOf(hrefStart, hp);
+                        if (hs < 0) break;
+                        int he0 = hs + hrefStart.length();
+                        int he = block.indexOf(hrefEnd, he0);
+                        if (he < 0) break;
+                        String href = block.substring(he0, he).trim();
+                        hp = he + hrefEnd.length();
+                        if (!href.contains("/play/") && !href.contains("vodplay")) continue;
+
+                        String title = "";
+                        int ts = block.indexOf(titleStart, he);
+                        if (ts >= 0 && ts < he + 120) {
+                            int te = block.indexOf(titleEnd, ts + titleStart.length());
+                            if (te > ts) title = cleanHtml(block.substring(ts + titleStart.length(), te));
+                        }
+                        if (title.contains("展开全部")) continue;
+                        if (title.isEmpty()) title = "第" + (eps.size() + 1) + "集";
+                        eps.add(title + "$" + addHttpPrefix(href));
+                    }
+                    if (!eps.isEmpty()) {
+                        if (sort != 0) Collections.reverse(eps);
+                        tmp_vod_play_url.add(TextUtils.join("#", eps));
+                    }
                 }
-                tmp_vod_play_url.add(TextUtils.join("#", tmp));
+                if (!tmp_vod_play_url.isEmpty()) {
+                    for (int i = 0; i < tmp_vod_play_url.size(); ++i) {
+                        if (!rmset.contains(i)) {
+                            vod_play_url.add(tmp_vod_play_url.get(i));
+                        }
+                    }
+                    return vod_play_url;
+                }
             }
 
             for (int i = 0; i < tmp_vod_play_url.size(); ++i) {
