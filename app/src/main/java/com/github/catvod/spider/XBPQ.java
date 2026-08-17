@@ -2135,12 +2135,15 @@ public class XBPQ extends Spider {
             if ((search == null || !search.has("url")) && searchUrl.isEmpty()) return "";
 
             String str = "";
+            String url = "";
             if (searchUrl.contains(";post")) {
                 str = fetchPost(searchUrl);
+                url = searchUrl;
             } else if (search != null && search.has("post")) {
                 str = postSearch(wd, z);
+                url = search.getString("url");
             } else {
-                String url = (search != null && search.has("url"))
+                url = (search != null && search.has("url"))
                         ? search.getString("url").replace("{wd}", wd)
                         : searchUrl.replace("{wd}", URLEncoder.encode(wd));
                 str = fetchUrl(url, search != null ? search.optJSONObject("header") : null);
