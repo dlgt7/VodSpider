@@ -193,7 +193,7 @@ public class XBPQ extends Spider {
         }
     }
 
-    public void init(Context context, String extend) {
+    public void init(Context context, String extend) throws Exception {
         super.init(context, extend);
         this.ext = extend;
     }
@@ -1192,13 +1192,13 @@ public class XBPQ extends Spider {
 
     // 让当前爬虫自己判断是否为可播放的地址
     @Override
-    public boolean manualVideoCheck() {
+    public boolean manualVideoCheck() throws Exception {
         return true;
     }
 
 
     @Override
-    public String homeContent(boolean z) {
+    public String homeContent(boolean z) throws Exception {
         try {
             fetchRule();
 
@@ -1344,7 +1344,7 @@ public class XBPQ extends Spider {
     }
 
     @Override
-    public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) {
+    public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
         try {
             JSONObject list = this.rule.getJSONObject("list");
             String url = categoryUrl(tid, pg, filter, extend);
@@ -1910,7 +1910,7 @@ public class XBPQ extends Spider {
     }
 
     @Override
-    public String playerContent(String str, String str2, List<String> list) {
+    public String playerContent(String str, String str2, List<String> list) throws Exception {
         try {
             fetchRule();
             String webUrl = str2;
