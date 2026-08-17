@@ -1387,9 +1387,8 @@ public class XBPQ extends Spider {
                     jsonObject.put("type_id", cateManual.getString(key));
                     classes.put(jsonObject);
                 }
-            }
-            // 支持 cat_array/cat_title/cat_id 格式（来自XYQHiker/XYQBiu）
-            else {
+            } else if (!getRuleVal("cat_array").isEmpty() && !getRuleVal("cat_title").isEmpty() && !getRuleVal("cat_id").isEmpty()) {
+                // 支持 cat_array/cat_title/cat_id 格式（来自XYQHiker/XYQBiu）
                 String catArrayRule = getRuleVal("cat_array");
                 String catTitleRule = getRuleVal("cat_title");
                 String catIdRule = getRuleVal("cat_id");
@@ -1482,7 +1481,7 @@ public class XBPQ extends Spider {
                 }
             }
             // 支持 fenlei 格式（来自XBiubiu），格式: "名称$id#名称2$id2"
-            else {
+            } else {
                 String fenlei = rule.optString("fenlei", "");
                 if (!fenlei.isEmpty()) {
                     String[] items = fenlei.split("#");
