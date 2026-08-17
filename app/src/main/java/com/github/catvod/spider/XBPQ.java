@@ -2114,7 +2114,7 @@ public class XBPQ extends Spider {
                 if (boxEndPos < 0) break;
                 String boxContent = str.substring(boxPos, boxEndPos + boxEnd.length());
 
-                ArrayList<String> tmp = new ArrayList<String>();
+                ArrayList<String> eps = new ArrayList<String>();
                 pos = 0;
                 urlnodes = null;
                 map.clear();
@@ -2131,12 +2131,12 @@ public class XBPQ extends Spider {
                         play_url_title = HtmlNodeHlper.trimHtmlString(HtmlNodeHlper.nodeString(boxContent, bPos));
                     }
                     if (play_url_title.contains("展开全部")) { pos += 1; continue; }
-                    tmp.add(play_url_title + "$" + play_url);
+                    eps.add(play_url_title + "$" + play_url);
                     pos += 1;
                 }
-                if (!tmp.isEmpty()) {
-                    if (sort != 0) Collections.reverse(tmp);
-                    tmp_vod_play_url.add(TextUtils.join("#", tmp));
+                if (!eps.isEmpty()) {
+                    if (sort != 0) Collections.reverse(eps);
+                    tmp_vod_play_url.add(TextUtils.join("#", eps));
                 }
                 lineStart = boxEndPos + boxEnd.length();
             }
