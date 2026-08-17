@@ -308,6 +308,13 @@ public class XBPQ extends Spider {
                             list.put("url", homeUrl);
                         }
                     }
+                    // class_url 未写入 list.url 时兜底（来自XBiubiu/XYQBiu的class_url字段）
+                    if (!list.has("url")) {
+                        String classUrl = rule.optString("class_url", "");
+                        if (!classUrl.isEmpty()) {
+                            list.put("url", classUrl);
+                        }
+                    }
                     // 初始化截断标志
                     String listUrl = list.getString("url");
                     if(listUrl.indexOf("/") !=-1) splitFlag+='/';
@@ -365,6 +372,38 @@ public class XBPQ extends Spider {
                             videoFormatList.clear();
                             for (int i = 0; i < keywords.length(); ++i) {
                                 videoFormatList.add(keywords.getString(i));
+                            }
+                        }
+                    }
+
+                    // 扁平字段注入：list_name/list_pic/list_id/list_remarks → list.vod_name/vod_pic/vod_id/vod_remarks
+                    String[][] flatListFields = {
+                        {"list_name", "vod_name"},
+                        {"list_pic", "vod_pic"},
+                        {"list_id", "vod_id"},
+                        {"list_remarks", "vod_remarks"}
+                    };
+                    for (String[] pair : flatListFields) {
+                        String val = getRuleVal(pair[0]);
+                        if (!val.isEmpty() && !list.has(pair[1])) {
+                            JSONArray lb = stringCutToLookback(applyOrSelector(val));
+                            if (lb != null) list.put(pair[1], lb);
+                        }
+                    }
+                    // 搜索侧同理
+                    JSONObject search = rule.optJSONObject("search");
+                    if (search != null) {
+                        String[][] flatSearchFields = {
+                            {"search_name", "vod_name"},
+                            {"search_pic", "vod_pic"},
+                            {"search_id", "vod_id"},
+                            {"search_remarks", "vod_remarks"}
+                        };
+                        for (String[] pair : flatSearchFields) {
+                            String val = getRuleVal(pair[0]);
+                            if (!val.isEmpty() && !search.has(pair[1])) {
+                                JSONArray lb = stringCutToLookback(applyOrSelector(val));
+                                if (lb != null) search.put(pair[1], lb);
                             }
                         }
                     }
@@ -455,12 +494,30 @@ public class XBPQ extends Spider {
         HashMap<String, String> headers = new HashMap<>();
         try {
             if (rule.has("header")) {
-                JSONObject header = rule.getJSONObject("header");
-                Iterator<String> iter = header.keys();
-                while (iter.hasNext()) {
-                    String key = iter.next();
-                    headers.put(key, header.getString(key));
+                Object headerObj = rule.get("header");
+                if (headerObj instanceof JSONObject) {
+                    JSONObject header = (JSONObject) headerObj;
+                    Iterator<String> iter = header.keys();
+                    while (iter.hasNext()) {
+                        String key = iter.next();
+                        headers.put(key, header.getString(key));
+                    }
+                } else if (headerObj instanceof String) {
+                    // 兼容字符串格式："Key1$Value1#Key2$Value2"
+                    JSONObject hdr = parseHeader((String) headerObj);
+                    Iterator<String> iter = hdr.keys();
+                    while (iter.hasNext()) {
+                        String key = iter.next();
+                        headers.put(key, hdr.getString(key));
+                    }
                 }
+            }
+            // 展开 headers 中的 UA 占位符（来自 header 字段的 User-Agent$MOBILE_UA）
+            String uaVal = headers.get("User-Agent");
+            if ("PC_UA".equals(uaVal)) {
+                headers.put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.54 Safari/537.36");
+            } else if ("MOBILE_UA".equals(uaVal)) {
+                headers.put("User-Agent", "Mozilla/5.0 (Linux; Android 11; Mi 10 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.152 Mobile Safari/537.36");
             }
             // 支持 User-Agent 和 Referer 直接配置（来自XYQBiu）
             String ua = rule.optString("User-Agent", "");
@@ -1380,11 +1437,16 @@ public class XBPQ extends Spider {
 
             JSONObject result = new JSONObject();
             JSONArray classes = new JSONArray();
+            // 用户显式配置了 fenlei，则不使用猜测的 cateManual（避免猜测结果优先于用户配置）
             JSONObject cateManual = rule.optJSONObject("cateManual");
+            String fenleiExplicit = rule.optString("fenlei", "");
+            if (!fenleiExplicit.isEmpty()) {
+                cateManual = null;
+            }
 
             // 应用 cat_twice 分类二次截取（支持 || 条件选择器 + key--前缀 + [替换] 后处理器）
             String catTwice = getRuleVal("cat_twice");
-            if (!catTwice.isEmpty()) {
+            if (!catTwice.isEmpty() && cateManual == null) {
                 // 对 body 进行二次截取后再解析分类
                 String body = fetchUrl(rule.getString("homeUrl"), rule.optJSONObject("header"));
                 if(body.length() > 32*1024) { body = body.substring(0, 32 * 1024); }
@@ -1407,7 +1469,7 @@ public class XBPQ extends Spider {
                     jsonObject.put("type_id", values[i].replace("＆＆", "&"));
                     classes.put(jsonObject);
                 }
-            } else if (cateManual != null) {
+            } else if (cateManual != null && cateManual.length() > 0) {
                 // 原有逻辑
                 Iterator<String> keys = cateManual.keys();
                 while (keys.hasNext()) {
