@@ -2799,7 +2799,11 @@ public class XBPQ extends Spider {
             String url = "";
             // 扁平 search_url 优先于 search.url（suggest）
             if (!searchUrlFlat.isEmpty()) {
-                url = addHttpPrefix(searchUrlFlat.replace("{wd}", URLEncoder.encode(wd, "UTF-8")));
+                url = addHttpPrefix(
+                        searchUrlFlat
+                                .replace("{wd}", URLEncoder.encode(wd, "UTF-8"))
+                                .replace("{pg}", "1")
+                );
                 // 应用 search_suffix 后缀
                 String searchSuffix = getRuleVal("search_suffix");
                 if (!searchSuffix.isEmpty()) {
@@ -2812,7 +2816,9 @@ public class XBPQ extends Spider {
                 }
                 str = fetchUrl(url, searchHeaders);
             } else if (search != null && search.has("url")) {
-                url = search.getString("url").replace("{wd}", wd);
+                url = search.getString("url")
+                        .replace("{wd}", wd)
+                        .replace("{pg}", "1");
                 url = addHttpPrefix(url);
                 // 应用 search_suffix 后缀
                 String searchSuffix = getRuleVal("search_suffix");
@@ -2863,7 +2869,10 @@ public class XBPQ extends Spider {
             int pos = 0;
             ArrayList<Integer> urlnodes = null;
 
-            JSONArray lookback = Utils.getLookbackArray(search);
+            JSONArray lookback = search.optJSONArray("search");
+            if (lookback == null || Utils.getLookbackCount(lookback) <= 0) {
+                lookback = Utils.getLookbackArray(search);
+            }
 
             int lookup = -1;
             while (lookback != null) {
