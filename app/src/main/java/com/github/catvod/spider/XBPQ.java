@@ -48,7 +48,9 @@ public class XBPQ extends Spider {
         CHINESE_KEY_MAP.put("主页url", "homeUrl");
         CHINESE_KEY_MAP.put("请求头", "header");
         CHINESE_KEY_MAP.put("编码", "encoding");
-        CHINESE_KEY_MAP.put("起始页", "firstpage");
+        // 起始页与首页是两个不同语义的字段：起始页=分类列表的起始页码，首页=首页推荐配置
+        // 不能共用同一个英文key，否则 convertChineseKeys 重命名时会互相覆盖（起始页="1" 会覆盖掉首页配置导致推荐只出1条）
+        CHINESE_KEY_MAP.put("起始页", "startpage");
         CHINESE_KEY_MAP.put("首页", "firstpage");
         CHINESE_KEY_MAP.put("UserAgent", "User-Agent");
         CHINESE_KEY_MAP.put("Referer", "Referer");
@@ -1756,32 +1758,51 @@ public class XBPQ extends Spider {
     public String homeVideoContent() {
         try {
             fetchRule();
-            // "首页" 字段非空即开启，值为最大展示条数（如 "200"）
+            // "首页" 支持两种格式：纯数字=最大展示条数（如 "200"）；"名称$id#名称$id"=推荐分区（经典XBPQ格式）
             String homeVal = getRuleVal("firstpage");
             if (homeVal.isEmpty()) return "";
             int maxVideos = 20;
-            try { maxVideos = Integer.parseInt(homeVal); } catch (NumberFormatException e) { maxVideos = 20; }
-            JSONArray videos = new JSONObject(homeContent(true)).optJSONArray("class");
-            if (videos == null) return "";
-            // 取前5个分类的视频
+            ArrayList<Pair<String, String>> sections = new ArrayList<>();
+            if (homeVal.trim().matches("\\d+")) {
+                maxVideos = Integer.parseInt(homeVal.trim());
+            } else {
+                for (String item : homeVal.split("#")) {
+                    String[] kv = item.split("\\$");
+                    if (kv.length >= 2 && !kv[1].trim().isEmpty()) {
+                        sections.add(new Pair<>(kv[0].trim(), kv[1].trim()));
+                    }
+                }
+            }
+            String homeContentStr = homeContent(true);
+            if (homeContentStr.isEmpty()) return "";
+            JSONArray classes = new JSONObject(homeContentStr).optJSONArray("class");
+            if (classes == null) return "";
+            // 未配置分区时，按分类列表顺序聚合
+            if (sections.isEmpty()) {
+                for (int i = 0; i < classes.length(); i++) {
+                    JSONObject c = classes.getJSONObject(i);
+                    sections.add(new Pair<>(c.optString("type_name", ""), c.optString("type_id", "")));
+                }
+            }
             int count = 0;
+            Set<String> seen = new HashSet<String>();
             JSONArray allVideos = new JSONArray();
-            for (int i = 0; i < videos.length() && count < maxVideos; i++) {
-                String tid = videos.getJSONObject(i).getString("type_id");
-                try {
-                    String content = categoryContent(tid, "1", false, new HashMap<>());
-                    if (!content.isEmpty()) {
-                        JSONObject data = new JSONObject(content);
-                        JSONArray list = data.optJSONArray("list");
-                        if (list != null) {
-                            for (int j = 0; j < list.length() && count < maxVideos; j++) {
-                                allVideos.put(list.getJSONObject(j));
-                                count++;
-                            }
+            for (int i = 0; i < sections.size() && count < maxVideos; i++) {
+                Pair<String, String> sec = sections.get(i);
+                JSONArray got = fetchHomeSection(sec.second, seen, maxVideos - count);
+                // 分区ID失效（常见于从别的站抄来的配置）时，用分区名从分类列表找回正确ID
+                if (got.length() == 0 && !sec.first.isEmpty()) {
+                    for (int j = 0; j < classes.length(); j++) {
+                        JSONObject c = classes.getJSONObject(j);
+                        if (sec.first.equals(c.optString("type_name", "")) && !c.optString("type_id", "").equals(sec.second)) {
+                            got = fetchHomeSection(c.getString("type_id"), seen, maxVideos - count);
+                            break;
                         }
                     }
-                } catch (Exception e) {
-                    e.printStackTrace();
+                }
+                for (int j = 0; j < got.length() && count < maxVideos; j++) {
+                    allVideos.put(got.get(j));
+                    count++;
                 }
             }
             // 倒序
@@ -1799,6 +1820,28 @@ public class XBPQ extends Spider {
             SpiderDebug.log(e);
         }
         return "";
+    }
+
+    // 拉取一个推荐分区第一页的视频（按 vod_id 去重，最多 cap 条）
+    protected JSONArray fetchHomeSection(String tid, Set<String> seen, int cap) {
+        JSONArray result = new JSONArray();
+        if (tid == null || tid.isEmpty()) return result;
+        try {
+            String content = categoryContent(tid, "1", false, new HashMap<>());
+            if (content.isEmpty()) return result;
+            JSONArray list = new JSONObject(content).optJSONArray("list");
+            if (list == null) return result;
+            for (int i = 0; i < list.length() && result.length() < cap; i++) {
+                JSONObject v = list.getJSONObject(i);
+                String key = v.optString("vod_id", "");
+                if (key.isEmpty() || seen.contains(key)) continue;
+                seen.add(key);
+                result.put(v);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return result;
     }
 
     // from xpath 加入过滤条件
@@ -1822,7 +1865,8 @@ public class XBPQ extends Spider {
                     }
                 }
             }
-            cateUrl = cateUrl.replace("{cateId}", tid).replace("{catePg}", pg);
+            // 起始页偏移：起始页=1（默认）时与请求页一致；0基分页站点（起始页=0）自动映射为 pg-1
+            cateUrl = cateUrl.replace("{cateId}", tid).replace("{catePg}", shiftStartPage(pg));
             Matcher m = Pattern.compile("\\{(.*?)\\}").matcher(cateUrl);
             while (m.find()) {
                 String n = m.group(0).replace("{", "").replace("}", "");
@@ -1833,6 +1877,21 @@ public class XBPQ extends Spider {
             e.printStackTrace();
         }
         return "";
+    }
+
+    // 按"起始页"配置对请求页码做偏移：实际页码 = 请求页 + 起始页 - 1
+    protected String shiftStartPage(String pg) {
+        int startPage = parseIntSafely(getRuleVal("startpage"), 1);
+        if (startPage < 0) startPage = 0;
+        return String.valueOf(parseIntSafely(pg, 1) + startPage - 1);
+    }
+
+    protected int parseIntSafely(String val, int def) {
+        try {
+            return Integer.parseInt(val.trim());
+        } catch (Exception e) {
+            return def;
+        }
     }
 
     @Override
@@ -2013,6 +2072,12 @@ public class XBPQ extends Spider {
                                 // endFlag 为空时，匹配到下一个同层级 start（单条提取），而非截到字符串末尾
                                 int nextStart = str.indexOf(start, startIndex);
                                 endIndex = nextStart >= 0 ? nextStart : str.length();
+                                // 最后一条线路没有下一个 start 时，截到属性值/文本结束（引号或下一个标签），
+                                // 避免把剩余整段HTML当成线路名
+                                int quote = str.indexOf('"', startIndex);
+                                if (quote >= 0 && quote < endIndex) endIndex = quote;
+                                int tag = str.indexOf('<', startIndex);
+                                if (tag >= 0 && tag < endIndex) endIndex = tag;
                             } else {
                                 endIndex = str.indexOf(end, startIndex);
                                 if (endIndex < 0) break;
@@ -2020,7 +2085,7 @@ public class XBPQ extends Spider {
                             lines.add(str.substring(startIndex, endIndex).trim());
                             linePos = endIndex + (end.isEmpty() ? 0 : end.length());
                         }
-                        if (!lines.isEmpty()) return new ArrayList<>(lines);
+                        if (!lines.isEmpty()) return refinePlayFromNames(lines);
                     }
                 }
                 return makeVodPlayFrom(sz);
@@ -2068,6 +2133,43 @@ public class XBPQ extends Spider {
             e.printStackTrace();
         }
         return makeVodPlayFrom(sz);
+    }
+
+    // 用"线路标题"规则在线路数组片段内进一步提取线路显示名（如 alt="&&" 配 >&&）
+    protected ArrayList<String> refinePlayFromNames(ArrayList<String> lines) {
+        try {
+            String fromTitle = getRuleVal("from_title");
+            if (fromTitle.isEmpty()) return lines;
+            String[] tp = applyPostProcessors(applyOrSelector(fromTitle)).split("&&");
+            String ts = tp.length > 0 ? tp[0].trim() : "";
+            String te = tp.length > 1 ? tp[1].trim() : "";
+            if (ts.isEmpty()) return lines;
+            ArrayList<String> refined = new ArrayList<>();
+            for (String line : lines) {
+                String val = line;
+                int a = line.indexOf(ts);
+                if (a >= 0) {
+                    a += ts.length();
+                    int b;
+                    if (te.isEmpty()) {
+                        b = line.length();
+                        int q = line.indexOf('"', a);
+                        if (q >= 0 && q < b) b = q;
+                        int l = line.indexOf('<', a);
+                        if (l >= 0 && l < b) b = l;
+                    } else {
+                        b = line.indexOf(te, a);
+                        if (b < 0) b = line.length();
+                    }
+                    val = cleanHtml(line.substring(a, b));
+                }
+                refined.add(val.isEmpty() ? line : val);
+            }
+            return refined;
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return lines;
     }
 
     // 查找播放列表
