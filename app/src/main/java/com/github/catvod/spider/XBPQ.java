@@ -1782,6 +1782,27 @@ public class XBPQ extends Spider {
                     e.printStackTrace();
                 }
             }
+            // 如果视频不足 maxVideos，从各分类的第2页继续补充
+            if (count < maxVideos) {
+                for (int i = 0; i < videos.length() && count < maxVideos; i++) {
+                    String tid = videos.getJSONObject(i).getString("type_id");
+                    try {
+                        String content = categoryContent(tid, "2", false, new HashMap<>());
+                        if (!content.isEmpty()) {
+                            JSONObject data = new JSONObject(content);
+                            JSONArray list = data.optJSONArray("list");
+                            if (list != null) {
+                                for (int j = 0; j < list.length() && count < maxVideos; j++) {
+                                    allVideos.put(list.getJSONObject(j));
+                                    count++;
+                                }
+                            }
+                        }
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
             // 倒序
             if (reverseOrder) {
                 JSONArray reversed = new JSONArray();
@@ -1957,10 +1978,15 @@ public class XBPQ extends Spider {
                 videos = reversed;
             }
 
+            int limit = 90;
+            int videoCount = videos.length();
+            // 当返回的视频数量少于 limit 时，说明已到最后一页
+            int pagecount = (videoCount > 0 && videoCount < limit) ? Integer.parseInt(pg) : Integer.MAX_VALUE;
+
             JSONObject result = new JSONObject();
             result.put("page", pg);
-            result.put("pagecount", Integer.MAX_VALUE);
-            result.put("limit", 90);
+            result.put("pagecount", pagecount);
+            result.put("limit", limit);
             result.put("total", Integer.MAX_VALUE);
             result.put("list", videos);
             return result.toString();
