@@ -1905,11 +1905,33 @@ public class XBPQ extends Spider {
                 }
             }
             cateUrl = cateUrl.replace("{cateId}", tid).replace("{catePg}", pg);
+            // 智能清理剩余占位符：保留 URL 结构，只删除空值占位符本身
             Matcher m = Pattern.compile("\\{(.*?)\\}").matcher(cateUrl);
+            StringBuffer sb = new StringBuffer();
             while (m.find()) {
-                String n = m.group(0).replace("{", "").replace("}", "");
-                cateUrl = cateUrl.replace(m.group(0), "").replace("/" + n + "/", "");
+                String n = m.group(1); // 不含 {} 的占位符名
+                // 如果前面有连字符-且后面也有连字符-（如 -{area}-），则删除整个连字符块
+                // 否则只删除占位符本身，保留周围的连字符
+                int start = m.start();
+                int end = m.end();
+                // 查找前面的连字符（可能是 "-" 或 "--" 等）
+                int preDash = start - 1;
+                while (preDash >= 0 && cateUrl.charAt(preDash) == '-') preDash--;
+                preDash++; // preDash 指向最后一个连字符
+                // 查找后面的连字符
+                int postDash = end;
+                while (postDash < cateUrl.length() && cateUrl.charAt(postDash) == '-') postDash++;
+                // 如果前后都有连字符，说明是 "-{xxx}-" 模式，删除全部连字符
+                if (preDash < start && postDash > end) {
+                    m.appendReplacement(sb, "");
+                } else {
+                    // 只删除占位符，保留连字符
+                    m.appendReplacement(sb, "");
+                }
             }
+            m.appendTail(sb);
+            // 清理可能出现的连续多个连字符（最多保留1个）
+            cateUrl = sb.toString().replaceAll("-{3,}", "-");
             return cateUrl;
         } catch (Exception e) {
             e.printStackTrace();
@@ -2928,9 +2950,28 @@ public class XBPQ extends Spider {
                 }
                 str = fetchUrl(url, searchHeaders);
             } else if (search != null && search.has("url")) {
-                url = search.getString("url")
-                        .replace("{wd}", wd)
-                        .replace("{pg}", "1");
+                String rawUrl = search.getString("url");
+                // 清理 search_url 中未使用的占位符（同 categoryUrl 的逻辑）
+                rawUrl = rawUrl.replace("{wd}", URLEncoder.encode(wd, "UTF-8"));
+                rawUrl = rawUrl.replace("{pg}", "1");
+                Matcher m = Pattern.compile("\\{(.*?)\\}").matcher(rawUrl);
+                StringBuffer sb = new StringBuffer();
+                while (m.find()) {
+                    int start = m.start();
+                    int end = m.end();
+                    int preDash = start - 1;
+                    while (preDash >= 0 && rawUrl.charAt(preDash) == '-') preDash--;
+                    preDash++;
+                    int postDash = end;
+                    while (postDash < rawUrl.length() && rawUrl.charAt(postDash) == '-') postDash++;
+                    if (preDash < start && postDash > end) {
+                        m.appendReplacement(sb, "");
+                    } else {
+                        m.appendReplacement(sb, "");
+                    }
+                }
+                m.appendTail(sb);
+                url = sb.toString().replaceAll("-{3,}", "-");
                 url = addHttpPrefix(url);
                 // 应用 search_suffix 后缀
                 String searchSuffix = getRuleVal("search_suffix");
