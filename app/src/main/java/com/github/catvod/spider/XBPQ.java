@@ -953,11 +953,13 @@ public class XBPQ extends Spider {
     public static class Utils{
         // 查找列表块的起始位置，取最靠近共同祖先节点的位置
         public static int findBlockPos(ArrayList<Integer> a, ArrayList<Integer> b) {
-            int len = a.size() > b.size() ? b.size() : a.size();
-            if(len ==1 ) return b.get(0);
+            if (a == null || b == null) return 0;
+            int len = Math.min(a.size(), b.size());
+            if (len == 1) return b.get(0);
             for (int i = 0; i < len; ++i) {
                 if (a.get(i).intValue() == b.get(i).intValue()) {
-                    return b.get(i - 1);
+                    if (i > 0) return b.get(i - 1);
+                    return b.get(0); // 最近共同祖先就是 b 的第一个节点
                 }
             }
             return b.get(len - 1);
@@ -1850,15 +1852,15 @@ public class XBPQ extends Spider {
             if (lookback != null) lookback = new JSONArray(lookback.toString());
             Set<String> set = new HashSet<String>();
             int pos = 0;
-            ArrayList<Integer> urlnodes = null;
-            int lookup = -1;
             while (lookback != null) {
                 pos = str.indexOf(lookback.getString(0), pos);
                 if (pos == -1) break;
 
+                ArrayList<Integer> urlnodes = null;
                 ArrayList<Integer> arr = null;
                 int blockPos = 0;
                 String nd ="";
+                int lookup = -1;
                 do {
                     arr = HtmlNodeHlper.findUpNodes(str, pos - 1, lookback.getInt(4));
                     if (urlnodes == null) {
@@ -2878,21 +2880,21 @@ public class XBPQ extends Spider {
             JSONArray videos = new JSONArray();
             Set<String> set = new HashSet<String>();
             int pos = 0;
-            ArrayList<Integer> urlnodes = null;
 
             JSONArray lookback = search.optJSONArray("search");
             if (lookback == null || Utils.getLookbackCount(lookback) <= 0) {
                 lookback = Utils.getLookbackArray(search);
             }
 
-            int lookup = -1;
             while (lookback != null) {
                 pos = str.indexOf(lookback.getString(0), pos);
                 if (pos == -1) break;
 
+                ArrayList<Integer> urlnodes = null;
                 ArrayList<Integer> arr = null;
                 int blockPos = 0;
                 String nd ="";
+                int lookup = -1;
                 do {
                     arr = HtmlNodeHlper.findUpNodes(str, pos - 1, lookback.getInt(4));
                     if (urlnodes == null) {
