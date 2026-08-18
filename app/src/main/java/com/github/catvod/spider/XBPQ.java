@@ -117,8 +117,8 @@ public class XBPQ extends Spider {
     protected final int base64Flag = Base64.DEFAULT | Base64.URL_SAFE | Base64.NO_WRAP;
     // 一定是正确的分类名称，用来帮助定位分类列表，猜cateManual
     protected final ArrayList<String> cateManuals = new ArrayList<>(Arrays.asList("电影", "剧集", "电视剧", "连续剧", "综艺", "动漫"));
-    // 无效的分类名，彡来过滤cateManual
-    protected final ArrayList<String> invalidCateNames = new ArrayList<>(Arrays.asList("更多","下载", "首页", "资讯", "留言", "导航", "专题", "短视频", "热榜", "排行", "追剧","更新","APP", "直播", "label", "Netflix"));
+    // 无效的分类名，用来过滤cateManual
+    protected final ArrayList<String> invalidCateNames = new ArrayList<>(Arrays.asList("更多","下载", "首页", "资讯", "留言", "导航", "专题", "短视频", "热榜", "排行", "追剧","更新","APP", "直播", "label", "Netflix", "最新", "最近更新"));
     // 详情页 影片信息相关字段，猜详情页信息时用
     protected final ArrayList<String> detailItemNames = new ArrayList<>(Arrays.asList("导演", "主演", "演员", "地区", "类型", "年份", "年代"));
     protected final ArrayList<String> detailItemKeys = new ArrayList<>(Arrays.asList("vod_director", "vod_actor", "vod_actor", "vod_area", "type_name", "vod_year", "vod_year"));
@@ -1754,34 +1754,68 @@ public class XBPQ extends Spider {
     public String homeVideoContent() {
         try {
             fetchRule();
-            // "首页" 字段非空即开启，值为最大展示条数（如 "200"）
             String homeVal = getRuleVal("firstpage");
-            if (homeVal.isEmpty()) return "";
+            if (homeVal.isEmpty()) {
+                homeVal = "20";
+            }
+
             int maxVideos = 20;
-            try { maxVideos = Integer.parseInt(homeVal); } catch (NumberFormatException e) { maxVideos = 20; }
-            JSONArray videos = new JSONObject(homeContent(true)).optJSONArray("class");
-            if (videos == null) return "";
-            // 取前5个分类的视频
-            int count = 0;
-            JSONArray allVideos = new JSONArray();
-            for (int i = 0; i < videos.length() && count < maxVideos; i++) {
-                String tid = videos.getJSONObject(i).getString("type_id");
-                try {
-                    String content = categoryContent(tid, "1", false, new HashMap<>());
-                    if (!content.isEmpty()) {
-                        JSONObject data = new JSONObject(content);
-                        JSONArray list = data.optJSONArray("list");
-                        if (list != null) {
-                            for (int j = 0; j < list.length() && count < maxVideos; j++) {
-                                allVideos.put(list.getJSONObject(j));
-                                count++;
-                            }
-                        }
+            List<String> preferCates = new ArrayList<>();
+            // 支持文档格式：电影$20#电视剧$15  或  20  或  电影#电视剧
+            if (homeVal.contains("$") || homeVal.contains("#")) {
+                String[] items = homeVal.split("#");
+                for (String item : items) {
+                    item = item.trim();
+                    if (item.isEmpty()) continue;
+                    String[] kv = item.split("\\$");
+                    preferCates.add(kv[0].trim());
+                    if (kv.length > 1) {
+                        try {
+                            maxVideos = Math.max(maxVideos, Integer.parseInt(kv[1].trim()));
+                        } catch (Exception ignore) {}
                     }
-                } catch (Exception e) {
-                    e.printStackTrace();
+                }
+            } else {
+                try {
+                    maxVideos = Integer.parseInt(homeVal.trim());
+                } catch (NumberFormatException e) {
+                    maxVideos = 20;
                 }
             }
+
+            JSONObject homeObj = new JSONObject(homeContent(true));
+            JSONArray classes = homeObj.optJSONArray("class");
+            if (classes == null || classes.length() == 0) {
+                return "";
+            }
+
+            int count = 0;
+            JSONArray allVideos = new JSONArray();
+            Set<String> usedIds = new HashSet<>();
+
+            // 1. 优先按「首页」字段指定的分类名拉取
+            if (!preferCates.isEmpty()) {
+                for (String cateName : preferCates) {
+                    if (count >= maxVideos) break;
+                    for (int i = 0; i < classes.length(); i++) {
+                        JSONObject cls = classes.getJSONObject(i);
+                        if (cateName.equals(cls.optString("type_name"))) {
+                            pullCategoryVideos(cls.getString("type_id"), maxVideos, count, allVideos, usedIds);
+                            count = allVideos.length();
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // 2. 如果还不够，再按 homeContent 返回的顺序补全
+            for (int i = 0; i < classes.length() && count < maxVideos; i++) {
+                JSONObject cls = classes.getJSONObject(i);
+                String tid = cls.getString("type_id");
+                pullCategoryVideos(tid, maxVideos, count, allVideos, usedIds);
+                count = allVideos.length();
+            }
+
             // 倒序
             if (reverseOrder) {
                 JSONArray reversed = new JSONArray();
@@ -1790,6 +1824,7 @@ public class XBPQ extends Spider {
                 }
                 allVideos = reversed;
             }
+
             JSONObject result = new JSONObject();
             result.put("list", allVideos);
             return result.toString();
@@ -1797,6 +1832,27 @@ public class XBPQ extends Spider {
             SpiderDebug.log(e);
         }
         return "";
+    }
+
+    // 辅助方法：拉取单个分类视频（去重）
+    private void pullCategoryVideos(String tid, int maxVideos, int currentCount,
+                                    JSONArray allVideos, Set<String> usedIds) {
+        try {
+            String content = categoryContent(tid, "1", false, new HashMap<>());
+            if (content == null || content.isEmpty()) return;
+            JSONObject data = new JSONObject(content);
+            JSONArray list = data.optJSONArray("list");
+            if (list == null) return;
+            for (int j = 0; j < list.length() && allVideos.length() < maxVideos; j++) {
+                JSONObject v = list.getJSONObject(j);
+                String vid = v.optString("vod_id");
+                if (vid.isEmpty() || usedIds.contains(vid)) continue;
+                usedIds.add(vid);
+                allVideos.put(v);
+            }
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+        }
     }
 
     // from xpath 加入过滤条件
