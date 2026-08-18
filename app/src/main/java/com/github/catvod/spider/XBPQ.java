@@ -1897,7 +1897,7 @@ public class XBPQ extends Spider {
                 }while (lookup < 0 );
 
 
-                pos += nd.length();
+                pos = blockPos + nd.length();
                 blockPos = 0;
                 String vod_id = Utils.findSubString(nd, blockPos, list.getJSONArray("vod_id"));
                 if (!set.contains(vod_id)) { // 排除重复数据
@@ -1960,7 +1960,7 @@ public class XBPQ extends Spider {
             JSONObject result = new JSONObject();
             result.put("page", pg);
             result.put("pagecount", Integer.MAX_VALUE);
-            result.put("limit", 90);
+            result.put("limit", Math.max(90, videos.length()));
             result.put("total", Integer.MAX_VALUE);
             result.put("list", videos);
             return result.toString();
@@ -2930,7 +2930,7 @@ public class XBPQ extends Spider {
                     }
                 }while (lookup < 0);
 
-                pos += nd.length();
+                pos = blockPos + nd.length();
                 blockPos = 0;
                 String vod_id = Utils.findSubString(nd, blockPos, search.getJSONArray("vod_id"));
                 if (!set.contains(vod_id)) {
