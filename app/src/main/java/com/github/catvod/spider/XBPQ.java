@@ -1949,6 +1949,13 @@ public class XBPQ extends Spider {
                             blockPos=0;
                             nd="";
                             SpiderDebug.log(String.format("找到过多的url匹配项(%d)，降低匹配层级为%d", count, lookback.getInt(4)));
+                        }else if (count > 1 && lookback.getInt(4) > 1) {
+                            // 新增：一个 block 中出现多次前缀（不止1个视频），强制降层级
+                            lookback.put(4, Math.max(1, lookback.getInt(4)-1));
+                            urlnodes = null;
+                            blockPos = 0;
+                            nd = "";
+                            SpiderDebug.log(String.format("检测到多条目(%d)，强制降低lookback到%d", count, lookback.getInt(4)));
                         }else if(lookup == -1){
                             String pic = guess_value_vod_pic(nd,0); //尝试找一下图片，如果没找到的话增加一级
                             String vName = guess_value_vod_name(nd,0);
@@ -2982,6 +2989,13 @@ public class XBPQ extends Spider {
                             blockPos=0;
                             nd="";
                             SpiderDebug.log(String.format("找到过多的url匹配项(%d)，降低匹配层级为%d", count, lookback.get(4)));
+                        }else if (count > 1 && lookback.getInt(4) > 1) {
+                            // 新增：一个 block 中出现多次前缀（不止1个视频），强制降层级
+                            lookback.put(4, Math.max(1, lookback.getInt(4)-1));
+                            urlnodes = null;
+                            blockPos = 0;
+                            nd = "";
+                            SpiderDebug.log(String.format("检测到多条目(%d)，强制降低lookback到%d", count, lookback.get(4)));
                         }
                         else if(lookup == -1){
                             String pic = guess_value_vod_pic(nd,0); //尝试找一下图片，如果没找到的话增加一级
