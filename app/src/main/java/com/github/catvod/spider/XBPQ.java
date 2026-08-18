@@ -1007,11 +1007,23 @@ public class XBPQ extends Spider {
         // 遍历JSONObect中的JSONArray查找回看的层数可用的规则
         public static JSONArray getLookbackArray(JSONObject obj) {
             try {
+                // 优先顺序：list > search > vod_id > 其他
+                String[] priorityKeys = {"list", "search", "vod_id"};
+                for (String key : priorityKeys) {
+                    if (obj.has(key)) {
+                        Object val = obj.get(key);
+                        if (val instanceof JSONArray && getLookbackCount((JSONArray) val) > 0) {
+                            return (JSONArray) val;
+                        }
+                    }
+                }
+                // 兜底：遍历所有 JSONArray 字段
                 Iterator iter = obj.keys();
                 while (iter.hasNext()) {
                     String key = (String) iter.next();
+                    if ("list".equals(key) || "search".equals(key) || "vod_id".equals(key)) continue;
                     Object val = obj.get(key);
-                    if (val.getClass().getSimpleName().equals("JSONArray")) {
+                    if (val instanceof JSONArray) {
                         int c = getLookbackCount((JSONArray) val);
                         if (c > 0) return (JSONArray) val;
                     }
@@ -1857,13 +1869,14 @@ public class XBPQ extends Spider {
             JSONArray list = data.optJSONArray("list");
             if (list == null) return;
 
-            for (int j = 0; j < list.length() && allVideos.length() < limit + usedIds.size(); j++) {
+            int thisCount = 0;
+            for (int j = 0; j < list.length() && thisCount < limit; j++) {
                 JSONObject v = list.getJSONObject(j);
                 String vid = v.optString("vod_id");
                 if (vid.isEmpty() || usedIds.contains(vid)) continue;
                 usedIds.add(vid);
                 allVideos.put(v);
-                if (allVideos.length() >= limit) break;   // 本分类达到自己的上限就停
+                thisCount++;
             }
         } catch (Exception e) {
             SpiderDebug.log(e);
@@ -1967,7 +1980,17 @@ public class XBPQ extends Spider {
                                 lookup = -2; // 只退一次
                                 SpiderDebug.log(String.format("当前层级未找到(%s)，增加匹配层级为%d",  pic.isEmpty()? "图片": "标题",  lookback.getInt(4)));
                             }else{
-                                lookup = lookback.getInt(4);
+                                // 即使找到了图片/标题，如果 block 内含多条 URL 也不要接受高层级
+                                int multiCount = Utils.getSubStringCount(nd, lookback.getString(0));
+                                if(multiCount > 1 && lookback.getInt(4) > 1){
+                                    lookback.put(4, Math.max(1, lookback.getInt(4)-1));
+                                    urlnodes = null;
+                                    blockPos = 0;
+                                    nd = "";
+                                    SpiderDebug.log(String.format("block内含多条目(%d)，拒绝接受，降低lookback到%d", multiCount, lookback.getInt(4)));
+                                }else{
+                                    lookup = lookback.getInt(4);
+                                }
                             }
                         }else{
                             lookup = lookback.getInt(4);
