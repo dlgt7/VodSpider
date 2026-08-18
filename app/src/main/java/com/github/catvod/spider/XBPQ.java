@@ -341,7 +341,10 @@ public class XBPQ extends Spider {
                             || !getRuleVal("search_name").isEmpty()
                             || !getRuleVal("search_pic").isEmpty()
                             || !getRuleVal("search_id").isEmpty();
-                    if (!rule.has("search") && !hasFlatSearch) {
+                    // 兼容 search 直接写字符串格式：{"search": "/vodsearch/{wd}---.html"}
+                    Object searchObjRaw = rule.opt("search");
+                    boolean hasSearchStrFormat = searchObjRaw instanceof String && !((String) searchObjRaw).isEmpty();
+                    if (!rule.has("search") && !hasFlatSearch && !hasSearchStrFormat) {
                        String url = addHttpPrefix("index.php/ajax/suggest?mid=1&wd=阿凡达");
                         try {
                             JSONObject result = new JSONObject(OkHttp.string(url, getHeaders(url)));
@@ -353,6 +356,13 @@ public class XBPQ extends Spider {
                             rule.put("search", search);
                         }
                         catch (Exception e){}
+                    }
+                    // 将字符串格式的 search 转换为 JSONObject 格式
+                    if (hasSearchStrFormat) {
+                        String searchUrlStr = (String) searchObjRaw;
+                        JSONObject searchJson = new JSONObject();
+                        searchJson.put("url", addHttpPrefix(searchUrlStr));
+                        rule.put("search", searchJson);
                     }
 
                     // 有扁平搜索字段时，强制用配置覆盖 suggest
