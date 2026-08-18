@@ -117,8 +117,8 @@ public class XBPQ extends Spider {
     protected final int base64Flag = Base64.DEFAULT | Base64.URL_SAFE | Base64.NO_WRAP;
     // 一定是正确的分类名称，用来帮助定位分类列表，猜cateManual
     protected final ArrayList<String> cateManuals = new ArrayList<>(Arrays.asList("电影", "剧集", "电视剧", "连续剧", "综艺", "动漫"));
-    // 无效的分类名，用来过滤cateManual
-    protected final ArrayList<String> invalidCateNames = new ArrayList<>(Arrays.asList("更多","下载", "首页", "资讯", "留言", "导航", "专题", "短视频", "热榜", "排行", "追剧","更新","APP", "直播", "label", "Netflix", "最新", "最近更新"));
+    // 无效的分类名，彡来过滤cateManual
+    protected final ArrayList<String> invalidCateNames = new ArrayList<>(Arrays.asList("更多","下载", "首页", "资讯", "留言", "导航", "专题", "短视频", "热榜", "排行", "追剧","更新","APP", "直播", "label", "Netflix"));
     // 详情页 影片信息相关字段，猜详情页信息时用
     protected final ArrayList<String> detailItemNames = new ArrayList<>(Arrays.asList("导演", "主演", "演员", "地区", "类型", "年份", "年代"));
     protected final ArrayList<String> detailItemKeys = new ArrayList<>(Arrays.asList("vod_director", "vod_actor", "vod_actor", "vod_area", "type_name", "vod_year", "vod_year"));
@@ -1007,23 +1007,11 @@ public class XBPQ extends Spider {
         // 遍历JSONObect中的JSONArray查找回看的层数可用的规则
         public static JSONArray getLookbackArray(JSONObject obj) {
             try {
-                // 优先顺序：list > search > vod_id > 其他
-                String[] priorityKeys = {"list", "search", "vod_id"};
-                for (String key : priorityKeys) {
-                    if (obj.has(key)) {
-                        Object val = obj.get(key);
-                        if (val instanceof JSONArray && getLookbackCount((JSONArray) val) > 0) {
-                            return (JSONArray) val;
-                        }
-                    }
-                }
-                // 兜底：遍历所有 JSONArray 字段
                 Iterator iter = obj.keys();
                 while (iter.hasNext()) {
                     String key = (String) iter.next();
-                    if ("list".equals(key) || "search".equals(key) || "vod_id".equals(key)) continue;
                     Object val = obj.get(key);
-                    if (val instanceof JSONArray) {
+                    if (val.getClass().getSimpleName().equals("JSONArray")) {
                         int c = getLookbackCount((JSONArray) val);
                         if (c > 0) return (JSONArray) val;
                     }
@@ -1766,82 +1754,35 @@ public class XBPQ extends Spider {
     public String homeVideoContent() {
         try {
             fetchRule();
+            // "首页" 字段非空即开启，值为最大展示条数（如 "200"）
             String homeVal = getRuleVal("firstpage");
-            if (homeVal.isEmpty()) {
-                homeVal = "20";          // 没配置就默认拉 20 条
-            }
-
+            if (homeVal.isEmpty()) return "";
             int maxVideos = 20;
-            List<String> preferCates = new ArrayList<>();
-            Map<String, Integer> cateLimit = new HashMap<>();
-
-            // 支持完整「首页」语法：韩剧$20#泰剧$15#日剧$10
-            if (homeVal.contains("$") || homeVal.contains("#")) {
-                String[] items = homeVal.split("#");
-                for (String item : items) {
-                    item = item.trim();
-                    if (item.isEmpty()) continue;
-                    String[] kv = item.split("\\$");
-                    String name = kv[0].trim();
-                    preferCates.add(name);
-                    int limit = 20;
-                    if (kv.length > 1) {
-                        try {
-                            limit = Integer.parseInt(kv[1].trim());
-                        } catch (Exception ignore) {}
-                    }
-                    cateLimit.put(name, limit);
-                    maxVideos = Math.max(maxVideos, limit);
-                }
-            } else {
-                try {
-                    maxVideos = Integer.parseInt(homeVal.trim());
-                } catch (NumberFormatException e) {
-                    maxVideos = 20;
-                }
-            }
-
-            JSONObject homeObj = new JSONObject(homeContent(true));
-            JSONArray classes = homeObj.optJSONArray("class");
-            if (classes == null || classes.length() == 0) {
-                return "";
-            }
-
-            // 建立 名称 → type_id 映射
-            Map<String, String> name2id = new LinkedHashMap<>();
-            for (int i = 0; i < classes.length(); i++) {
-                JSONObject cls = classes.getJSONObject(i);
-                name2id.put(cls.optString("type_name"), cls.optString("type_id"));
-            }
-
+            try { maxVideos = Integer.parseInt(homeVal); } catch (NumberFormatException e) { maxVideos = 20; }
+            JSONArray videos = new JSONObject(homeContent(true)).optJSONArray("class");
+            if (videos == null) return "";
+            // 取前5个分类的视频
             int count = 0;
             JSONArray allVideos = new JSONArray();
-            Set<String> usedIds = new HashSet<>();
-
-            // 1. 优先按「首页」指定的分类拉取（韩剧 → 泰剧 → 日剧）
-            for (String cateName : preferCates) {
-                if (count >= maxVideos) break;
-                String tid = name2id.get(cateName);
-                if (tid == null || tid.isEmpty()) continue;
-
-                int thisLimit = cateLimit.getOrDefault(cateName, 20);
-                pullCategoryVideos(tid, thisLimit, allVideos, usedIds);
-                count = allVideos.length();
-            }
-
-            // 2. 如果还不够，再按 class 顺序补全（跳过已经拉过的）
-            if (count < maxVideos) {
-                for (int i = 0; i < classes.length() && count < maxVideos; i++) {
-                    JSONObject cls = classes.getJSONObject(i);
-                    String name = cls.optString("type_name");
-                    if (preferCates.contains(name)) continue;   // 已经优先拉过了
-                    String tid = cls.optString("type_id");
-                    pullCategoryVideos(tid, maxVideos - count, allVideos, usedIds);
-                    count = allVideos.length();
+            for (int i = 0; i < videos.length() && count < maxVideos; i++) {
+                String tid = videos.getJSONObject(i).getString("type_id");
+                try {
+                    String content = categoryContent(tid, "1", false, new HashMap<>());
+                    if (!content.isEmpty()) {
+                        JSONObject data = new JSONObject(content);
+                        JSONArray list = data.optJSONArray("list");
+                        if (list != null) {
+                            for (int j = 0; j < list.length() && count < maxVideos; j++) {
+                                allVideos.put(list.getJSONObject(j));
+                                count++;
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
                 }
             }
-
-            // 倒序（如果配置了）
+            // 倒序
             if (reverseOrder) {
                 JSONArray reversed = new JSONArray();
                 for (int i = allVideos.length() - 1; i >= 0; i--) {
@@ -1849,7 +1790,6 @@ public class XBPQ extends Spider {
                 }
                 allVideos = reversed;
             }
-
             JSONObject result = new JSONObject();
             result.put("list", allVideos);
             return result.toString();
@@ -1857,30 +1797,6 @@ public class XBPQ extends Spider {
             SpiderDebug.log(e);
         }
         return "";
-    }
-
-    /** 拉取单个分类视频（带去重 + 数量限制） */
-    private void pullCategoryVideos(String tid, int limit, JSONArray allVideos, Set<String> usedIds) {
-        try {
-            String content = categoryContent(tid, "1", false, new HashMap<>());
-            if (content == null || content.isEmpty()) return;
-
-            JSONObject data = new JSONObject(content);
-            JSONArray list = data.optJSONArray("list");
-            if (list == null) return;
-
-            int thisCount = 0;
-            for (int j = 0; j < list.length() && thisCount < limit; j++) {
-                JSONObject v = list.getJSONObject(j);
-                String vid = v.optString("vod_id");
-                if (vid.isEmpty() || usedIds.contains(vid)) continue;
-                usedIds.add(vid);
-                allVideos.put(v);
-                thisCount++;
-            }
-        } catch (Exception e) {
-            SpiderDebug.log(e);
-        }
     }
 
     // from xpath 加入过滤条件
@@ -1905,33 +1821,11 @@ public class XBPQ extends Spider {
                 }
             }
             cateUrl = cateUrl.replace("{cateId}", tid).replace("{catePg}", pg);
-            // 智能清理剩余占位符：保留 URL 结构，只删除空值占位符本身
             Matcher m = Pattern.compile("\\{(.*?)\\}").matcher(cateUrl);
-            StringBuffer sb = new StringBuffer();
             while (m.find()) {
-                String n = m.group(1); // 不含 {} 的占位符名
-                // 如果前面有连字符-且后面也有连字符-（如 -{area}-），则删除整个连字符块
-                // 否则只删除占位符本身，保留周围的连字符
-                int start = m.start();
-                int end = m.end();
-                // 查找前面的连字符（可能是 "-" 或 "--" 等）
-                int preDash = start - 1;
-                while (preDash >= 0 && cateUrl.charAt(preDash) == '-') preDash--;
-                preDash++; // preDash 指向最后一个连字符
-                // 查找后面的连字符
-                int postDash = end;
-                while (postDash < cateUrl.length() && cateUrl.charAt(postDash) == '-') postDash++;
-                // 如果前后都有连字符，说明是 "-{xxx}-" 模式，删除全部连字符
-                if (preDash < start && postDash > end) {
-                    m.appendReplacement(sb, "");
-                } else {
-                    // 只删除占位符，保留连字符
-                    m.appendReplacement(sb, "");
-                }
+                String n = m.group(0).replace("{", "").replace("}", "");
+                cateUrl = cateUrl.replace(m.group(0), "").replace("/" + n + "/", "");
             }
-            m.appendTail(sb);
-            // 清理可能出现的连续多个连字符（最多保留1个）
-            cateUrl = sb.toString().replaceAll("-{3,}", "-");
             return cateUrl;
         } catch (Exception e) {
             e.printStackTrace();
@@ -1984,13 +1878,6 @@ public class XBPQ extends Spider {
                             blockPos=0;
                             nd="";
                             SpiderDebug.log(String.format("找到过多的url匹配项(%d)，降低匹配层级为%d", count, lookback.getInt(4)));
-                        }else if (count > 1 && lookback.getInt(4) > 1) {
-                            // 新增：一个 block 中出现多次前缀（不止1个视频），强制降层级
-                            lookback.put(4, Math.max(1, lookback.getInt(4)-1));
-                            urlnodes = null;
-                            blockPos = 0;
-                            nd = "";
-                            SpiderDebug.log(String.format("检测到多条目(%d)，强制降低lookback到%d", count, lookback.getInt(4)));
                         }else if(lookup == -1){
                             String pic = guess_value_vod_pic(nd,0); //尝试找一下图片，如果没找到的话增加一级
                             String vName = guess_value_vod_name(nd,0);
@@ -2002,17 +1889,7 @@ public class XBPQ extends Spider {
                                 lookup = -2; // 只退一次
                                 SpiderDebug.log(String.format("当前层级未找到(%s)，增加匹配层级为%d",  pic.isEmpty()? "图片": "标题",  lookback.getInt(4)));
                             }else{
-                                // 即使找到了图片/标题，如果 block 内含多条 URL 也不要接受高层级
-                                int multiCount = Utils.getSubStringCount(nd, lookback.getString(0));
-                                if(multiCount > 1 && lookback.getInt(4) > 1){
-                                    lookback.put(4, Math.max(1, lookback.getInt(4)-1));
-                                    urlnodes = null;
-                                    blockPos = 0;
-                                    nd = "";
-                                    SpiderDebug.log(String.format("block内含多条目(%d)，拒绝接受，降低lookback到%d", multiCount, lookback.getInt(4)));
-                                }else{
-                                    lookup = lookback.getInt(4);
-                                }
+                                lookup = lookback.getInt(4);
                             }
                         }else{
                             lookup = lookback.getInt(4);
@@ -2950,28 +2827,9 @@ public class XBPQ extends Spider {
                 }
                 str = fetchUrl(url, searchHeaders);
             } else if (search != null && search.has("url")) {
-                String rawUrl = search.getString("url");
-                // 清理 search_url 中未使用的占位符（同 categoryUrl 的逻辑）
-                rawUrl = rawUrl.replace("{wd}", URLEncoder.encode(wd, "UTF-8"));
-                rawUrl = rawUrl.replace("{pg}", "1");
-                Matcher m = Pattern.compile("\\{(.*?)\\}").matcher(rawUrl);
-                StringBuffer sb = new StringBuffer();
-                while (m.find()) {
-                    int start = m.start();
-                    int end = m.end();
-                    int preDash = start - 1;
-                    while (preDash >= 0 && rawUrl.charAt(preDash) == '-') preDash--;
-                    preDash++;
-                    int postDash = end;
-                    while (postDash < rawUrl.length() && rawUrl.charAt(postDash) == '-') postDash++;
-                    if (preDash < start && postDash > end) {
-                        m.appendReplacement(sb, "");
-                    } else {
-                        m.appendReplacement(sb, "");
-                    }
-                }
-                m.appendTail(sb);
-                url = sb.toString().replaceAll("-{3,}", "-");
+                url = search.getString("url")
+                        .replace("{wd}", wd)
+                        .replace("{pg}", "1");
                 url = addHttpPrefix(url);
                 // 应用 search_suffix 后缀
                 String searchSuffix = getRuleVal("search_suffix");
@@ -3053,13 +2911,6 @@ public class XBPQ extends Spider {
                             blockPos=0;
                             nd="";
                             SpiderDebug.log(String.format("找到过多的url匹配项(%d)，降低匹配层级为%d", count, lookback.get(4)));
-                        }else if (count > 1 && lookback.getInt(4) > 1) {
-                            // 新增：一个 block 中出现多次前缀（不止1个视频），强制降层级
-                            lookback.put(4, Math.max(1, lookback.getInt(4)-1));
-                            urlnodes = null;
-                            blockPos = 0;
-                            nd = "";
-                            SpiderDebug.log(String.format("检测到多条目(%d)，强制降低lookback到%d", count, lookback.get(4)));
                         }
                         else if(lookup == -1){
                             String pic = guess_value_vod_pic(nd,0); //尝试找一下图片，如果没找到的话增加一级
