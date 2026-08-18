@@ -1847,6 +1847,7 @@ public class XBPQ extends Spider {
             }
             JSONArray videos = new JSONArray();
             JSONArray lookback = Utils.getLookbackArray(list);
+            if (lookback != null) lookback = new JSONArray(lookback.toString());
             Set<String> set = new HashSet<String>();
             int pos = 0;
             ArrayList<Integer> urlnodes = null;
@@ -3166,7 +3167,7 @@ public class XBPQ extends Spider {
     // 图片代理（来自XYQBiu）
     protected String fixCover(String cover, String site) {
         try {
-            return "proxy://do=XBPQ&site=" + site + "&pic=" + cover;
+            return "proxy://do=XBPQ&site=" + URLEncoder.encode(site, "UTF-8") + "&pic=" + URLEncoder.encode(cover, "UTF-8");
         } catch (Exception e) {
             SpiderDebug.log(e);
         }
@@ -3177,8 +3178,8 @@ public class XBPQ extends Spider {
 
     public static Object[] loadPic(Map<String, String> prmap) {
         try {
-            String site = prmap.get("site");
-            String pic = prmap.get("pic");
+            String site = java.net.URLDecoder.decode(prmap.get("site"), "UTF-8");
+            String pic = java.net.URLDecoder.decode(prmap.get("pic"), "UTF-8");
 
             if (XBPQPicHeader == null) {
                 XBPQPicHeader = new HashMap<>();
