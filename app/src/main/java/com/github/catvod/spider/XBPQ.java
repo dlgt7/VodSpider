@@ -2291,7 +2291,7 @@ public class XBPQ extends Spider {
                             if (he < 0) break;
                             String href = block.substring(he0, he).trim();
                             hp = he + hrefEnd.length();
-                            if (!href.contains("/play/") && !href.contains("vodplay")) continue;
+                            if (!href.contains("/play/") && !href.contains("vodplay") && !href.contains("vplay")) continue;
 
                             String title = "";
                             int ts = block.indexOf(titleStart, he);
