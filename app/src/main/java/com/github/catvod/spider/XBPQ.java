@@ -2546,13 +2546,30 @@ public class XBPQ extends Spider {
             JSONObject playlist = rule.optJSONObject("playlist");
             if (playlist == null) return;
             
-            // 如果playlist没有region，尝试从from_array推断（仅适用于没有播放数组配置的站点）
+            // 如果playlist没有region，尝试从from_array或线路数组推断
             if (!playlist.has("region") && !playlist.has("url")) {
                 String fromArray = getRuleVal("from_array");
-                String playArray = getRuleVal("play_array");
-                // 只有在没有play_array配置时才使用from_array推断region
-                // 因为如果有play_array，说明是像hanjue.cc这样的站点，不需要region
-                if (!fromArray.isEmpty() && playArray.isEmpty()) {
+                String lineArray = getRuleVal("线路数组");
+                String playArray = getRuleVal("播放数组");
+                
+                // 使用线路数组推断（针对ylys等站点）
+                if (!lineArray.isEmpty()) {
+                    String[] parts = lineArray.split("&&");
+                    if (parts.length >= 2) {
+                        JSONArray region = new JSONArray();
+                        region.put(parts[0].trim());
+                        // 找到线路数组结束后的下一个重要元素作为end
+                        if (!playArray.isEmpty()) {
+                            String[] paParts = playArray.split("&&");
+                            region.put(paParts[0].trim());
+                        } else {
+                            // 默认结束于</div>
+                            region.put("</div>");
+                        }
+                        playlist.put("region", region);
+                    }
+                } else if (!fromArray.isEmpty() && playArray.isEmpty()) {
+                    // 回退到from_array推断（针对其他站点）
                     String[] parts = fromArray.split("&&");
                     if (parts.length >= 2) {
                         JSONArray region = new JSONArray();
