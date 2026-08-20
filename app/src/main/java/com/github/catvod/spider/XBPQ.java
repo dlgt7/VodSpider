@@ -87,6 +87,9 @@ public class XBPQ extends Spider {
         CHINESE_KEY_MAP.put("播放列表", "url_array");
         CHINESE_KEY_MAP.put("播放标题", "url_title");
         CHINESE_KEY_MAP.put("播放链接", "url_url");
+        CHINESE_KEY_MAP.put("集数数组", "url_array");
+        CHINESE_KEY_MAP.put("集数标题", "url_title");
+        CHINESE_KEY_MAP.put("集数链接", "url_url");
         CHINESE_KEY_MAP.put("跳转播放链接", "jump_url");
         CHINESE_KEY_MAP.put("直接播放", "force_play");
         CHINESE_KEY_MAP.put("播放请求头", "play_header");
@@ -2551,8 +2554,8 @@ public class XBPQ extends Spider {
                 String lineArray = getRuleVal("线路数组");
                 String playArray = getRuleVal("播放数组");
                 
-                // 只有当没有配置播放数组时，才使用线路数组推断region
-                // 因为hanjue.cc等有播放数组的站点不需要这个逻辑
+                // 只有当有线路数组且没有播放数组时，才使用线路数组推断region
+                // hanjue.cc等有播放数组的站点不需要这个逻辑
                 if (!lineArray.isEmpty() && playArray.isEmpty()) {
                     String[] parts = lineArray.split("&&");
                     if (parts.length >= 2) {
