@@ -2250,8 +2250,8 @@ public class XBPQ extends Spider {
             if (!playArrayRule.isEmpty() && !urlUrlRule.isEmpty()
                     && playArrayRule.contains("&&") && urlUrlRule.contains("&&")) {
                 int totalBlockCount = 0;
-                // 支持多个选择器（用||分隔）
-                String[] playArraySelectors = applyOrSelector(playArrayRule).split("\\|\\|");
+                // 支持多个选择器（用||分隔），直接分割原始规则不过滤
+                String[] playArraySelectors = playArrayRule.split("\\|\\|");
                 String[] ua = applyPostProcessors(applyOrSelector(urlUrlRule)).split("&&", 2);
                 String hrefStart = ua[0].trim();
                 String hrefEnd = ua.length > 1 ? ua[1].trim() : "\"";
