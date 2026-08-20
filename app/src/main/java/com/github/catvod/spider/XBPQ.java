@@ -2249,6 +2249,7 @@ public class XBPQ extends Spider {
             String urlUrlRule = getRuleVal("url_url");
             if (!playArrayRule.isEmpty() && !urlUrlRule.isEmpty()
                     && playArrayRule.contains("&&") && urlUrlRule.contains("&&")) {
+                int totalBlockCount = 0;
                 // 支持多个选择器（用||分隔）
                 String[] playArraySelectors = applyOrSelector(playArrayRule).split("\\|\\|");
                 String[] ua = applyPostProcessors(applyOrSelector(urlUrlRule)).split("&&", 2);
@@ -2278,6 +2279,7 @@ public class XBPQ extends Spider {
                         String block = str.substring(ls, le);
                         listPos = le + listEnd.length();
                         blockCount++;
+                        totalBlockCount++;
 
                         ArrayList<String> eps = new ArrayList<>();
                         int hp = 0;
@@ -2310,7 +2312,7 @@ public class XBPQ extends Spider {
                     if (!tmp_vod_play_url.isEmpty()) break;
                 }
                 if (!tmp_vod_play_url.isEmpty()) {
-                    SpiderDebug.log("playArray: blocks=" + blockCount + " episodes=" + tmp_vod_play_url.size());
+                    SpiderDebug.log("playArray: blocks=" + totalBlockCount + " episodes=" + tmp_vod_play_url.size());
                     for (int i = 0; i < tmp_vod_play_url.size(); ++i) {
                         if (!rmset.contains(i)) {
                             vod_play_url.add(tmp_vod_play_url.get(i));
@@ -2318,7 +2320,7 @@ public class XBPQ extends Spider {
                     }
                     return vod_play_url;
                 } else {
-                    SpiderDebug.log("playArray: blocks=" + blockCount + " tmp_vod_play_url empty");
+                    SpiderDebug.log("playArray: blocks=" + totalBlockCount + " tmp_vod_play_url empty");
                 }
             }
 
