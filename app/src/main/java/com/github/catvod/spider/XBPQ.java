@@ -337,6 +337,21 @@ public class XBPQ extends Spider {
                         rule.put("playlist", new JSONObject());
                     }
 
+                    // 自动为playlist添加region（如果未配置）
+                    if (!rule.getJSONObject("playlist").has("region")) {
+                        // 尝试从 from_array 推断 region
+                        String fromArray = getRuleVal("from_array");
+                        if (!fromArray.isEmpty()) {
+                            JSONArray region = new JSONArray();
+                            String[] parts = fromArray.split("&&");
+                            if (parts.length >= 2) {
+                                region.put(parts[0].trim());
+                                region.put(parts[1].trim());
+                            }
+                            rule.getJSONObject("playlist").put("region", region);
+                        }
+                    }
+
                     // 如果没有search，且没有配置任何搜索字段，则生成默认的suggest搜索
                     boolean hasFlatSearch = !getRuleVal("search_url").isEmpty()
                             || !getRuleVal("search_array").isEmpty()
