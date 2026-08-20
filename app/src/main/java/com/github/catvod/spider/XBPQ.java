@@ -114,6 +114,7 @@ public class XBPQ extends Spider {
         // 其他
         CHINESE_KEY_MAP.put("图片代理", "PicNeedProxy");
         CHINESE_KEY_MAP.put("过滤词", "filter_word");
+        CHINESE_KEY_MAP.put("详情页", "detail");
         CHINESE_KEY_MAP.put("倒序", "reverse");
         CHINESE_KEY_MAP.put("免嗅", "manualVideoCheck");
     }
