@@ -114,7 +114,6 @@ public class XBPQ extends Spider {
         // 其他
         CHINESE_KEY_MAP.put("图片代理", "PicNeedProxy");
         CHINESE_KEY_MAP.put("过滤词", "filter_word");
-        CHINESE_KEY_MAP.put("详情页", "detail");
         CHINESE_KEY_MAP.put("倒序", "reverse");
         CHINESE_KEY_MAP.put("免嗅", "manualVideoCheck");
     }
@@ -335,6 +334,11 @@ public class XBPQ extends Spider {
 
                     if (!rule.has("detail")) {
                         rule.put("detail", new JSONObject());
+                    }
+                    // 处理"详情页"中文字段名
+                    if (rule.has("详情页") && !rule.getString("详情页").isEmpty()) {
+                        rule.getJSONObject("detail").put("url", rule.getString("详情页"));
+                        rule.remove("详情页");
                     }
 
                     if (!rule.has("playlist")) {
