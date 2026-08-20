@@ -2249,10 +2249,9 @@ public class XBPQ extends Spider {
             String urlUrlRule = getRuleVal("url_url");
             if (!playArrayRule.isEmpty() && !urlUrlRule.isEmpty()
                     && playArrayRule.contains("&&") && urlUrlRule.contains("&&")) {
-                String[] pa = applyPostProcessors(applyOrSelector(playArrayRule)).split("&&", 2);
+                // 支持多个选择器（用||分隔）
+                String[] playArraySelectors = applyOrSelector(playArrayRule).split("\\|\\|");
                 String[] ua = applyPostProcessors(applyOrSelector(urlUrlRule)).split("&&", 2);
-                String listStart = pa[0].trim();
-                String listEnd = pa.length > 1 ? pa[1].trim() : "</ul>";
                 String hrefStart = ua[0].trim();
                 String hrefEnd = ua.length > 1 ? ua[1].trim() : "\"";
 
@@ -2265,43 +2264,50 @@ public class XBPQ extends Spider {
                     titleEnd = ta.length > 1 ? ta[1] : "<";
                 }
 
-                int listPos = 0;
-                int blockCount = 0;
-                while (true) {
-                    int ls = str.indexOf(listStart, listPos);
-                    if (ls < 0) break;
-                    int le = str.indexOf(listEnd, ls + listStart.length());
-                    if (le < 0) break;
-                    String block = str.substring(ls, le);
-                    listPos = le + listEnd.length();
-                    blockCount++;
+                for (String playArraySelector : playArraySelectors) {
+                    String listStart = playArraySelector.trim().split("&&")[0].trim();
+                    String listEnd = playArraySelector.trim().split("&&").length > 1 ? playArraySelector.trim().split("&&")[1].trim() : "</ul>";
 
-                    ArrayList<String> eps = new ArrayList<>();
-                    int hp = 0;
+                    int listPos = 0;
+                    int blockCount = 0;
                     while (true) {
-                        int hs = block.indexOf(hrefStart, hp);
-                        if (hs < 0) break;
-                        int he0 = hs + hrefStart.length();
-                        int he = block.indexOf(hrefEnd, he0);
-                        if (he < 0) break;
-                        String href = block.substring(he0, he).trim();
-                        hp = he + hrefEnd.length();
-                        if (!href.contains("/play/") && !href.contains("vodplay")) continue;
+                        int ls = str.indexOf(listStart, listPos);
+                        if (ls < 0) break;
+                        int le = str.indexOf(listEnd, ls + listStart.length());
+                        if (le < 0) break;
+                        String block = str.substring(ls, le);
+                        listPos = le + listEnd.length();
+                        blockCount++;
 
-                        String title = "";
-                        int ts = block.indexOf(titleStart, he);
-                        if (ts >= 0 && ts < he + 120) {
-                            int te = block.indexOf(titleEnd, ts + titleStart.length());
-                            if (te > ts) title = cleanHtml(block.substring(ts + titleStart.length(), te));
+                        ArrayList<String> eps = new ArrayList<>();
+                        int hp = 0;
+                        while (true) {
+                            int hs = block.indexOf(hrefStart, hp);
+                            if (hs < 0) break;
+                            int he0 = hs + hrefStart.length();
+                            int he = block.indexOf(hrefEnd, he0);
+                            if (he < 0) break;
+                            String href = block.substring(he0, he).trim();
+                            hp = he + hrefEnd.length();
+                            if (!href.contains("/play/") && !href.contains("vodplay")) continue;
+
+                            String title = "";
+                            int ts = block.indexOf(titleStart, he);
+                            if (ts >= 0 && ts < he + 120) {
+                                int te = block.indexOf(titleEnd, ts + titleStart.length());
+                                if (te > ts) title = cleanHtml(block.substring(ts + titleStart.length(), te));
+                            }
+                            if (title.contains("展开全部")) continue;
+                            if (title.isEmpty()) title = "第" + (eps.size() + 1) + "集";
+                            eps.add(title + "$" + addHttpPrefix(href));
                         }
-                        if (title.contains("展开全部")) continue;
-                        if (title.isEmpty()) title = "第" + (eps.size() + 1) + "集";
-                        eps.add(title + "$" + addHttpPrefix(href));
+                        if (!eps.isEmpty()) {
+                            if (sort != 0) Collections.reverse(eps);
+                            tmp_vod_play_url.add(TextUtils.join("#", eps));
+                        }
                     }
-                    if (!eps.isEmpty()) {
-                        if (sort != 0) Collections.reverse(eps);
-                        tmp_vod_play_url.add(TextUtils.join("#", eps));
-                    }
+                    // 如果找到了内容，就跳出循环
+                    if (!tmp_vod_play_url.isEmpty()) break;
                 }
                 if (!tmp_vod_play_url.isEmpty()) {
                     SpiderDebug.log("playArray: blocks=" + blockCount + " episodes=" + tmp_vod_play_url.size());
