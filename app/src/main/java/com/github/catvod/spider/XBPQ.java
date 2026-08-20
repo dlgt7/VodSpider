@@ -2546,10 +2546,13 @@ public class XBPQ extends Spider {
             JSONObject playlist = rule.optJSONObject("playlist");
             if (playlist == null) return;
             
-            // 如果playlist没有region，尝试从from_array推断
+            // 如果playlist没有region，尝试从from_array推断（仅适用于没有播放数组配置的站点）
             if (!playlist.has("region") && !playlist.has("url")) {
                 String fromArray = getRuleVal("from_array");
-                if (!fromArray.isEmpty()) {
+                String playArray = getRuleVal("play_array");
+                // 只有在没有play_array配置时才使用from_array推断region
+                // 因为如果有play_array，说明是像hanjue.cc这样的站点，不需要region
+                if (!fromArray.isEmpty() && playArray.isEmpty()) {
                     String[] parts = fromArray.split("&&");
                     if (parts.length >= 2) {
                         JSONArray region = new JSONArray();
