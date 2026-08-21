@@ -2186,12 +2186,8 @@ public class XBPQ extends Spider {
         ArrayList<String> vod_play_url = new ArrayList<String>();
         try {
             int pos = 0;
-            ArrayList<Integer> urlnodes = null;
             JSONObject playlist = this.rule.getJSONObject("playlist");
-            int sort = playlist.optInt("sort", 0);  // 如果这个值是0。表示要倒序播放列表
-            HashMap<String, Integer> map = new HashMap<String, Integer>();
-            Set<Integer> rmset = new HashSet<Integer>();
-//            String tmp = "";
+            int sort = playlist.optInt("sort", 0);
             ArrayList<String> tmp = new ArrayList<String>();
 
             JSONArray lookback = Utils.getLookbackArray(playlist);
@@ -2244,13 +2240,109 @@ public class XBPQ extends Spider {
                 }
             }
 
-            // 按 play_array 分块解析各线路选集（通用方案，支持 hl-sort-list 等）
+            // ========== 优化1：支持 CSS 风格选择器 (playLinkUrl/playListTitle) ==========
+            // 参考文件中通过 parseCssSelector 将 CSS 选择器转为正则，支持 a[href] 等简洁写法
+            String playLinkUrl = getRuleVal("playLinkUrl");
+            String playListTitle = getRuleVal("playListTitle");
+            if (!playLinkUrl.isEmpty() && lookback != null) {
+                String cssPattern = Utils.parseCssSelector(applyOrSelector(playLinkUrl));
+                if (cssPattern != null) {
+                    Matcher me = Pattern.compile(cssPattern).matcher(str);
+                    while (me.find()) {
+                        String epUrl = me.group(1);
+                        String lineName = "";
+                        if (!playListTitle.isEmpty()) {
+                            String titlePattern = Utils.parseCssSelector(applyOrSelector(playListTitle));
+                            if (titlePattern != null) {
+                                Matcher mt = Pattern.compile(titlePattern).matcher(str);
+                                if (mt.find()) {
+                                    lineName = mt.group(1);
+                                    if (mt.groupCount() > 1) lineName = mt.group(2);
+                                }
+                            }
+                        }
+                        if (lineName.isEmpty()) lineName = "第" + (tmp.size() + 1) + "集";
+                        tmp.add(lineName + "$" + addHttpPrefix(epUrl));
+                    }
+                    if (!tmp.isEmpty()) {
+                        vod_play_url.add(TextUtils.join("#", tmp));
+                        SpiderDebug.log("findVodPlayUrl: CSS selector match=" + tmp.size());
+                        return vod_play_url;
+                    }
+                }
+            }
+
+            // ========== 优化2：按 prefix 分块解析多线路（参考文件做法）==========
+            // 当 vod_play_url[0] 有值时，用它作为线路分隔符，每个线路块独立解析标题和链接
+            if (!prefix.isEmpty() && lookback != null) {
+                int lineNum = 0;
+                while (true) {
+                    int p = str.indexOf(prefix, pos);
+                    if (p < 0) break;
+                    pos = p + prefix.length();
+                    int lineStart = pos;
+                    int lineEnd = str.indexOf(prefix, pos);
+                    if (lineEnd < 0) lineEnd = str.length();
+                    String lineContent = str.substring(lineStart, lineEnd);
+
+                    // 解析该线路的选集（url_url + url_title 字符串截取方式）
+                    String urlUrlRule = getRuleVal("url_url");
+                    String urlTitleRule = getRuleVal("url_title");
+                    if (!urlUrlRule.isEmpty() && urlUrlRule.contains("&&")) {
+                        String[] ua = applyPostProcessors(applyOrSelector(urlUrlRule)).split("&&", 2);
+                        String hrefStart = ua[0].trim();
+                        String hrefEnd = ua.length > 1 ? ua[1].trim() : "\"";
+                        String titleStart = ">";
+                        String titleEnd = "<";
+                        if (!urlTitleRule.isEmpty() && urlTitleRule.contains("&&")) {
+                            String[] ta = applyPostProcessors(applyOrSelector(urlTitleRule)).split("&&", 2);
+                            titleStart = ta[0];
+                            titleEnd = ta.length > 1 ? ta[1] : "<";
+                        }
+                        ArrayList<String> eps = new ArrayList<>();
+                        int hp = 0;
+                        while (true) {
+                            int hs = lineContent.indexOf(hrefStart, hp);
+                            if (hs < 0) break;
+                            int he0 = hs + hrefStart.length();
+                            int he = lineContent.indexOf(hrefEnd, he0);
+                            if (he < 0) break;
+                            String href = lineContent.substring(he0, he).trim();
+                            hp = he + hrefEnd.length();
+                            if (!href.contains("/play/") && !href.contains("vodplay") && !href.contains("vplay")
+                                    && !href.contains(".m3u8") && !href.contains(".mp4")) continue;
+                            String title = "";
+                            int ts = lineContent.indexOf(titleStart, he);
+                            if (ts >= 0 && ts < he + 120) {
+                                int te = lineContent.indexOf(titleEnd, ts + titleStart.length());
+                                if (te > ts) title = cleanHtml(lineContent.substring(ts + titleStart.length(), te));
+                            }
+                            if (title.contains("展开全部")) continue;
+                            if (title.isEmpty()) title = "第" + (eps.size() + 1) + "集";
+                            eps.add(title + "$" + addHttpPrefix(href));
+                        }
+                        if (!eps.isEmpty()) {
+                            if (sort != 0) Collections.reverse(eps);
+                            tmp_vod_play_url.add(TextUtils.join("#", eps));
+                            lineNum++;
+                        }
+                    }
+                    if (lineEnd == str.length()) break;
+                    pos = lineEnd;
+                }
+                if (!tmp_vod_play_url.isEmpty()) {
+                    vod_play_url.addAll(tmp_vod_play_url);
+                    SpiderDebug.log("findVodPlayUrl: prefix-split lines=" + lineNum);
+                    return vod_play_url;
+                }
+            }
+
+            // ========== 原有逻辑：按 play_array 分块解析（兜底）==========
             String playArrayRule = getRuleVal("play_array");
             String urlUrlRule = getRuleVal("url_url");
             if (!playArrayRule.isEmpty() && !urlUrlRule.isEmpty()
                     && playArrayRule.contains("&&") && urlUrlRule.contains("&&")) {
                 int totalBlockCount = 0;
-                // 支持多个选择器（用||分隔），直接分割原始规则不过滤
                 String[] playArraySelectors = playArrayRule.split("\\|\\|");
                 String[] ua = applyPostProcessors(applyOrSelector(urlUrlRule)).split("&&", 2);
                 String hrefStart = ua[0].trim();
@@ -2266,8 +2358,9 @@ public class XBPQ extends Spider {
                 }
 
                 for (String playArraySelector : playArraySelectors) {
-                    String listStart = playArraySelector.trim().split("&&")[0].trim();
-                    String listEnd = playArraySelector.trim().split("&&").length > 1 ? playArraySelector.trim().split("&&")[1].trim() : "</ul>";
+                    String[] selParts = playArraySelector.trim().split("&&");
+                    String listStart = selParts[0].trim();
+                    String listEnd = selParts.length > 1 ? selParts[1].trim() : "</ul>";
 
                     int listPos = 0;
                     int blockCount = 0;
@@ -2291,7 +2384,8 @@ public class XBPQ extends Spider {
                             if (he < 0) break;
                             String href = block.substring(he0, he).trim();
                             hp = he + hrefEnd.length();
-                            if (!href.contains("/play/") && !href.contains("vodplay") && !href.contains("vplay")) continue;
+                            if (!href.contains("/play/") && !href.contains("vodplay") && !href.contains("vplay")
+                                    && !href.contains(".m3u8") && !href.contains(".mp4")) continue;
 
                             String title = "";
                             int ts = block.indexOf(titleStart, he);
@@ -2308,31 +2402,60 @@ public class XBPQ extends Spider {
                             tmp_vod_play_url.add(TextUtils.join("#", eps));
                         }
                     }
-                    // 如果找到了内容，就跳出循环
                     if (!tmp_vod_play_url.isEmpty()) break;
                 }
                 if (!tmp_vod_play_url.isEmpty()) {
                     SpiderDebug.log("playArray: blocks=" + totalBlockCount + " episodes=" + tmp_vod_play_url.size());
-                    for (int i = 0; i < tmp_vod_play_url.size(); ++i) {
-                        if (!rmset.contains(i)) {
-                            vod_play_url.add(tmp_vod_play_url.get(i));
-                        }
-                    }
+                    vod_play_url.addAll(tmp_vod_play_url);
                     return vod_play_url;
-                } else {
-                    SpiderDebug.log("playArray: blocks=" + totalBlockCount + " tmp_vod_play_url empty");
-                }
-            }
-
-            for (int i = 0; i < tmp_vod_play_url.size(); ++i) {
-                if (!rmset.contains(i)) {
-                    vod_play_url.add(tmp_vod_play_url.get(i));
                 }
             }
         } catch (Exception e) {
             e.printStackTrace();
         }
         return vod_play_url;
+    }
+
+    /**
+     * CSS 选择器兜底解析播放列表（参考文件 parseDefaultPlaySources 思想）
+     * 当 findVodPlayUrl 未解析到内容时，对原始 body 用 playLinkUrl/playListTitle 做整页提取
+     */
+    private ArrayList<String> cssFallbackPlayUrl(String body) {
+        ArrayList<String> result = new ArrayList<>();
+        try {
+            String playLinkUrl = getRuleVal("playLinkUrl");
+            String playListTitle = getRuleVal("playListTitle");
+            if (playLinkUrl.isEmpty()) return result;
+
+            String cssPattern = Utils.parseCssSelector(applyOrSelector(playLinkUrl));
+            if (cssPattern == null) return result;
+
+            ArrayList<String> tmp = new ArrayList<>();
+            Matcher me = Pattern.compile(cssPattern).matcher(body);
+            while (me.find()) {
+                String epUrl = me.group(1);
+                String lineName = "";
+                if (!playListTitle.isEmpty()) {
+                    String titlePattern = Utils.parseCssSelector(applyOrSelector(playListTitle));
+                    if (titlePattern != null) {
+                        Matcher mt = Pattern.compile(titlePattern).matcher(body);
+                        if (mt.find()) {
+                            lineName = mt.group(1);
+                            if (mt.groupCount() > 1) lineName = mt.group(2);
+                        }
+                    }
+                }
+                if (lineName.isEmpty()) lineName = "第" + (tmp.size() + 1) + "集";
+                tmp.add(lineName + "$" + addHttpPrefix(epUrl));
+            }
+            if (!tmp.isEmpty()) {
+                result.add(TextUtils.join("#", tmp));
+                SpiderDebug.log("cssFallbackPlayUrl: match=" + tmp.size());
+            }
+        } catch (Exception e) {
+            SpiderDebug.log("cssFallbackPlayUrl error: " + e.getMessage());
+        }
+        return result;
     }
 
     // 猜测详情数据的html区间
@@ -2599,7 +2722,16 @@ public class XBPQ extends Spider {
                 }
             }
             vod_play_url = this.findVodPlayUrl(str);
-            ArrayList<String> vod_play_from = this.findVodPlayFrom(str, vod_play_url.size());
+            // ========== 优化：CSS 选择器兜底解析（参考文件 parseDefaultPlaySources 思想）==========
+            // 当 findVodPlayUrl 未解析到任何播放列表时，尝试用 playLinkUrl 对原始 body 做整页 CSS 提取
+            if ((vod_play_url == null || vod_play_url.isEmpty()) && body != null) {
+                ArrayList<String> cssFallback = cssFallbackPlayUrl(body);
+                if (!cssFallback.isEmpty()) {
+                    vod_play_url = cssFallback;
+                }
+            }
+            int playUrlSize = (vod_play_url != null) ? vod_play_url.size() : 0;
+            ArrayList<String> vod_play_from = this.findVodPlayFrom(str, playUrlSize);
 
             // 如果有说明播放源的名称，且规则里配置了 vod_play_from，才做别名排序
             if (playlist.has("vod_play_from") && vod_play_url != null && !vod_play_url.isEmpty()) {
