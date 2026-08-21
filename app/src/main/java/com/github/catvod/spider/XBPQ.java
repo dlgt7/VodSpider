@@ -1068,6 +1068,45 @@ public class XBPQ extends Spider {
             return str;
         }
 
+        /**
+         * 将 CSS 风格选择器转为正则表达式
+         * 支持: div, a[href], span.class-name->text, a->href
+         */
+        public static String parseCssSelector(String selector) {
+            if (selector == null || selector.isEmpty()) return null;
+            try {
+                String prop = "text";
+                if (selector.contains("->")) {
+                    String[] parts = selector.split("->");
+                    selector = parts[0];
+                    prop = parts.length > 1 ? parts[1] : "text";
+                }
+                Pattern p = Pattern.compile("(\\w+):?(.*)");
+                Matcher m = p.matcher(selector);
+                if (m.find()) {
+                    String tag = m.group(1);
+                    String attrs = m.group(2);
+                    StringBuilder sb = new StringBuilder();
+                    sb.append("<").append(tag);
+                    if (attrs.contains("[class")) {
+                        Pattern cp = Pattern.compile("\\[class\\s*\\*?=\\s*\"([^\"]+)\"\\]");
+                        Matcher cm = cp.matcher(attrs);
+                        if (cm.find()) sb.append("[class*=\"").append(cm.group(1)).append("\"]");
+                    }
+                    sb.append(">");
+                    if ("text".equals(prop)) {
+                        sb.append("(.*?)</").append(tag).append(">");
+                    } else if ("href".equals(prop)) {
+                        sb.append("\\s+href=\"([^\"]+)\"");
+                    }
+                    return sb.toString();
+                }
+            } catch (Exception e) {
+                return null;
+            }
+            return null;
+        }
+
     }
 
     // 猜测分类列表的html区间代码
