@@ -2099,8 +2099,29 @@ public class XBPQ extends Spider {
                 String lineSecondCut = getRuleVal("line_second_cut");
                 if (!fromArray.isEmpty()) {
                     // 应用线路二次截取（line_second_cut）
+                    // 智能修正：当 suffix 为未闭合的开始标签（如 <ul class="x">）时，自动追加闭合标签 </ul>
                     if (!lineSecondCut.isEmpty()) {
-                        str = applySecondCut(str, applyOrSelector(lineSecondCut));
+                        String cutRule = applyOrSelector(lineSecondCut);
+                        String[] cutParts = cutRule.split("&&");
+                        if (cutParts.length >= 2 && !cutParts[1].trim().isEmpty()) {
+                            String suffix = cutParts[1].trim();
+                            // 判断是否为未闭合的开始标签：以 < 开头且不是 </ 开头
+                            if (suffix.startsWith("<") && !suffix.startsWith("</")) {
+                                // 提取标签名
+                                String tagMatch = suffix.replaceAll("^[<\\s]+(\\w+).*", "$1");
+                                if (!tagMatch.equals(suffix) && !tagMatch.isEmpty()) {
+                                    // 用闭合标签替换 suffix
+                                    cutParts[1] = "</" + tagMatch + ">";
+                                    str = applySecondCut(str, cutParts[0] + "&&" + cutParts[1]);
+                                } else {
+                                    str = applySecondCut(str, cutRule);
+                                }
+                            } else {
+                                str = applySecondCut(str, cutRule);
+                            }
+                        } else {
+                            str = applySecondCut(str, cutRule);
+                        }
                     }
                     String processed = applyOrSelector(fromArray);
                     String cutRule = applyPostProcessors(processed);
