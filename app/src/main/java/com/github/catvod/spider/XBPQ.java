@@ -1257,7 +1257,7 @@ public class XBPQ extends Spider {
     /**
      * 初始化规则配置的详细设置
      */
-    private void initializeRuleConfig() throws JSONException {
+    private void initializeRuleConfig() throws JSONException, MalformedURLException {
         // 兼容旧字段：list.url → class_url
         if (!rule.has("class_url") && rule.has("list") && rule.getJSONObject("list").has("url")) {
             rule.put("class_url", rule.getJSONObject("list").getString("url"));
@@ -1340,7 +1340,7 @@ public class XBPQ extends Spider {
     /**
      * 初始化 homeUrl 和 list.url
      */
-    private void initializeHomeUrl(JSONObject list) throws JSONException {
+    private void initializeHomeUrl(JSONObject list) throws JSONException, MalformedURLException {
         String homeUrl = rule.getString("homeUrl");
         if (homeUrl.contains("{cateId}")) {
             URL url = new URL(homeUrl);
@@ -2912,7 +2912,7 @@ public class XBPQ extends Spider {
     /**
      * 选择最佳的 vod_id 结果
      */
-    private JSONArray selectBestVodIdResult(Map<String, JSONArray> founds) {
+    private JSONArray selectBestVodIdResult(Map<String, JSONArray> founds) throws JSONException {
         JSONArray best = null;
         for (JSONArray v : founds.values()) {
             if (best == null || best.getInt(5) < v.getInt(5)) {
@@ -3513,7 +3513,7 @@ public class XBPQ extends Spider {
     /**
      * 反转数组
      */
-    private JSONArray reverseArray(JSONArray arr) {
+    private JSONArray reverseArray(JSONArray arr) throws JSONException {
         JSONArray reversed = new JSONArray();
         for (int i = arr.length() - 1; i >= 0; i--) {
             reversed.put(arr.get(i));
@@ -3718,7 +3718,7 @@ public class XBPQ extends Spider {
     /**
      * 调整回看层级并提取节点
      */
-    private NodeExtractionResult adjustAndExtractNode(String content, int pos, JSONArray lookback, JSONObject list) {
+    private NodeExtractionResult adjustAndExtractNode(String content, int pos, JSONArray lookback, JSONObject list) throws JSONException {
         List<Integer> urlNodes = null;
         List<Integer> arr = null;
         int blockPos = 0;
@@ -3755,7 +3755,7 @@ public class XBPQ extends Spider {
      * 检查并调整回看层级
      */
     private int checkAndAdjustLevel(String node, int currentLookup, JSONArray lookback,
-                                     List<Integer> urlNodes, int blockPos) {
+                                     List<Integer> urlNodes, int blockPos) throws JSONException {
         if (currentLookup >= 0) return currentLookup;
 
         int count = RuleUtils.getSubStringCount(node, lookback.getString(0));
@@ -5230,7 +5230,7 @@ public class XBPQ extends Spider {
      * 提取搜索节点
      */
     private SearchNodeResult extractSearchNode(String content, int pos, JSONArray lookback,
-                                                  JSONObject search, String url) {
+                                                  JSONObject search, String url) throws JSONException {
         List<Integer> urlNodes = null;
         List<Integer> arr = null;
         int blockPos = 0;
@@ -5267,7 +5267,7 @@ public class XBPQ extends Spider {
      * 检查并调整搜索结果的回看层级
      */
     private int checkAndAdjustLevelForSearch(String node, int currentLookup, JSONArray lookback,
-                                               List<Integer> urlNodes, int blockPos) {
+                                               List<Integer> urlNodes, int blockPos) throws JSONException {
         // 与分类列表使用相同的层级修正逻辑
         return checkAndAdjustLevel(node, currentLookup, lookback, urlNodes, blockPos);
     }
