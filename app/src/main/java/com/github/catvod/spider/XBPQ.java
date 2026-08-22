@@ -5934,17 +5934,18 @@ public class XBPQ extends Spider {
             // 配置验证参数
             configureSliderVerifier(verifier);
 
-            // 执行验证流程
-            boolean success = verifier.verifyIfNeeded(webUrl, html);
-
-            if (success) {
-                SpiderDebug.log("滑块验证通过");
-                // 将验证获取的 cookie 合并到全局 header
-                mergeVerifyCookie(verifier);
+            // 执行验证流程：先检测是否为验证页面，再尝试带验证的请求
+            boolean success;
+            if (verifier.isVerifyPage(html)) {
+                SpiderDebug.log("检测到滑块验证页面，尝试自动验证...");
+                String verifiedHtml = verifier.requestWithVerify(webUrl);
+                success = verifiedHtml != null && !verifiedHtml.isEmpty()
+                        && !verifier.isVerifyPage(verifiedHtml);
+                if (success) {
+                    mergeVerifyCookie(verifier);
+                }
             } else {
-                SpiderDebug.log("滑块验证失败，将使用外部服务重试");
-                // 尝试外部打码服务
-                success = tryExternalVerifyService(webUrl, html, verifier);
+                success = true;
             }
 
             return success;
@@ -5980,21 +5981,15 @@ public class XBPQ extends Spider {
      */
     private void configureSliderVerifier(SliderVerifyUtils verifier) {
         try {
-            // 设置超时时间
-            int timeout = parseIntSafely(rule.optString("verify_timeout", "10"), 10);
-            verifier.setTimeout(timeout);
-
-            // 设置重试次数
-            int retries = parseIntSafely(rule.optString("verify_retries", "3"), 3);
-            verifier.setMaxRetries(retries);
-
-            // 设置验证类型偏好
+            // 设置验证类型（注意：SliderVerifyUtils 只支持 setVerifyType）
             String verifyType = rule.optString("verify_type", "auto");
             if ("slider".equals(verifyType)) {
-                verifier.setPreferredType(SliderVerifyUtils.VerifyType.SLIDER);
+                verifier.setVerifyType(SliderVerifyUtils.VerifyType.SLIDER);
             } else if ("click".equals(verifyType)) {
-                verifier.setPreferredType(SliderVerifyUtils.VerifyType.CLICK);
+                verifier.setVerifyType(SliderVerifyUtils.VerifyType.CLICK);
             }
+            // 注意：verify_timeout 和 verify_retries 在当前 SliderVerifyUtils 版本中不直接支持，
+            // 配置项已被忽略。如需超时控制可在 OkHttp 层面设置。
         } catch (Exception e) {
             SpiderDebug.log("验证器偏好配置异常: " + e.getMessage());
         }
@@ -6023,19 +6018,13 @@ public class XBPQ extends Spider {
     }
 
     /**
-     * 尝试外部打码服务
+     * 尝试外部打码服务（已适配：当前 SliderVerifyUtils 不提供 verifyByExternalService，
+     * 外部打码逻辑已内置在 requestWithVerify 中，当配置了 ocr_api 时会自动使用）
      */
+    @SuppressWarnings("unused")
     private boolean tryExternalVerifyService(String webUrl, String html, SliderVerifyUtils verifier) {
-        try {
-            // 检查是否配置了外部打码服务
-            String ocrApi = rule.optString("ocr_api", "");
-            if (ocrApi.isEmpty()) return false;
-
-            SpiderDebug.log("调用外部打码服务...");
-            return verifier.verifyByExternalService(webUrl, html);
-        } catch (Exception e) {
-            SpiderDebug.log("外部打码服务调用失败: " + e.getMessage());
-        }
+        // 当前版本的外部打码已在 requestWithVerify 内部处理
+        // 此方法保留为兼容桩，直接返回 false 表示需要上层用 requestWithVerify 重试
         return false;
     }
 
@@ -6425,11 +6414,11 @@ public class XBPQ extends Spider {
             }
             
             // 设置请求头
-            HashMap<String, String> headers = getHeaders(webUrl);
+            Map<String, String> headers = getHeaders(webUrl);
             headers.put("Content-Type", "application/x-www-form-urlencoded; charset=" + charset);
             
             // 发送 POST 请求
-            String response = OkHttp.postString(webUrl, headers, sb.toString());
+            String response = OkHttp.post(webUrl, sb.toString(), headers);
             return response != null ? response : "";
         } catch (Exception e) {
             SpiderDebug.log("fetchPostForm 异常：" + e.getMessage());
@@ -6457,7 +6446,7 @@ public class XBPQ extends Spider {
                     }
                 }
                 
-                response = OkHttp.newCall(builder.build());
+                response = OkHttp.newCall(webUrl, headers);
                 String body = response.body().string();
                 
                 // 提取响应头
@@ -6510,7 +6499,7 @@ public class XBPQ extends Spider {
             if (url.startsWith("clan://")) {
                 // 本地文件路径
                 String filePath = url.substring(7);
-                String content = Util.readFile(filePath);
+                String content = Util.readStringFromFile(filePath);
                 return new JSONObject(content);
             } else if (url.startsWith("http")) {
                 // 网络 URL
