@@ -1249,4 +1249,28 @@ public class Util {
         sb.append(str);
         return sb.toString();
     }
+
+    /**
+     * 从文件路径读取字符串内容（支持 clan:// 本地文件加载）
+     */
+    public static String readStringFromFile(String filePath) {
+        if (isEmpty(filePath)) return "";
+        try {
+            java.io.File file = new java.io.File(filePath);
+            if (!file.exists() || !file.canRead()) return "";
+            StringBuilder sb = new StringBuilder((int) Math.min(file.length(), Integer.MAX_VALUE));
+            try (java.io.BufferedReader reader = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(new java.io.FileInputStream(file), StandardCharsets.UTF_8))) {
+                char[] buf = new char[8192];
+                int len;
+                while ((len = reader.read(buf)) != -1) {
+                    sb.append(buf, 0, len);
+                }
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            SpiderDebug.log("readStringFromFile 异常: " + e.getMessage());
+            return "";
+        }
+    }
 }
