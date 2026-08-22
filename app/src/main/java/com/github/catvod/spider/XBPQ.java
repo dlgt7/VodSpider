@@ -4729,7 +4729,7 @@ public class XBPQ extends Spider {
 
             String vodUrl = RuleUtils.findSubString(body, startPos, play.optJSONArray("vod_url"));
             vodUrl = vodUrl.replace("\\/", "/");
-            // hexEscapeDecode 清理敏感词（\uXXXX Unicode 转义还原 + 多余换行/反斜杠清理）
+            // hexEscapeDecode 清理敏感词（\\uXXXX Unicode 转义还原 + 多余换行/反斜杠清理）
             vodUrl = hexEscapeDecode(vodUrl);
             if (vodUrl.isEmpty() || !isVideoFormat(vodUrl)) return "";
 
@@ -6169,7 +6169,7 @@ public class XBPQ extends Spider {
     }
     
     /**
-     * 解码 Unicode 转义字符（\uXXXX 格式）（借鉴 XYQHiker.decodeHexChars）
+     * 解码 Unicode 转义字符（\\uXXXX 格式）（借鉴 XYQHiker.decodeHexChars）
      *
      * @param str 包含 Unicode 转义的字符串
      * @return 解码后的字符串
@@ -6182,7 +6182,7 @@ public class XBPQ extends Spider {
     
     /**
      * 移除 Unicode 转义序列（借鉴 XBiubiu.removeUnicode）
-     * 将 \uXXXX 格式转换为中文字符
+     * 将 \\uXXXX 格式转换为中文字符
      *
      * @param str 输入字符串
      * @return 转换后的字符串
@@ -7070,7 +7070,7 @@ public class XBPQ extends Spider {
     // ==================== hexEscapeDecode 敏感词清理（借鉴第18次升级版/参考文件） ====================
 
     /**
-     * JSON 转义字符解码：将 \uXXXX 格式的 Unicode 转义序列还原为实际字符，
+     * JSON 转义字符解码：将 \\uXXXX 格式的 Unicode 转义序列还原为实际字符，
      * 并移除多余的换行符和反斜杠（用于清理站点对敏感词的 unicode 编码保护）
      */
     protected static String hexEscapeDecode(String input) {
