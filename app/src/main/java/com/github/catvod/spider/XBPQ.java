@@ -8,6 +8,7 @@ import android.util.Pair;
 import com.github.catvod.crawler.Spider;
 import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.utils.Crypto;
+import com.github.catvod.utils.SliderVerifyUtils;
 import com.github.catvod.utils.Util;
 import com.github.catvod.net.OkHttp;
 
@@ -1686,7 +1687,7 @@ public class XBPQ extends Spider {
             if (rule.has(key)) return true;
         }
         // 检查各子对象的字段是否包含 css:// 前缀
-        return hasCssPrefixInObject(list);
+        return hasCssPrefixInObject(rule.optJSONObject("list"));
     }
 
     /**
@@ -3151,7 +3152,7 @@ public class XBPQ extends Spider {
         }
 
         // 优先级：class_name/class_value > cateManual > cat_array/cat_title/cat_id > fenlei
-        if (tryBuildFromClassPairs(classes)) return classes;
+        if (tryBuildFromClassPair(classes)) return classes;
         if (cateManual != null && cateManual.length() > 0) {
             buildClassesFromCateManual(classes, cateManual);
             return classes;
@@ -3378,7 +3379,7 @@ public class XBPQ extends Spider {
         String classUrl = rule.optString("class_url", "");
         if (!classUrl.contains("{by}")) return;
 
-        JSONObject filter = new JSONObject();
+        JSONObject filterObj = new JSONObject();
         JSONObject byItem = new JSONObject();
         byItem.put("key", "by");
         JSONArray listArr = new JSONArray();
@@ -3393,8 +3394,8 @@ public class XBPQ extends Spider {
             listArr.put(opt);
         }
         byItem.put("value", listArr);
-        filter.put("by", byItem);
-        result.put("filters", filter);
+        filterObj.put("by", byItem);
+        result.put("filters", filterObj);
     }
 
     // ==================== 首页推荐接口 ====================
@@ -3430,7 +3431,7 @@ public class XBPQ extends Spider {
 
             // 收集视频
             Set<String> seen = new HashSet<>();
-            JSONArray allVideos = new JSONArray<>();
+            JSONArray allVideos = new JSONArray();
             int count = 0;
             for (int i = 0; i < sections.size() && count < maxVideos; i++) {
                 Pair<String, String> sec = sections.get(i);
@@ -3628,7 +3629,7 @@ public class XBPQ extends Spider {
     }
 
     @Override
-    public String categoryContent(String tid, String pg, boolean filter, Map<String, String> extend) throws Exception {
+    public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
         try {
             JSONObject list = this.rule.getJSONObject("list");
             String url = categoryUrl(tid, pg, filter, extend);
@@ -3636,12 +3637,12 @@ public class XBPQ extends Spider {
             String content = RuleUtils.getRegion(body, list);
 
             // ========== CSS选择器模式（优先） ==========
+            String listTwice = getRuleVal("list_twice");
             if (isCssModeEnabled(list)) {
                 SpiderDebug.log("分类列表使用CSS/Jsoup模式提取");
                 // CSS二次截取
-                String listTwiceCss = getRuleVal("list_twice");
-                if (!listTwiceCss.isEmpty() && JsoupExtractor.isCssRule(applyOrSelector(listTwiceCss))) {
-                    content = JsoupExtractor.cutRegion(content, applyOrSelector(listTwiceCss));
+                if (!listTwice.isEmpty() && JsoupExtractor.isCssRule(applyOrSelector(listTwice))) {
+                    content = JsoupExtractor.cutRegion(content, applyOrSelector(listTwice));
                 } else if (!listTwice.isEmpty()) {
                     content = applySecondCut(content, applyOrSelector(listTwice));
                 }
@@ -3654,7 +3655,6 @@ public class XBPQ extends Spider {
 
             // ========== 传统正则/字符串截取模式 ==========
             // 应用二次截取
-            String listTwice = getRuleVal("list_twice");
             if (!listTwice.isEmpty()) {
                 content = applySecondCut(content, applyOrSelector(listTwice));
             }
@@ -3961,7 +3961,7 @@ public class XBPQ extends Spider {
         if (playFromList.size() != expectedSize) return makeVodPlayFrom(expectedSize);
 
         // 排序
-        Collections.sort(playFromList, Comparator.comparingInt(Pair::first));
+        Collections.sort(playFromList, Comparator.comparingInt(pair -> pair.first));
 
         List<String> result = new ArrayList<>();
         for (Pair<Integer, String> pair : playFromList) {
