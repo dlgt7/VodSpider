@@ -1176,8 +1176,8 @@ public class XBPQ extends Spider {
         super.init(context, extend);
         this.context = context;
         this.ext = extend;
-        // P2: 初始化串行单例 WebView
-        SingletonWebView.getInstance().init(context);
+        // P2: 初始化串行单例 WebView（传入 this，供内部调用实例方法）
+        SingletonWebView.getInstance().init(context, this);
     }
 
     /**
@@ -5810,7 +5810,7 @@ public class XBPQ extends Spider {
         private volatile Handler mainHandler;
         private volatile boolean destroyed;
         private boolean busy;
-        private java.lang.ref.WeakReference<XBPQ> ownerRef;
+        private static java.lang.ref.WeakReference<XBPQ> ownerRef;
 
         static SingletonWebView getInstance() { return Holder.INSTANCE; }
 
