@@ -6072,25 +6072,30 @@ public class XBPQ extends Spider {
      * 浅拷贝，避免修改原始 headers 对象
      */
     private JSONObject mergeWebviewHeaders(JSONObject headers) {
-        JSONObject full = headers != null ? new JSONObject(headers.toString()) : new JSONObject();
-        // 来源2：rule.header.Cookie（仅当 full 中尚未有 Cookie 时取）
-        if (isEmptyCookie(full) && rule != null) {
-            JSONObject ruleHdr = rule.optJSONObject("header");
-            if (ruleHdr != null) {
-                String rCookie = getCookie(ruleHdr);
-                if (!rCookie.isEmpty()) {
-                    full.put("Cookie", rCookie);
+        try {
+            JSONObject full = headers != null ? new JSONObject(headers.toString()) : new JSONObject();
+            // 来源2：rule.header.Cookie（仅当 full 中尚未有 Cookie 时取）
+            if (isEmptyCookie(full) && rule != null) {
+                JSONObject ruleHdr = rule.optJSONObject("header");
+                if (ruleHdr != null) {
+                    String rCookie = getCookie(ruleHdr);
+                    if (!rCookie.isEmpty()) {
+                        full.put("Cookie", rCookie);
+                    }
                 }
             }
-        }
-        // 来源3：headerMap（类级公共请求头）
-        if (isEmptyCookie(full) && !headerMap.isEmpty()) {
-            String hmCookie = getCookie(headerMap);
-            if (!hmCookie.isEmpty()) {
-                full.put("Cookie", hmCookie);
+            // 来源3：headerMap（类级公共请求头）
+            if (isEmptyCookie(full) && !headerMap.isEmpty()) {
+                String hmCookie = getCookie(headerMap);
+                if (!hmCookie.isEmpty()) {
+                    full.put("Cookie", hmCookie);
+                }
             }
+            return full;
+        } catch (JSONException e) {
+            SpiderDebug.log(safeLog("mergeWebviewHeaders error: " + e.getMessage()));
+            return headers != null ? headers : new JSONObject();
         }
-        return full;
     }
 
     /** 从 JSONObject 中读取 Cookie（兼容 "Cookie" 和 "cookie" 键名） */
