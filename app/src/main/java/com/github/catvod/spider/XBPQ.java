@@ -5572,9 +5572,9 @@ public class XBPQ extends Spider {
             String customUa = headers.optString("User-Agent", "");
             if (!customUa.isEmpty()) ua = customUa;
         }
-        int extraWait = readIntRule("web_view_wait", 0);
+        int extraWait = readIntRule(rule, "web_view_wait", 0);
         String readySelector = rule != null ? rule.optString("web_view_ready", "") : "";
-        int readyTimeout = readIntRule("web_view_ready_timeout", 12000);
+        int readyTimeout = readIntRule(rule, "web_view_ready_timeout", 12000);
         boolean useReadyPoll = !readySelector.isEmpty();
 
         // 入队，串行等待
@@ -5600,7 +5600,7 @@ public class XBPQ extends Spider {
         return cleanHtmlResponse(html);
     }
 
-    private static int readIntRule(String key, int def) {
+    private static int readIntRule(JSONObject rule, String key, int def) {
         if (rule == null) return def;
         String s = rule.optString(key, "");
         if (s.isEmpty()) return def;
@@ -5612,7 +5612,7 @@ public class XBPQ extends Spider {
      * selector 含空格 / . / # / [ → CSS querySelector；其余视为 JS 表达式
      * 超时后仍调用 callback（尽力而为），避免与全局超时冲突
      */
-    private void startReadyPoll(WebView view, String readySelector, int readyTimeoutMs,
+    private static void startReadyPoll(WebView view, String readySelector, int readyTimeoutMs,
                                 Handler mainHandler, boolean[] cancelled, Runnable onReady) {
         final long deadline = System.currentTimeMillis() + readyTimeoutMs;
         final int pollInterval = 250;
@@ -5809,6 +5809,7 @@ public class XBPQ extends Spider {
         private volatile Handler mainHandler;
         private volatile boolean destroyed;
         private boolean busy;
+        private java.lang.ref.WeakReference<XBPQ> ownerRef;
 
         static SingletonWebView getInstance() { return Holder.INSTANCE; }
 
@@ -5933,11 +5934,11 @@ public class XBPQ extends Spider {
                 }
             });
 
-            Map<String, String> h = getHeaders(url);
-            if (headers != null) h = mergeHeaders(h, headers);
+            Map<String, String> h = getHeadersXbpq(url);
+            if (headers != null) h = mergeHeadersXbpq(h, headers);
             String userAgent = h.getOrDefault("User-Agent", ua);
             wv.getSettings().setUserAgentString(userAgent);
-            syncCookiesToWebView(url, headers);
+            syncCookiesToWebViewXbpq(url, headers);
             wv.loadUrl(url, h);
         }
 
@@ -5963,7 +5964,7 @@ public class XBPQ extends Spider {
                             } catch (Exception e) {
                                 SpiderDebug.log("runExtract error: " + e.getMessage());
                             }
-                            try { backfillCookiesFromWebView(view.getUrl()); } catch (Exception ignored) {}
+                            try { backfillCookiesFromWebViewXbpq(view.getUrl()); } catch (Exception ignored) {}
                             req.complete(html); // P1: 唤醒 await
                             onComplete.run();
                         });
@@ -6004,6 +6005,27 @@ public class XBPQ extends Spider {
                 Req r = queue.poll();
                 if (r != null) r.fail(reason);
             }
+        }
+
+        // ---- 从 owner 委派实例方法调用 ----
+        private static Map<String, String> getHeadersXbpq(String url) {
+            XBPQ o = ownerRef != null ? ownerRef.get() : null;
+            return o != null ? o.getHeaders(url) : new HashMap<>();
+        }
+
+        private static Map<String, String> mergeHeadersXbpq(Map<String, String> base, JSONObject extra) {
+            XBPQ o = ownerRef != null ? ownerRef.get() : null;
+            return o != null ? o.mergeHeaders(base, extra) : base;
+        }
+
+        private static void syncCookiesToWebViewXbpq(String url, JSONObject headers) {
+            XBPQ o = ownerRef != null ? ownerRef.get() : null;
+            if (o != null) o.syncCookiesToWebView(url, headers);
+        }
+
+        private static void backfillCookiesFromWebViewXbpq(String pageUrl) {
+            XBPQ o = ownerRef != null ? ownerRef.get() : null;
+            if (o != null) o.backfillCookiesFromWebView(pageUrl);
         }
     }
 
