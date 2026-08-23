@@ -6160,8 +6160,7 @@ public class XBPQ extends Spider {
         Matcher m2 = p2.matcher(html);
         if (m2.find()) return m2.group(1);
 
-        // 格式3: 兼容原有的简单查找
-        return extractBtwafToken(html);
+        return "";
     }
 
     /**
