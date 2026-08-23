@@ -298,6 +298,7 @@ public class XBPQ extends Spider {
         CHINESE_KEY_MAP.put("直接播放", "force_play");
         CHINESE_KEY_MAP.put("播放请求头", "play_header");
         CHINESE_KEY_MAP.put("嗅探词", "video_format");
+        CHINESE_KEY_MAP.put("剧集过滤", "episode_filter");
 
         // 搜索
         CHINESE_KEY_MAP.put("搜索url", "search_url");
@@ -3785,6 +3786,9 @@ public class XBPQ extends Spider {
             String cateUrl = list.optString(pg, "");
             if (cateUrl.isEmpty()) cateUrl = list.getString("url");
 
+            // 剥离反引号（部分规则习惯用 ` 包裹 URL，引擎不做模板求值，保留会拼出非法 URL）
+            cateUrl = stripBackticks(cateUrl);
+
             // 处理 ;; 模式后缀
             if (cateUrl.contains(";;")) {
                 cateUrl = cateUrl.substring(0, cateUrl.indexOf(";;")).trim();
@@ -3831,6 +3835,18 @@ public class XBPQ extends Spider {
             SpiderDebug.log(e);
         }
         return "";
+    }
+
+    /**
+     * 剥离字符串首尾的反引号（`）
+     * 部分站点规则习惯用 ` 包裹 URL 模板，引擎不做模板求值，反引号保留会拼出非法 URL
+     */
+    protected String stripBackticks(String url) {
+        if (url == null) return "";
+        String result = url.trim();
+        while (result.startsWith("`")) result = result.substring(1).trim();
+        while (result.endsWith("`")) result = result.substring(0, result.length() - 1).trim();
+        return result;
     }
 
     /**
@@ -4144,13 +4160,28 @@ public class XBPQ extends Spider {
 
     /**
      * 构建分类返回结果
+     * <p>
+     * 空页时将 pagecount 回填为 当前页-1（第1页空则为0），让前端停止展示"下一页"；
+     * 有内容时维持 Integer.MAX_VALUE（引擎无法预知真实总页数）。
+     * 瞬时请求失败导致的误判代价仅是少翻一页，重新进入分类即可恢复。
      */
     private String buildCategoryResult(JSONArray videos, String pg) throws JSONException {
         JSONObject result = new JSONObject();
         result.put("page", pg);
-        result.put("pagecount", Integer.MAX_VALUE);
+        if (videos.length() == 0) {
+            int page;
+            try {
+                page = pg == null ? 1 : Integer.parseInt(pg.trim());
+            } catch (NumberFormatException e) {
+                page = 1;
+            }
+            result.put("pagecount", Math.max(0, page - 1));
+            result.put("total", 0);
+        } else {
+            result.put("pagecount", Integer.MAX_VALUE);
+            result.put("total", Integer.MAX_VALUE);
+        }
         result.put("limit", Math.max(90, videos.length()));
-        result.put("total", Integer.MAX_VALUE);
         result.put("list", videos);
         return result.toString();
     }
@@ -4341,6 +4372,25 @@ public class XBPQ extends Spider {
             for (int i = 0; i < tmpPlayUrl.size(); ++i) {
                 if (!removeSet.contains(i)) {
                     playUrl.add(tmpPlayUrl.get(i));
+                }
+            }
+
+            // 兜底：三条显式路径均未命中时，消费 playlist.vod_play_url 回看规则
+            // （来源：播放列表/url_array 扁平字段或 guessRuleVodPlayUrl 的猜测结果，
+            //   单集页站点整页即一集，取首个匹配作为唯一剧集）
+            if (playUrl.isEmpty()) {
+                JSONArray playLookback = playlist.optJSONArray("vod_play_url");
+                if (playLookback != null) {
+                    String url = RuleUtils.findSubString(content, 0, playLookback);
+                    if (!url.isEmpty()) {
+                        // 与 extractEpisodes 产出对齐：标题$链接 格式，链接补全为绝对地址
+                        // 标题取链接结束位置之后的默认边界（>...<，即 <a> 文本）
+                        int urlEnd = content.indexOf(url) + url.length();
+                        String[] titleBounds = getTitleBounds();
+                        String title = extractEpisodeTitle(content, urlEnd, titleBounds);
+                        if (title.isEmpty() || title.contains("\n")) title = "第1集";
+                        playUrl.add(title + "$" + addHttpPrefix(url));
+                    }
                 }
             }
         } catch (Exception e) {
@@ -5412,10 +5462,24 @@ public class XBPQ extends Spider {
 
     @Override
     public String searchContent(String keyword, boolean quick) {
+        // 二参版委托三参版（与 DJhub/Czys 等爬虫一致），默认第 1 页
+        return searchContent(keyword, quick, "1");
+    }
+
+    @Override
+    public String searchContent(String keyword, boolean quick, String pg) {
         try {
             fetchRule();
             JSONObject search = rule.optJSONObject("search");
             String searchUrlFlat = rule.optString("search_url", "");
+
+            // 页码归一化：非法/空值回退为 1
+            String page = (pg == null || pg.trim().isEmpty()) ? "1" : pg.trim();
+            try {
+                if (Integer.parseInt(page) < 1) page = "1";
+            } catch (NumberFormatException e) {
+                page = "1";
+            }
 
             // 懒加载兜底：无搜索配置时先尝试猜测/生成默认配置（延迟到消费点，避免拖慢 init）
             if ((search == null || !search.has("url")) && searchUrlFlat.isEmpty()) {
@@ -5428,7 +5492,7 @@ public class XBPQ extends Spider {
             }
 
             // 获取搜索内容
-            SearchFetchResult fetchResult = fetchSearchContent(keyword, search, searchUrlFlat);
+            SearchFetchResult fetchResult = fetchSearchContent(keyword, search, searchUrlFlat, page);
             if (fetchResult == null) return "";
 
             String content = fetchResult.content;
@@ -5484,17 +5548,17 @@ public class XBPQ extends Spider {
     /**
      * 获取搜索内容
      */
-    private SearchFetchResult fetchSearchContent(String keyword, JSONObject search, String searchUrlFlat) throws Exception {
+    private SearchFetchResult fetchSearchContent(String keyword, JSONObject search, String searchUrlFlat, String page) throws Exception {
         SearchFetchResult result = new SearchFetchResult();
 
         if (!searchUrlFlat.isEmpty()) {
             // 扁平搜索URL优先（buildSearchUrl 内部已应用 search_suffix）
-            result.url = buildSearchUrl(searchUrlFlat, keyword);
+            result.url = buildSearchUrl(searchUrlFlat, keyword, page);
             JSONObject headers = parseSearchHeaders(getRuleVal("search_header"));
             result.content = fetchUrl(result.url, headers);
         } else if (search != null && search.has("url")) {
             result.url = applySearchSuffix(addHttpPrefix(search.getString("url")
-                    .replace("{wd}", keyword).replace("{pg}", "1")));
+                    .replace("{wd}", keyword).replace("{pg}", page)));
             JSONObject headers = parseSearchHeaders(getRuleVal("search_header"));
             if (headers == null && search != null) headers = search.optJSONObject("header");
             result.content = fetchUrl(result.url, headers);
@@ -5505,10 +5569,10 @@ public class XBPQ extends Spider {
     /**
      * 构建搜索URL
      */
-    private String buildSearchUrl(String searchUrlFlat, String keyword) throws Exception {
+    private String buildSearchUrl(String searchUrlFlat, String keyword, String page) throws Exception {
         return addHttpPrefix(applySearchSuffix(searchUrlFlat
                 .replace("{wd}", URLEncoder.encode(keyword, "UTF-8"))
-                .replace("{pg}", "1")));
+                .replace("{pg}", page)));
     }
 
     /**
