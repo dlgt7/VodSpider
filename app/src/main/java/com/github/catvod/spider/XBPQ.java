@@ -70,8 +70,8 @@ public class XBPQ extends Spider {
             ".m3u8", ".mp4", ".mpeg", ".flv", ".mkv"
     );
 
-    /** 最大 HTML 内容截取长度（32KB） */
-    private static final int MAX_HTML_LENGTH = 32 * 1024;
+    /** 最大 HTML 内容截取长度（2MB） */
+    private static final int MAX_HTML_LENGTH = 2 * 1024 * 1024;
 
     /** 最大匹配项数量限制 */
     private static final int MAX_MATCH_COUNT = 30;
@@ -2462,6 +2462,18 @@ public class XBPQ extends Spider {
         try {
             if (headerStr.startsWith("{")) {
                 return new JSONObject(headerStr);
+            }
+            // 内置UA简写支持
+            String normalized = headerStr.trim();
+            if ("手机".equals(normalized)) {
+                JSONObject hdr = new JSONObject();
+                hdr.put("User-Agent", UA_MOBILE);
+                return hdr;
+            }
+            if ("电脑".equals(normalized)) {
+                JSONObject hdr = new JSONObject();
+                hdr.put("User-Agent", UA_PC);
+                return hdr;
             }
             JSONObject hdr = new JSONObject();
             String[] pairs = headerStr.split("#");
