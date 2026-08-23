@@ -1218,12 +1218,26 @@ public class XBPQ extends Spider {
                             arr.put(i, convertChineseKeys((JSONObject) arr.get(i)));
                         }
                     }
+                } else if (val instanceof String) {
+                    json.put(key, stripBackticks((String) val));
                 }
             }
         } catch (Exception e) {
             SpiderDebug.log(e);
         }
         return json;
+    }
+
+    /**
+     * 去除字符串首尾的反引号
+     */
+    private String stripBackticks(String str) {
+        if (str == null) return null;
+        str = str.trim();
+        if (str.startsWith("`") && str.endsWith("`")) {
+            str = str.substring(1, str.length() - 1).trim();
+        }
+        return str;
     }
 
     /**
@@ -3617,7 +3631,7 @@ public class XBPQ extends Spider {
         try {
             JSONObject list = this.rule.getJSONObject("list");
             String cateUrl = list.optString(pg, "");
-            if (cateUrl.isEmpty()) cateUrl = list.getString("url");
+            if (cateUrl.isEmpty()) cateUrl = list.optString("url", "");
 
             // 处理 ;; 模式后缀
             if (cateUrl.contains(";;")) {
