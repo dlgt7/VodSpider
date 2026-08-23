@@ -5585,7 +5585,8 @@ public class XBPQ extends Spider {
 
         long timeout = (long) WEBVIEW_TIMEOUT_MS + Math.max(0, extraWait)
                 + (useReadyPoll ? Math.max(0, readyTimeout) : 0);
-        boolean done = req.latch.await(timeout, TimeUnit.MILLISECONDS);
+        boolean done = false;
+        try { done = req.latch.await(timeout, TimeUnit.MILLISECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
 
         if (!done || req.errorMsg != null) {
             String reason = req.errorMsg != null ? req.errorMsg : "超时 (" + timeout + "ms)";
