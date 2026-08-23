@@ -1,9 +1,15 @@
 package com.github.catvod.spider;
 
 import android.content.Context;
+import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.TextUtils;
 import android.util.Base64;
 import android.util.Pair;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
 
 import com.github.catvod.crawler.Spider;
 import com.github.catvod.crawler.SpiderDebug;
@@ -39,6 +45,8 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -147,6 +155,12 @@ public class XBPQ extends Spider {
 
     /** 随机数生成器（随机图标背景色） */
     private final Random random = new Random();
+
+    /** Android 上下文（用于 WebView 渲染 JS 页面） */
+    private Context context;
+
+    /** WebView 渲染超时时间（毫秒） */
+    private static final int WEBVIEW_TIMEOUT_MS = 15000;
 
     // ==================== 6 个新字段实例状态（热门推荐/列表显示/线路合并/线路链接/播放图片/User） ====================
 
@@ -312,6 +326,10 @@ public class XBPQ extends Spider {
         CHINESE_KEY_MAP.put("CSS 提取", "css_extract");
         CHINESE_KEY_MAP.put("CSS 属性", "css_attribute");
         CHINESE_KEY_MAP.put("JSOUP 解析", "jsoup_parse");
+        CHINESE_KEY_MAP.put("网页渲染", "web_view");
+        CHINESE_KEY_MAP.put("网页等待", "web_view_wait");
+        CHINESE_KEY_MAP.put("网页就绪", "web_view_ready");
+        CHINESE_KEY_MAP.put("网页就绪超时", "web_view_ready_timeout");
 
         // ===== 扩展映射（借鉴第18次升级版 ZH_EN_CONFIG_KEYS 与参考文件 CHINESE_KEY_MAP）=====
 
@@ -1156,7 +1174,10 @@ public class XBPQ extends Spider {
     @Override
     public void init(Context context, String extend) throws Exception {
         super.init(context, extend);
+        this.context = context;
         this.ext = extend;
+        // P2: 初始化串行单例 WebView
+        SingletonWebView.getInstance().init(context);
     }
 
     /**
@@ -5468,6 +5489,17 @@ public class XBPQ extends Spider {
             Map<String, String> h = getHeaders(url);
             if (headers != null) h = mergeHeaders(h, headers);
 
+            // 如果规则启用了 WebView 渲染，则使用 WebView 获取 JS 渲染后的 HTML
+            if (isWebViewEnabled()) {
+                SpiderDebug.log("fetchUrl: 使用 WebView 渲染模式: " + url);
+                String html = webViewFetch(url, headers);
+                if (!html.isEmpty()) {
+                    html = bypassBaoTaWaf(url, html, headers);
+                    return html;
+                }
+                SpiderDebug.log("fetchUrl: WebView 返回空，降级为 OkHttp");
+            }
+
             okhttp3.Response resp = OkHttp.newCall(url, h);
             String html;
             try {
@@ -5497,6 +5529,550 @@ public class XBPQ extends Spider {
             SpiderDebug.log(safeLog("fetchUrl error: " + failMessage));
             return "";
         }
+    }
+
+    // ==================== WebView 渲染支持 ====================
+
+    /**
+     * 通过 WebView 渲染 JavaScript 页面并获取渲染后的 HTML
+     * <p>
+     * 当规则配置 web_view=1 时，优先使用 WebView 替代 OkHttp 获取页面内容，
+     * 适用于需要 JS 渲染才能获取完整内容的站点。
+     *
+     * @param url     目标 URL
+     * @param headers 请求头（User-Agent 等）
+     * @return 渲染后的 HTML 内容，失败返回空字符串
+     */
+    protected String webViewFetch(String url, JSONObject headers) {
+        // P0: context 为空时直接走 OkHttp，不再递归回 fetchUrl
+        if (context == null) {
+            SpiderDebug.log("webViewFetch: context 为空，降级 OkHttp: " + url);
+            Map<String, String> h = getHeaders(url);
+            if (headers != null) h = mergeHeaders(h, headers);
+            return cleanHtmlResponse(OkHttp.string(url, h));
+        }
+
+        // P1: SSRF 防护
+        if (isInternalUrl(url)) {
+            SpiderDebug.log("webViewFetch SSRF blocked: " + url);
+            return "";
+        }
+
+        // P4: 禁止在主线程调用，防止 ANR（WebView 操作必须主线程，但 await 会卡死主线程）
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            SpiderDebug.log("webViewFetch: 主线程调用，降级 OkHttp 防 ANR: " + url);
+            Map<String, String> h = getHeaders(url);
+            if (headers != null) h = mergeHeaders(h, headers);
+            return cleanHtmlResponse(OkHttp.string(url, h));
+        }
+
+        // 读取规则配置
+        String ua = UA_PC;
+        if (headers != null) {
+            String customUa = headers.optString("User-Agent", "");
+            if (!customUa.isEmpty()) ua = customUa;
+        }
+        int extraWait = readIntRule("web_view_wait", 0);
+        String readySelector = rule != null ? rule.optString("web_view_ready", "") : "";
+        int readyTimeout = readIntRule("web_view_ready_timeout", 12000);
+        boolean useReadyPoll = !readySelector.isEmpty();
+
+        // 入队，串行等待
+        SingletonWebView singleton = SingletonWebView.getInstance();
+        Req req = new Req(url, ua, headers, extraWait, useReadyPoll, readySelector, readyTimeout);
+        singleton.enqueue(req);
+
+        long timeout = (long) WEBVIEW_TIMEOUT_MS + Math.max(0, extraWait)
+                + (useReadyPoll ? Math.max(0, readyTimeout) : 0);
+        boolean done = req.latch.await(timeout, TimeUnit.MILLISECONDS);
+
+        if (!done || req.errorMsg != null) {
+            String reason = req.errorMsg != null ? req.errorMsg : "超时 (" + timeout + "ms)";
+            SpiderDebug.log("webViewFetch: " + reason + ": " + url);
+            return "";
+        }
+        String html = req.html;
+        if (html == null || html.isEmpty()) {
+            SpiderDebug.log("webViewFetch: 返回空内容: " + url);
+            return "";
+        }
+        SpiderDebug.log("webViewFetch 成功，内容长度: " + html.length());
+        return cleanHtmlResponse(html);
+    }
+
+    private static int readIntRule(String key, int def) {
+        if (rule == null) return def;
+        String s = rule.optString(key, "");
+        if (s.isEmpty()) return def;
+        try { return Integer.parseInt(s); } catch (Exception e) { return def; }
+    }
+
+    /**
+     * P8: DOM 就绪轮询 — onPageFinished 后逐帧检查条件，满足后再抽 HTML
+     * selector 含空格 / . / # / [ → CSS querySelector；其余视为 JS 表达式
+     * 超时后仍调用 callback（尽力而为），避免与全局超时冲突
+     */
+    private void startReadyPoll(WebView view, String readySelector, int readyTimeoutMs,
+                                Handler mainHandler, boolean[] cancelled, Runnable onReady) {
+        final long deadline = System.currentTimeMillis() + readyTimeoutMs;
+        final int pollInterval = 250;
+
+        Runnable poll = new Runnable() {
+            boolean done = false;
+
+            @Override
+            public void run() {
+                if (done || cancelled[0]) return;
+                long remaining = deadline - System.currentTimeMillis();
+                if (remaining <= 0) {
+                    // 超时仍未就绪，尽力而为直接抽 HTML
+                    SpiderDebug.log("web_view_ready 超时，降级抽 HTML: " + readySelector);
+                    done = true;
+                    onReady.run();
+                    return;
+                }
+                view.evaluateJavascript(buildReadyScript(readySelector), result -> {
+                    if (done || cancelled[0]) return;
+                    if (isReadyResult(result)) {
+                        SpiderDebug.log("web_view_ready 条件满足: " + readySelector);
+                        done = true;
+                        onReady.run();
+                    } else {
+                        // 未就绪且未取消，继续轮询（不等 finished，onPageFinished 已置 true）
+                        mainHandler.postDelayed(this, Math.min(pollInterval, (int) Math.max(1, remaining)));
+                    }
+                });
+            }
+        };
+        mainHandler.post(poll);
+    }
+
+    /**
+     * 解 evaluateJavascript 回调中的 JSON 引号，判断是否为就绪信号
+     */
+    private static boolean isReadyResult(String result) {
+        if (result == null) return false;
+        String s = result.trim();
+        if (s.length() >= 2 && s.startsWith("\"") && s.endsWith("\"")) {
+            s = s.substring(1, s.length() - 1);
+        }
+        return "1".equals(s) || "true".equalsIgnoreCase(s);
+    }
+
+    /**
+     * 生成 ready 检测脚本：CSS 选择器（含空格/. /# /[]）→ querySelector；
+     * 纯标识符/变量 → JS 表达式，包进 IIFE
+     */
+    private static String buildReadyScript(String selector) {
+        String trimmed = selector.trim();
+        if (trimmed.isEmpty()) return "return '0';";
+        // 含空格、./#/[ 则视为 CSS 选择器，否则当 JS 表达式
+        boolean isCss = trimmed.contains(" ") || trimmed.contains("\t")
+                || trimmed.charAt(0) == '.' || trimmed.charAt(0) == '#'
+                || trimmed.contains("[")
+                || trimmed.indexOf('.') > 0 || trimmed.indexOf('#') > 0;
+        if (isCss) {
+            return "(function(){try{return document.querySelector(" + escapeJsString(trimmed) + ")!=null?'1':'0';}catch(e){return '0';}})()";
+        }
+        return "(function(){try{var r=" + trimmed + ";return r?'1':'0';}catch(e){return '0';}})()";
+    }
+
+    private static String escapeJsString(String s) {
+        return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"")
+                .replace("\n", "\\n").replace("\r", "\\r")
+                .replace("\t", "\\t") + "\"";
+    }
+
+    /**
+     * 执行 evaluateJavascript 并正确反序列化 JSON 转义字符串
+     * P3: counted 保证 countDown 只在「真正结束」路径执行一次（防重复）
+     * P7: cancelled 时跳过，防止访问已 destroy 的 WebView
+     */
+    private void extractHtml(WebView view, String[] result, CountDownLatch latch,
+                             boolean[] cancelled, java.util.concurrent.atomic.AtomicBoolean counted) {
+        try {
+            if (cancelled[0]) return;
+            view.evaluateJavascript(
+                    "document.documentElement.outerHTML;",
+                    html -> {
+                        if (cancelled[0]) return;
+                        // 只允许一次结束路径，cas 失败说明已被 onReceivedError/timeout 先触发
+                        if (!counted.compareAndSet(false, true)) return;
+                        try {
+                            if (html != null && html.length() >= 2 && html.startsWith("\"")) {
+                                try {
+                                    html = new JSONObject("{\"h\":" + html + "}").getString("h");
+                                } catch (Exception e) {
+                                    html = html.substring(1, html.length() - 1)
+                                            .replace("\\\"", "\"")
+                                            .replace("\\n", "\n")
+                                            .replace("\\r", "\r")
+                                            .replace("\\t", "\t")
+                                            .replace("\\\\", "\\");
+                                }
+                            }
+                            if (html != null) result[0] = html;
+                            // P1: 回写 Cookie（用最终页面 URL 查询 CookieManager）
+                            backfillCookiesFromWebView(view.getUrl());
+                        } finally {
+                            latch.countDown();
+                        }
+                    }
+            );
+        } catch (Exception e) {
+            SpiderDebug.log("extractHtml error: " + e.getMessage());
+            if (counted.compareAndSet(false, true)) latch.countDown();
+        }
+    }
+
+    /**
+     * P1: 从 CookieManager 读取 WebView 执行期间收到的新 Cookie，写回 rule.header / headerMap
+     * 使用 view.getUrl() 获取实际请求的 URL，而非空串
+     */
+    private void backfillCookiesFromWebView(String pageUrl) {
+        if (pageUrl == null || pageUrl.isEmpty()) return;
+        try {
+            android.webkit.CookieManager cm = android.webkit.CookieManager.getInstance();
+            String cookies = cm.getCookie(pageUrl);
+            if (cookies == null || cookies.isEmpty()) return;
+
+            // 合并写入 rule.header
+            if (rule != null) {
+                JSONObject hdr;
+                if (rule.has("header")) {
+                    hdr = rule.optJSONObject("header");
+                } else {
+                    hdr = new JSONObject();
+                    rule.put("header", hdr);
+                }
+                String old = hdr.optString("cookie", hdr.optString("Cookie", ""));
+                String merged = SliderVerifyUtils.mergeCookies(old, cookies);
+                hdr.put("cookie", merged);
+            }
+            // 同步到类级 headerMap
+            headerMap.put("Cookie", cookies);
+            SpiderDebug.log("backfillCookies: 已回写, len=" + cookies.length());
+        } catch (Exception e) {
+            SpiderDebug.log("backfillCookies error: " + e.getMessage());
+        }
+    }
+
+    /**
+     * P4: 将规则中的 Cookie 写入 CookieManager，使 WebView 请求携带相同 Cookie
+     * - 按 ; 拆分多段 Cookie，每段独立 setCookie（避免拼接错误）
+     * - 忽略大小写同时读 cookie / Cookie
+     * - 来源优先级：传入 headers > rule.header > headerMap（类级）
+     */
+    private void syncCookiesToWebView(String url, JSONObject headers) {
+        try {
+            android.webkit.CookieManager cm = android.webkit.CookieManager.getInstance();
+            cm.setAcceptCookie(true);
+
+            // 三级来源取 Cookie
+            String cookieStr = "";
+            if (headers != null) {
+                cookieStr = headers.optString("Cookie", headers.optString("cookie", ""));
+            }
+            if (cookieStr.isEmpty() && rule != null) {
+                JSONObject ruleHeader = rule.optJSONObject("header");
+                if (ruleHeader != null) {
+                    cookieStr = ruleHeader.optString("Cookie", ruleHeader.optString("cookie", ""));
+                }
+            }
+            if (cookieStr.isEmpty()) {
+                cookieStr = headerMap.getOrDefault("Cookie", headerMap.getOrDefault("cookie", ""));
+            }
+
+            // 按 ; 拆分，逐段写入 CookieManager（避免长串 cookie 被截断或格式错误）
+            if (!cookieStr.isEmpty()) {
+                for (String pair : cookieStr.split(";")) {
+                    String trimmed = pair.trim();
+                    if (!trimmed.isEmpty()) {
+                        try { cm.setCookie(url, trimmed); } catch (Exception ignored) {}
+                    }
+                }
+                SpiderDebug.log("syncCookiesToWebView: 已注入 Cookie");
+            }
+        } catch (Exception e) {
+            SpiderDebug.log("syncCookiesToWebView error: " + e.getMessage());
+        }
+    }
+
+    /**
+     * P2: 串行单例 WebView — 进程内唯一实例，请求排队串行执行
+     * 消除每次 new/destroy WebView 的性能开销，列表翻页流畅
+     */
+    private static class SingletonWebView {
+        private final java.util.concurrent.locks.ReentrantLock lock = new java.util.concurrent.locks.ReentrantLock();
+        private final java.util.ArrayDeque<Req> queue = new java.util.ArrayDeque<>();
+        private volatile WebView webView;
+        private volatile Handler mainHandler;
+        private volatile boolean destroyed;
+        private boolean busy;
+
+        static SingletonWebView getInstance() { return Holder.INSTANCE; }
+
+        private static class Holder {
+            static final SingletonWebView INSTANCE = new SingletonWebView();
+        }
+
+        private SingletonWebView() {}
+
+        void init(Context ctx) {
+            lock.lock();
+            try {
+                if (webView != null) return;
+                mainHandler = new Handler(android.os.Looper.getMainLooper());
+                webView = buildWebView(ctx);
+                SpiderDebug.log("SingletonWebView: 创建单例实例");
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        void destroy() {
+            lock.lock();
+            try {
+                destroyed = true;
+                clearQueue("SingletonWebView: 被销毁");
+                if (webView != null) {
+                    try { webView.stopLoading(); } catch (Exception ignored) {}
+                    try { webView.loadUrl("about:blank"); } catch (Exception ignored) {}
+                    try { webView.destroy(); } catch (Exception ignored) {}
+                    webView = null;
+                }
+                mainHandler = null;
+                SpiderDebug.log("SingletonWebView: 已销毁");
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        void enqueue(Req req) {
+            lock.lock();
+            try {
+                if (destroyed) { req.fail("SingletonWebView已销毁"); return; }
+                if (mainHandler == null || webView == null) { req.fail("SingletonWebView未初始化"); return; }
+                queue.add(req);
+                SpiderDebug.log("SingletonWebView: 入队，队列深度=" + queue.size());
+                processNext();
+            } finally {
+                lock.unlock();
+            }
+        }
+
+        private void processNext() {
+            Req req = null;
+            lock.lock();
+            try {
+                if (busy || queue.isEmpty() || destroyed) return;
+                busy = true;
+                req = queue.peek();
+            } finally {
+                lock.unlock();
+            }
+            if (req == null) return;
+            mainHandler.post(() -> execute(req));
+        }
+
+        private void execute(Req req) {
+            final String url = req.url;
+            final String ua = req.ua;
+            final JSONObject headers = req.headers;
+            final int extraWait = req.extraWait;
+            final boolean useReadyPoll = req.useReadyPoll;
+            final String readySelector = req.readySelector;
+            final int readyTimeout = req.readyTimeout;
+
+            final WebView wv = webView;
+            if (wv == null) { finishFailure(req, "WebView为null"); return; }
+
+            // P3: 每批请求设置新 WebViewClient，避免旧的回调污染
+            wv.setWebViewClient(new android.webkit.WebViewClient() {
+                @Override
+                public void onPageFinished(android.webkit.WebView view, String navUrl) {
+                    if (view != wv) return;
+                    // P4: 忽略 about:blank 重置触发的 onPageFinished
+                    if (navUrl == null || navUrl.startsWith("about:")) return;
+                    Runnable next = () -> {
+                        runExtract(view, req, () -> {
+                            // runExtract 内部已 req.complete(html)，这里只做出队/调度/重置
+                            finishSuccess(req);
+                            try {
+                                view.stopLoading();
+                                view.loadUrl("about:blank");
+                            } catch (Exception ignored) {}
+                        });
+                    };
+                    if (useReadyPoll && !readySelector.isEmpty()) {
+                        // P2: 先 extraWait 再开轮询，与旧逻辑一致
+                        final boolean[] cancelled = {false};
+                        Runnable startPoll = () -> startReadyPoll(view, readySelector, readyTimeout,
+                                mainHandler, cancelled, () -> next.run());
+                        if (extraWait > 0) {
+                            mainHandler.postDelayed(startPoll, extraWait);
+                        } else {
+                            startPoll.run();
+                        }
+                    } else if (extraWait > 0) {
+                        mainHandler.postDelayed(next, extraWait);
+                    } else {
+                        next.run();
+                    }
+                }
+
+                @Override
+                public void onReceivedError(android.webkit.WebView view,
+                                            android.webkit.WebResourceRequest request,
+                                            android.webkit.WebResourceError error) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP
+                            && !request.isForMainFrame()) return;
+                    if (view != wv) return;
+                    SpiderDebug.log("SingletonWebView onReceivedError: " + error.getErrorCode());
+                    finishFailure(req, "页面加载失败: " + error.getDescription());
+                }
+            });
+
+            Map<String, String> h = getHeaders(url);
+            if (headers != null) h = mergeHeaders(h, headers);
+            String userAgent = h.getOrDefault("User-Agent", ua);
+            wv.getSettings().setUserAgentString(userAgent);
+            syncCookiesToWebView(url, headers);
+            wv.loadUrl(url, h);
+        }
+
+        private void runExtract(WebView view, Req req, Runnable onComplete) {
+            try {
+                view.evaluateJavascript(
+                        "document.documentElement.outerHTML;",
+                        html -> {
+                            try {
+                                if (html != null && html.length() >= 2 && html.startsWith("\"")) {
+                                    try {
+                                        html = new JSONObject("{\"h\":" + html + "}").getString("h");
+                                    } catch (Exception e) {
+                                        html = html.substring(1, html.length() - 1)
+                                                .replace("\\\"", "\"")
+                                                .replace("\\n", "\n")
+                                                .replace("\\r", "\r")
+                                                .replace("\\t", "\t")
+                                                .replace("\\\\", "\\");
+                                    }
+                                }
+                                req.html = html;
+                            } catch (Exception e) {
+                                SpiderDebug.log("runExtract error: " + e.getMessage());
+                            }
+                            try { backfillCookiesFromWebView(view.getUrl()); } catch (Exception ignored) {}
+                            req.complete(html); // P1: 唤醒 await
+                            onComplete.run();
+                        });
+            } catch (Exception e) {
+                SpiderDebug.log("runExtract evaluateJavascript error: " + e.getMessage());
+                req.complete(null); // P1: 异常路径也 countDown
+                onComplete.run();
+            }
+        }
+
+        /** P1: 成功结束 — busy=false + 出队 + 调度下一单 */
+        private void finishSuccess(Req req) {
+            lock.lock();
+            try {
+                busy = false;
+                if (!queue.isEmpty() && queue.peek() == req) queue.poll();
+            } finally {
+                lock.unlock();
+            }
+            processNext();
+        }
+
+        /** P1: 失败结束 — busy=false + 出队 + 调度下一单 */
+        private void finishFailure(Req req, String reason) {
+            req.fail(reason);
+            lock.lock();
+            try {
+                busy = false;
+                if (!queue.isEmpty() && queue.peek() == req) queue.poll();
+            } finally {
+                lock.unlock();
+            }
+            processNext();
+        }
+
+        private void clearQueue(String reason) {
+            while (!queue.isEmpty()) {
+                Req r = queue.poll();
+                if (r != null) r.fail(reason);
+            }
+        }
+    }
+
+    /** 入队请求上下文 */
+    private static class Req {
+        final String url;
+        final String ua;
+        final JSONObject headers;
+        final int extraWait;
+        final boolean useReadyPoll;
+        final String readySelector;
+        final int readyTimeout;
+        final CountDownLatch latch = new CountDownLatch(1);
+        String html = null;
+        String errorMsg = null;
+
+        Req(String url, String ua, JSONObject headers, int extraWait,
+            boolean useReadyPoll, String readySelector, int readyTimeout) {
+            this.url = url;
+            this.ua = ua;
+            this.headers = headers;
+            this.extraWait = extraWait;
+            this.useReadyPoll = useReadyPoll;
+            this.readySelector = readySelector;
+            this.readyTimeout = readyTimeout;
+        }
+
+        void fail(String reason) {
+            errorMsg = reason;
+            latch.countDown();
+        }
+
+        /** P1: 成功结束，唤醒 await 的调用方 */
+        void complete(String html) {
+            this.html = html;
+            latch.countDown();
+        }
+    }
+
+    /**
+     * 构建并配置一个无头 WebView（隐藏 UI，仅用于内容抓取）
+     */
+    private static WebView buildWebView(Context ctx) {
+        Context appCtx = ctx.getApplicationContext() != null ? ctx.getApplicationContext() : ctx;
+        WebView webView = new WebView(appCtx);
+        WebSettings settings = webView.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setDatabaseEnabled(true);
+        settings.setLoadWithOverviewMode(true);
+        settings.setUseWideViewPort(true);
+        settings.setSupportZoom(false);
+        settings.setBuiltInZoomControls(false);
+        settings.setTextZoom(100);
+        settings.setBlockNetworkImage(false);
+        // 禁止本地文件访问，减少攻击面
+        settings.setAllowFileAccess(false);
+        settings.setAllowContentAccess(false);
+        webView.setBackgroundColor(0);
+        webView.setVisibility(WebView.GONE);
+        return webView;
+    }
+
+    /**
+     * 判断当前规则是否启用 WebView 渲染
+     */
+    protected boolean isWebViewEnabled() {
+        if (rule == null) return false;
+        return "1".equals(getRuleVal("web_view", "0"));
     }
 
     /**
