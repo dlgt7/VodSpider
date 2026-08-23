@@ -5880,7 +5880,8 @@ public class XBPQ extends Spider {
                 lock.unlock();
             }
             if (req == null) return;
-            mainHandler.post(() -> execute(req));
+            final Req finalReq = req;
+            mainHandler.post(() -> execute(finalReq));
         }
 
         private void execute(Req req) {
