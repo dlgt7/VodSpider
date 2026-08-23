@@ -5588,7 +5588,7 @@ public class XBPQ extends Spider {
 
         // 入队，串行等待
         SingletonWebView singleton = SingletonWebView.getInstance();
-        singleton.init(context, this); // P5: 注入 owner，供内部调用实例方法
+        singleton.init(context); // P2: 初始化串行单例 WebView
         Req req = new Req(url, ua, headers, extraWait, useReadyPoll, readySelector, readyTimeout);
         singleton.enqueue(req);
 
