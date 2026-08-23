@@ -3694,6 +3694,10 @@ public class XBPQ extends Spider {
      */
     private JSONArray extractVideoList(String content, JSONObject list, String url) throws JSONException {
         JSONArray videos = new JSONArray();
+        // 若 list 为空，从规则配置自动构建 list（兼容没有 list_array 的纯文本模式）
+        if (list == null || list.length() == 0) {
+            list = buildListFromRules();
+        }
         JSONArray lookback = RuleUtils.getLookbackArray(list);
         if (lookback != null) lookback = new JSONArray(lookback.toString());
         Set<String> seenIds = new HashSet<>();
@@ -3877,6 +3881,58 @@ public class XBPQ extends Spider {
         // 编码 vod_id
         v.put("vod_id", Base64.encodeToString(v.toString().getBytes(StandardCharsets.UTF_8), BASE64_FLAG));
         return v;
+    }
+
+    /**
+     * 当 list 为空时，从配置规则自动构建 list（兼容没有 list_array 的纯文本模式）
+     */
+    private JSONObject buildListFromRules() throws JSONException {
+        JSONObject list = new JSONObject();
+        String listArray = getRuleVal("list_array");
+        if (listArray.isEmpty()) return list;
+
+        String listId = getRuleVal("list_id");
+        String listName = getRuleVal("list_name");
+        String listPic = getRuleVal("list_pic");
+        String listRemarks = getRuleVal("list_remarks");
+
+        // 构建 vod lookback: [搜索字符串, 后缀, leftOffset, rightOffset, lookbackLevel]
+        // 后缀不能为 ""，否则 findBlockPos 和 nodeString 逻辑异常
+        JSONArray vodLookback = new JSONArray();
+        vodLookback.put(listArray);       // 0: 搜索起始字符串（数组匹配字符串）
+        vodLookback.put(listArray);       // 1: 后缀（用自身作为终止符）
+        vodLookback.put(0);               // 2: 左偏移
+        vodLookback.put(0);               // 3: 右偏移
+        vodLookback.put(3);               // 4: 回看层级
+
+        list.put("vod", vodLookback);
+
+        // 构建字段规则（格式: [前缀, 后缀, leftOffset, rightOffset]）
+        // 后缀不能为 ""，否则 findSubString 中 indexOf("") 返回 startPos，导致 end < start
+        // 用前缀自身作为后缀（类似 "href=\"/anime/&&\"" 中的写法），仅取第一个匹配
+        if (!listId.isEmpty()) {
+            JSONArray idRule = new JSONArray();
+            idRule.put(listId); idRule.put(listId); idRule.put(0); idRule.put(0);
+            list.put("vod_id", idRule);
+        }
+        if (!listName.isEmpty()) {
+            JSONArray nameRule = new JSONArray();
+            nameRule.put(listName); nameRule.put(listName); nameRule.put(0); nameRule.put(0);
+            list.put("vod_name", nameRule);
+        }
+        if (!listPic.isEmpty()) {
+            JSONArray picRule = new JSONArray();
+            picRule.put(listPic); picRule.put(listPic); picRule.put(0); picRule.put(0);
+            list.put("vod_pic", picRule);
+        }
+        if (!listRemarks.isEmpty()) {
+            JSONArray remarksRule = new JSONArray();
+            remarksRule.put(listRemarks); remarksRule.put(listRemarks); remarksRule.put(0); remarksRule.put(0);
+            list.put("vod_remarks", remarksRule);
+        }
+
+        SpiderDebug.log("buildListFromRules: list_array=" + listArray + " list_id=" + listId);
+        return list;
     }
 
     /**
@@ -4420,7 +4476,7 @@ public class XBPQ extends Spider {
      */
     private String buildDetailUrl(JSONObject detail, String vid) throws JSONException {
         if (detail.has("url")) {
-            return detail.getString("url").replace("{vid}", vid);
+            return detail.getString("url").replace("${vid}", vid).replace("{vid}", vid);
         } else if (vid.startsWith("http://") || vid.startsWith("https://") || vid.startsWith("/")) {
             return addHttpPrefix(vid);
         } else {
