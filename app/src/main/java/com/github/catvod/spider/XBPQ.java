@@ -1086,15 +1086,21 @@ public class XBPQ extends Spider {
          */
         public static JSONArray getLookbackArray(JSONObject obj) {
             try {
+                JSONArray preferred = null;
                 Iterator<?> iter = obj.keys();
                 while (iter.hasNext()) {
                     String key = (String) iter.next();
                     Object val = obj.get(key);
                     if (val instanceof JSONArray) {
                         int count = getLookbackCount((JSONArray) val);
-                        if (count > 0) return (JSONArray) val;
+                        if (count > 0) {
+                            // 优先返回名为 "vod" 的 lookback（数组规则），避免与 vod_id 等字段冲突
+                            if ("vod".equals(key)) return (JSONArray) val;
+                            if (preferred == null) preferred = (JSONArray) val;
+                        }
                     }
                 }
+                return preferred;
             } catch (Exception e) {
                 SpiderDebug.log(e);
             }
@@ -5331,7 +5337,7 @@ public class XBPQ extends Spider {
         if (filterWord.isEmpty()) return false;
 
         String searchName = RuleUtils.findSubString(node, 0, search.optJSONArray("vod_name"));
-        for (String word : filterWord.split(",")) {
+        for (String word : filterWord.split("[,，]")) {
             String trimmed = word.trim();
             if (!trimmed.isEmpty() && (vodId.contains(trimmed) || searchName.contains(trimmed))) {
                 return true;
