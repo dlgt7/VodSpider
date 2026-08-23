@@ -6035,7 +6035,14 @@ public class XBPQ extends Spider {
 
         // 入队，串行等待
         SingletonWebView singleton = SingletonWebView.getInstance();
+        // P2: init() 内已将 buildWebView 迁移到主线程 post，此处直接调用即可
         singleton.init(context);
+        if (singleton.getWebView() == null) {
+            SpiderDebug.log(safeLog("webViewFetch: init 失败，降级 OkHttp: " + url));
+            Map<String, String> h = getHeaders(url);
+            if (headers != null) h = mergeHeaders(h, headers);
+            return cleanHtmlResponse(OkHttp.string(url, h));
+        }
         Req req = new Req(url, ua, fullHeaders, extraWait, useReadyPoll, readySelector, readyTimeout);
         singleton.enqueue(req);
 
@@ -6197,14 +6204,37 @@ public class XBPQ extends Spider {
                     lastUseElapsed = android.os.SystemClock.elapsedRealtime();
                     return;
                 }
-                mainHandler = new Handler(Looper.getMainLooper());
-                webView = buildWebView(ctx);
-                destroyed = false;
-                lastUseElapsed = android.os.SystemClock.elapsedRealtime();
-                SpiderDebug.log(safeLog("SingletonWebView: 创建单例实例"));
+                // mainHandler 必须在主线程创建（带 Looper），否则后续 post 无法工作
+                if (mainHandler == null || mainHandler.getLooper() != Looper.getMainLooper()) {
+                    mainHandler = new Handler(Looper.getMainLooper());
+                }
+                // buildWebView 必须在主线程执行（WebView 构造函数要求 Looper）
+                final Handler h = mainHandler;
+                final CountDownLatch initLatch = new CountDownLatch(1);
+                final boolean[] done = {false};
+                h.post(() -> {
+                    try {
+                        webView = buildWebView(ctx);
+                        destroyed = false;
+                        lastUseElapsed = android.os.SystemClock.elapsedRealtime();
+                        SpiderDebug.log(safeLog("SingletonWebView: 创建单例实例"));
+                    } finally {
+                        initLatch.countDown();
+                        done[0] = true;
+                    }
+                });
+                try { initLatch.await(5000, TimeUnit.MILLISECONDS); } catch (InterruptedException ignored) {}
+                if (!done[0]) {
+                    SpiderDebug.log(safeLog("SingletonWebView: init 超时"));
+                }
             } finally {
                 lock.unlock();
             }
+        }
+
+        WebView getWebView() {
+            lock.lock();
+            try { return webView; } finally { lock.unlock(); }
         }
 
         void destroy() {
