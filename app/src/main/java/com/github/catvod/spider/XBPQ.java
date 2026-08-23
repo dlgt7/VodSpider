@@ -3737,8 +3737,16 @@ public class XBPQ extends Spider {
         int blockPos = 0;
         String node = "";
         int lookup = -1;
+        int iterations = 0;
+        final int MAX_ITERATIONS = 20;
 
         do {
+            // 防护：限制最大迭代次数，避免回看层级震荡导致死循环
+            if (++iterations > MAX_ITERATIONS) {
+                SpiderDebug.log(String.format("adjustAndExtractNode 达到最大迭代次数(%d)，当前层级=%d，强制退出", MAX_ITERATIONS, lookback.getInt(4)));
+                break;
+            }
+
             arr = HtmlNodeHelper.findUpNodes(content, pos - 1, lookback.getInt(4));
             if (urlNodes == null) {
                 urlNodes = arr;
@@ -3771,11 +3779,27 @@ public class XBPQ extends Spider {
                                      List<Integer> urlNodes, int blockPos) throws JSONException {
         if (currentLookup >= 0) return currentLookup;
 
+        int level = lookback.getInt(4);
+        final int MIN_LEVEL = 1;
+        final int MAX_LEVEL = 5;
+
+        // 防护：层级边界检查，避免越界
+        if (level < MIN_LEVEL) {
+            lookback.put(4, MIN_LEVEL);
+            level = MIN_LEVEL;
+            SpiderDebug.log(String.format("回看层级低于下限，重置为%d", MIN_LEVEL));
+        }
+        if (level > MAX_LEVEL) {
+            lookback.put(4, MAX_LEVEL);
+            level = MAX_LEVEL;
+            SpiderDebug.log(String.format("回看层级超过上限，重置为%d", MAX_LEVEL));
+        }
+
         int count = RuleUtils.getSubStringCount(node, lookback.getString(0));
-        if (count > 3 && lookback.getInt(4) > 1) {
+        if (count > 3 && level > MIN_LEVEL) {
             // 降低层级
-            lookback.put(4, lookback.getInt(4) - 1);
-            SpiderDebug.log(String.format("找到过多的url匹配项(%d)，降低匹配层级为%d", count, lookback.getInt(4)));
+            lookback.put(4, level - 1);
+            SpiderDebug.log(String.format("找到过多的url匹配项(%d)，降低匹配层级为%d", count, level - 1));
             return -2;
         }
 
@@ -3783,13 +3807,19 @@ public class XBPQ extends Spider {
         String pic = guessValueVodPic(node, 0);
         String vName = guessValueVodName(node, 0);
         if (pic.isEmpty() || vName.isEmpty()) {
+            // 防护：检测震荡（在相邻层级间反复横跳）
+            // 如果当前已在最高层仍找不到，说明规则不匹配，强制返回当前层级避免死循环
+            if (level >= MAX_LEVEL) {
+                SpiderDebug.log(String.format("回看层级已达上限(%d)仍未找到图片/标题，规则可能不匹配，强制使用当前层级", MAX_LEVEL));
+                return level;
+            }
             // 增加层级
-            lookback.put(4, lookback.getInt(4) + 1);
-            SpiderDebug.log(String.format("当前层级未找到(%s)，增加匹配层级为%d", pic.isEmpty() ? "图片" : "标题", lookback.getInt(4)));
+            lookback.put(4, level + 1);
+            SpiderDebug.log(String.format("当前层级未找到(%s)，增加匹配层级为%d", pic.isEmpty() ? "图片" : "标题", level + 1));
             return -2;
         }
 
-        return lookback.getInt(4);
+        return level;
     }
 
     /**
@@ -5249,8 +5279,16 @@ public class XBPQ extends Spider {
         int blockPos = 0;
         String node = "";
         int lookup = -1;
+        int iterations = 0;
+        final int MAX_ITERATIONS = 20;
 
         do {
+            // 防护：限制最大迭代次数，避免回看层级震荡导致死循环
+            if (++iterations > MAX_ITERATIONS) {
+                SpiderDebug.log(String.format("extractSearchNode 达到最大迭代次数(%d)，当前层级=%d，强制退出", MAX_ITERATIONS, lookback.getInt(4)));
+                break;
+            }
+
             arr = HtmlNodeHelper.findUpNodes(content, pos - 1, lookback.getInt(4));
             if (urlNodes == null) {
                 urlNodes = arr;
