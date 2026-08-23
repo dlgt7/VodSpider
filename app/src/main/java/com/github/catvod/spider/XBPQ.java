@@ -5821,11 +5821,16 @@ public class XBPQ extends Spider {
         private SingletonWebView() {}
 
         void init(Context ctx) {
+            init(ctx, null);
+        }
+
+        void init(Context ctx, XBPQ owner) {
             lock.lock();
             try {
                 if (webView != null) return;
                 mainHandler = new Handler(android.os.Looper.getMainLooper());
                 webView = buildWebView(ctx);
+                ownerRef = owner != null ? new java.lang.ref.WeakReference<>(owner) : null;
                 SpiderDebug.log("SingletonWebView: 创建单例实例");
             } finally {
                 lock.unlock();
