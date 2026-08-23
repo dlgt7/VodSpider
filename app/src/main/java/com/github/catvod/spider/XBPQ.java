@@ -5047,7 +5047,153 @@ public class XBPQ extends Spider {
             }
         }
         vodPlayUrl = findVodPlayUrl(content);
+
+        // 兜底：当 explicit play 规则 + guessRuleVodPlayUrl 均返回空时，尝试从面包屑区域取值。
+        // 场景：单集页站点（详情即自身）用 guessRuleVodPlayUrl 取到相对 href 后，因 origin
+        // 与 vod_id 绝对路径不匹配被拒绝；此时改用面包屑锚点法直接取 href。
+        if (vodPlayUrl == null || vodPlayUrl.isEmpty()) {
+            String breadcrumbLink = tryExtractFromBreadcrumb(content);
+            if (breadcrumbLink != null) {
+                SpiderDebug.log("面包屑兜底：" + breadcrumbLink);
+                vodPlayUrl = new ArrayList<>(1);
+                vodPlayUrl.add(breadcrumbLink);
+            }
+        }
         return vodPlayUrl;
+    }
+
+    /**
+     * 尝试从面包屑区域提取剧集链接并格式化为 "标题$链接"。
+     * 返回 null 表示未找到。
+     */
+    private String tryExtractFromBreadcrumb(String content) {
+        if (content == null) return null;
+        // 取 vod_id：可能是 Base64 包裹的完整 URL，也可能是裸相对路径
+        // 这里取原始 HTML 里最近的 /shipin/xxx.html 作为目标 href
+        String targetHref = extractRelativeVideoHref(content);
+        if (targetHref == null) return null;
+
+        // 先尝试在面包屑区域精准定位
+        String region = extractBreadcrumbRegion(content);
+        if (region != null && !region.isEmpty()) {
+            String link = extractHrefFromRegion(region, targetHref);
+            if (link != null) {
+                return makeTitleDollarLink(region, link);
+            }
+        }
+        // 兜底：在全页扫描（容错慢速）
+        return makeTitleDollarLink(content, targetHref);
+    }
+
+    /**
+     * 从内容中提取相对视频 href（如 /shipin/15557.html）。
+     * 优先级：面包屑区域 > 全页第一个匹配。
+     */
+    private String extractRelativeVideoHref(String content) {
+        // 优先从面包屑区域找
+        String region = extractBreadcrumbRegion(content);
+        if (region != null) {
+            String m = findFirstRelativeShipinHref(region);
+            if (m != null) return m;
+        }
+        // 回退：全页扫描
+        return findFirstRelativeShipinHref(content);
+    }
+
+    /**
+     * 提取面包屑区域字符串，找不到返回 null。
+     * 按引擎习惯使用 RuleUtils.findSubString 做字面量截取。
+     */
+    private static final String[] BREADCRUMB_PATTERNS = {
+            "<div class=\"pc\">&&</div>",
+            "<div class=\"pc crumbs\">&&</div>",
+            "<div class=\"crumbs\">&&</div>",
+            "<ul class=\"nav-bread\">&&</ul>",
+            "<ul class=\"nav_bread\">&&</ul>",
+    };
+
+    private String extractBreadcrumbRegion(String content) {
+        for (String pattern : BREADCRUMB_PATTERNS) {
+            // BREADCRUMB_PATTERNS 格式为 "前缀&&后缀"，直接喂给 findSubString
+            JSONArray keys = stringCutToLookback(pattern);
+            if (keys != null) {
+                String region = RuleUtils.findSubString(content, 0, keys);
+                if (!region.isEmpty()) return region;
+            }
+        }
+        // 容错：class="bread" 元素（属性顺序可能打乱，无法用纯字面量规则表达）
+        int bi = content.indexOf("class=\"bread\"");
+        if (bi >= 0) {
+            int li = content.lastIndexOf('<', bi);
+            if (li >= 0) {
+                int ri = content.indexOf('>', bi);
+                if (ri > li) {
+                    int end = content.indexOf("</", ri);
+                    if (end > ri) {
+                        return content.substring(li, end + 2);
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 在指定区域内找第一个相对 /shipin/xxx.html 或 /play/xxx.html 形式的 href。
+     */
+    private String findFirstRelativeShipinHref(String text) {
+        if (text == null) return null;
+        // 优先匹配 /shipin/ 格式
+        String prefix = "href=\"/shipin/";
+        int idx = text.indexOf(prefix);
+        if (idx < 0) {
+            // 兜底：匹配 /play/ 格式（DJ 耶耶网等音乐站点）
+            prefix = "href=\"/play/";
+            idx = text.indexOf(prefix);
+        }
+        if (idx < 0) return null;
+        int hrefStart = idx + prefix.length();
+        int hrefEnd = text.indexOf('"', hrefStart);
+        return hrefEnd > hrefStart ? text.substring(hrefStart, hrefEnd) : null;
+    }
+
+    /**
+     * 在区域内找匹配 targetHref 的 &lt;a&gt; 节点，提取它的 href 与标题。
+     */
+    private String extractHrefFromRegion(String region, String targetHref) {
+        if (region == null || targetHref == null) return null;
+        int ai = region.indexOf(targetHref);
+        if (ai < 0) return null;
+        int li = Math.max(0, region.lastIndexOf('<', ai));
+        int ri = region.indexOf('>', ai);
+        if (li < 0 || ri < 0 || ri <= li) return null;
+        String anchor = region.substring(li, ri + 1);
+        int hi = anchor.indexOf("href=\"");
+        if (hi < 0) return null;
+        int hs = hi + 6;
+        int he = anchor.indexOf('"', hs);
+        if (he <= hs) return null;
+        return anchor.substring(hs, he);
+    }
+
+    /**
+     * 格式化结果为 "标题$链接"。
+     */
+    private String makeTitleDollarLink(String region, String href) {
+        if (region == null || href == null) return null;
+        int li = region.lastIndexOf('<', region.indexOf(href));
+        if (li < 0) li = 0;
+        int ri = region.indexOf('>', li);
+        if (ri <= li) return null;
+        String anchor = region.substring(li, ri + 1);
+        // 标题 = anchor 内 &gt; 之后、下一个 &lt; 之前的文本
+        int ti = anchor.indexOf('>', li) + 1;
+        int te = anchor.indexOf('<', ti);
+        String title = (te > ti) ? anchor.substring(ti, te).trim() : "";
+        if (title.isEmpty()) title = "第1集";
+        // 补全为绝对 URL
+        String absoluteUrl = addHttpPrefix(href);
+        return title + "$" + absoluteUrl;
     }
 
     /**
