@@ -5595,6 +5595,7 @@ public class XBPQ extends Spider {
                 SpiderDebug.log(safeLog("fetchUrl: 使用 WebView 渲染模式: " + url));
                 String webViewHtml = webViewFetch(url, headers != null ? headers : new JSONObject());
                 if (!webViewHtml.isEmpty()) {
+                    webViewHtml = bypassBaoTaWaf(url, webViewHtml, headers);
                     return webViewHtml;
                 }
                 SpiderDebug.log(safeLog("fetchUrl: WebView 返回空，降级为 OkHttp: " + url));
@@ -5677,10 +5678,13 @@ public class XBPQ extends Spider {
         int readyTimeout = readIntRule(rule, "web_view_ready_timeout", 12000);
         boolean useReadyPoll = !readySelector.isEmpty();
 
+        // 预合成完整 Cookie（headers > rule.header > headerMap），确保 WebView 携带所有已有 Cookie
+        JSONObject fullHeaders = mergeWebviewHeaders(headers);
+
         // 入队，串行等待
         SingletonWebView singleton = SingletonWebView.getInstance();
         singleton.init(context);
-        Req req = new Req(url, ua, headers, extraWait, useReadyPoll, readySelector, readyTimeout);
+        Req req = new Req(url, ua, fullHeaders, extraWait, useReadyPoll, readySelector, readyTimeout);
         singleton.enqueue(req);
 
         long timeout = (long) WEBVIEW_TIMEOUT_MS + Math.max(0, extraWait)
@@ -5714,7 +5718,7 @@ public class XBPQ extends Spider {
      * selector 含空格 / . / # / [ → CSS querySelector；其余视为 JS 表达式
      */
     private static void startReadyPoll(WebView view, String readySelector, int readyTimeoutMs,
-                                Handler mainHandler, boolean[] cancelled, Runnable onReady) {
+                                Handler mainHandler, Runnable onReady) {
         final long deadline = System.currentTimeMillis() + readyTimeoutMs;
         final int pollInterval = 250;
 
@@ -5723,7 +5727,7 @@ public class XBPQ extends Spider {
 
             @Override
             public void run() {
-                if (done || cancelled[0]) return;
+                if (done) return;
                 long remaining = deadline - System.currentTimeMillis();
                 if (remaining <= 0) {
                     SpiderDebug.log(safeLog("web_view_ready 超时，降级抽 HTML: " + readySelector));
@@ -5732,7 +5736,7 @@ public class XBPQ extends Spider {
                     return;
                 }
                 view.evaluateJavascript(buildReadyScript(readySelector), result -> {
-                    if (done || cancelled[0]) return;
+                    if (done) return;
                     if (isReadyResult(result)) {
                         SpiderDebug.log(safeLog("web_view_ready 条件满足: " + readySelector));
                         done = true;
@@ -5780,113 +5784,6 @@ public class XBPQ extends Spider {
     }
 
     /**
-     * 执行 evaluateJavascript 并正确反序列化 JSON 转义字符串
-     * P3: counted 保证 countDown 只在「真正结束」路径执行一次（防重复）
-     * P7: cancelled 时跳过，防止访问已 destroy 的 WebView
-     */
-    private void extractHtml(WebView view, String[] result, CountDownLatch latch,
-                             boolean[] cancelled, java.util.concurrent.atomic.AtomicBoolean counted) {
-        try {
-            if (cancelled[0]) return;
-            view.evaluateJavascript(
-                    "document.documentElement.outerHTML;",
-                    html -> {
-                        if (cancelled[0]) return;
-                        if (!counted.compareAndSet(false, true)) return;
-                        try {
-                            if (html != null && html.length() >= 2 && html.startsWith("\"")) {
-                                try {
-                                    html = new JSONObject("{\"h\":" + html + "}").getString("h");
-                                } catch (Exception e) {
-                                    html = html.substring(1, html.length() - 1)
-                                            .replace("\\\"", "\"")
-                                            .replace("\\n", "\n")
-                                            .replace("\\r", "\r")
-                                            .replace("\\t", "\t")
-                                            .replace("\\\\", "\\");
-                                }
-                            }
-                            if (html != null) result[0] = html;
-                            backfillCookiesFromWebView(view.getUrl());
-                        } finally {
-                            latch.countDown();
-                        }
-                    }
-            );
-        } catch (Exception e) {
-            SpiderDebug.log(safeLog("extractHtml error: " + e.getMessage()));
-            if (counted.compareAndSet(false, true)) latch.countDown();
-        }
-    }
-
-    /**
-     * 从 CookieManager 读取 WebView 执行期间收到的新 Cookie，写回 rule.header / headerMap
-     */
-    private void backfillCookiesFromWebView(String pageUrl) {
-        if (pageUrl == null || pageUrl.isEmpty()) return;
-        try {
-            CookieManager cm = CookieManager.getInstance();
-            String cookies = cm.getCookie(pageUrl);
-            if (cookies == null || cookies.isEmpty()) return;
-
-            if (rule != null) {
-                JSONObject hdr;
-                if (rule.has("header")) {
-                    hdr = rule.optJSONObject("header");
-                } else {
-                    hdr = new JSONObject();
-                    rule.put("header", hdr);
-                }
-                String old = hdr.optString("cookie", hdr.optString("Cookie", ""));
-                String merged = SliderVerifyUtils.mergeCookies(old, cookies);
-                hdr.put("cookie", merged);
-            }
-            headerMap.put("Cookie", cookies);
-            SpiderDebug.log(safeLog("backfillCookies: 已回写, len=" + cookies.length()));
-        } catch (Exception e) {
-            SpiderDebug.log(safeLog("backfillCookies error: " + e.getMessage()));
-        }
-    }
-
-    /**
-     * 将规则中的 Cookie 写入 CookieManager，使 WebView 请求携带相同 Cookie
-     * - 按 ; 拆分多段 Cookie，每段独立 setCookie
-     * - 来源优先级：传入 headers > rule.header > headerMap（类级）
-     */
-    private void syncCookiesToWebView(String url, JSONObject headers) {
-        try {
-            CookieManager cm = CookieManager.getInstance();
-            cm.setAcceptCookie(true);
-
-            String cookieStr = "";
-            if (headers != null) {
-                cookieStr = headers.optString("Cookie", headers.optString("cookie", ""));
-            }
-            if (cookieStr.isEmpty() && rule != null) {
-                JSONObject ruleHeader = rule.optJSONObject("header");
-                if (ruleHeader != null) {
-                    cookieStr = ruleHeader.optString("Cookie", ruleHeader.optString("cookie", ""));
-                }
-            }
-            if (cookieStr.isEmpty()) {
-                cookieStr = headerMap.getOrDefault("Cookie", headerMap.getOrDefault("cookie", ""));
-            }
-
-            if (!cookieStr.isEmpty()) {
-                for (String pair : cookieStr.split(";")) {
-                    String trimmed = pair.trim();
-                    if (!trimmed.isEmpty()) {
-                        try { cm.setCookie(url, trimmed); } catch (Exception ignored) {}
-                    }
-                }
-                SpiderDebug.log(safeLog("syncCookiesToWebView: 已注入 Cookie"));
-            }
-        } catch (Exception e) {
-            SpiderDebug.log(safeLog("syncCookiesToWebView error: " + e.getMessage()));
-        }
-    }
-
-    /**
      * 判断当前规则是否启用 WebView 渲染
      */
     protected boolean isWebViewEnabled() {
@@ -5927,7 +5824,7 @@ public class XBPQ extends Spider {
         private volatile WebView webView;
         private volatile Handler mainHandler;
         private volatile boolean destroyed;
-        private boolean busy;
+        private volatile boolean busy;
 
         static SingletonWebView getInstance() { return Holder.INSTANCE; }
 
@@ -6012,8 +5909,10 @@ public class XBPQ extends Spider {
                 @Override
                 public void onPageFinished(WebView view, String navUrl) {
                     if (view != wv) return;
-                    // 忽略 about:blank 重置触发的 onPageFinished
-                    if (navUrl == null || navUrl.startsWith("about:")) return;
+                    // 忽略 about:blank 重置触发的子帧 onPageFinished
+                    // view.getUrl() 始终返回主框架 URL，subframe 触发时二者不等
+                    if (navUrl != null && navUrl.startsWith("about:")
+                            && !navUrl.equals(view.getUrl())) return;
                     Runnable next = () -> {
                         runExtract(view, req, () -> {
                             finishSuccess(req);
@@ -6024,9 +5923,8 @@ public class XBPQ extends Spider {
                         });
                     };
                     if (useReadyPoll && !readySelector.isEmpty()) {
-                        final boolean[] cancelled = {false};
                         Runnable startPoll = () -> startReadyPoll(view, readySelector, readyTimeout,
-                                mainHandler, cancelled, () -> next.run());
+                                mainHandler, () -> next.run());
                         if (extraWait > 0) {
                             mainHandler.postDelayed(startPoll, extraWait);
                         } else {
@@ -6078,11 +5976,11 @@ public class XBPQ extends Spider {
                                         html = new JSONObject("{\"h\":" + html + "}").getString("h");
                                     } catch (Exception e) {
                                         html = html.substring(1, html.length() - 1)
+                                                .replace("\\\\", "\\")   // 必须先处理 \\，防止干扰后续
                                                 .replace("\\\"", "\"")
                                                 .replace("\\n", "\n")
                                                 .replace("\\r", "\r")
-                                                .replace("\\t", "\t")
-                                                .replace("\\\\", "\\");
+                                                .replace("\\t", "\t");
                                     }
                                 }
                                 req.html = html;
@@ -6104,7 +6002,7 @@ public class XBPQ extends Spider {
             lock.lock();
             try {
                 busy = false;
-                if (!queue.isEmpty() && queue.peek() == req) queue.poll();
+                queue.remove(req);
             } finally {
                 lock.unlock();
             }
@@ -6116,7 +6014,7 @@ public class XBPQ extends Spider {
             lock.lock();
             try {
                 busy = false;
-                if (!queue.isEmpty() && queue.peek() == req) queue.poll();
+                queue.remove(req);
             } finally {
                 lock.unlock();
             }
@@ -6151,7 +6049,7 @@ public class XBPQ extends Spider {
             }
         }
 
-        /** Cookie 回写：将 WebView 拿到的 cookie 写回 req.headers */
+        /** Cookie 回写：将 WebView 拿到的 cookie 写回 req.headers，并同步到 rule.header / headerMap */
         private static void backfillCookiesFromWebViewXbpq(String pageUrl, Req req) {
             if (pageUrl == null || pageUrl.isEmpty()) return;
             try {
@@ -6167,6 +6065,51 @@ public class XBPQ extends Spider {
                 SpiderDebug.log(safeLog("backfillCookies error: " + e.getMessage()));
             }
         }
+    }
+
+    /**
+     * 合并 Webview 请求完整 Cookie：传入 headers > rule.header > headerMap
+     * 浅拷贝，避免修改原始 headers 对象
+     */
+    private JSONObject mergeWebviewHeaders(JSONObject headers) {
+        JSONObject full = headers != null ? new JSONObject(headers.toString()) : new JSONObject();
+        // 来源2：rule.header.Cookie（仅当 full 中尚未有 Cookie 时取）
+        if (isEmptyCookie(full) && rule != null) {
+            JSONObject ruleHdr = rule.optJSONObject("header");
+            if (ruleHdr != null) {
+                String rCookie = getCookie(ruleHdr);
+                if (!rCookie.isEmpty()) {
+                    full.put("Cookie", rCookie);
+                }
+            }
+        }
+        // 来源3：headerMap（类级公共请求头）
+        if (isEmptyCookie(full) && !headerMap.isEmpty()) {
+            String hmCookie = getCookie(headerMap);
+            if (!hmCookie.isEmpty()) {
+                full.put("Cookie", hmCookie);
+            }
+        }
+        return full;
+    }
+
+    /** 从 JSONObject 中读取 Cookie（兼容 "Cookie" 和 "cookie" 键名） */
+    private static String getCookie(JSONObject obj) {
+        if (obj == null) return "";
+        String c = obj.optString("Cookie", "");
+        return c.isEmpty() ? obj.optString("cookie", "") : c;
+    }
+
+    /** 从 Map 中读取 Cookie（兼容 "Cookie" 和 "cookie" 键名） */
+    private static String getCookie(Map<String, String> map) {
+        if (map == null) return "";
+        String c = map.getOrDefault("Cookie", "");
+        return c.isEmpty() ? map.getOrDefault("cookie", "") : c;
+    }
+
+    /** 判断 JSONObject 中是否已含有有效 Cookie */
+    private static boolean isEmptyCookie(JSONObject obj) {
+        return getCookie(obj).isEmpty();
     }
 
     /** 入队请求上下文 */
