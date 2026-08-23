@@ -3836,7 +3836,7 @@ public class XBPQ extends Spider {
         if (filterWord.isEmpty()) return false;
 
         String vodName = RuleUtils.findSubString(node, 0, list.optJSONArray("vod_name"));
-        for (String word : filterWord.split(",")) {
+        for (String word : filterWord.split("[,，]")) {
             String trimmed = word.trim();
             if (!trimmed.isEmpty() && (vodId.contains(trimmed) || vodName.contains(trimmed))) {
                 return true;
