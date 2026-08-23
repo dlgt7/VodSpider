@@ -3773,7 +3773,7 @@ public class XBPQ extends Spider {
 
         NodeExtractionResult result = new NodeExtractionResult();
         result.node = node;
-        result.vodId = RuleUtils.findSubString(node, 0, list.getJSONArray("vod_id"));
+        result.vodId = RuleUtils.findSubString(node, 0, list.optJSONArray("vod_id"));
         result.endPos = blockPos + node.length();
         return result;
     }
@@ -4424,9 +4424,14 @@ public class XBPQ extends Spider {
         } else if (vid.startsWith("http://") || vid.startsWith("https://") || vid.startsWith("/")) {
             return addHttpPrefix(vid);
         } else {
-            JSONObject list = rule.getJSONObject("list");
-            JSONArray tmp = list.getJSONArray("vod_id");
-            return addHttpPrefix(tmp.getString(0) + vid + tmp.getString(1));
+            JSONObject list = rule.optJSONObject("list");
+            if (list != null) {
+                JSONArray tmp = list.optJSONArray("vod_id");
+                if (tmp != null && tmp.length() >= 2) {
+                    return addHttpPrefix(tmp.getString(0) + vid + tmp.getString(1));
+                }
+            }
+            return addHttpPrefix(vid);
         }
     }
 
@@ -5214,13 +5219,22 @@ public class XBPQ extends Spider {
      */
     private void inheritVodIdRuleIfNeeded(JSONObject search) throws JSONException {
         if (!search.has("vod_id")) {
-            JSONObject list = rule.getJSONObject("list");
-            search.put("vod_id", list.getJSONArray("vod_id"));
+            JSONObject list = rule.optJSONObject("list");
+            if (list != null && list.has("vod_id")) {
+                search.put("vod_id", list.getJSONArray("vod_id"));
+            } else {
+                guessVodIdIfNeeded(list);
+                if (list != null && list.has("vod_id")) {
+                    search.put("vod_id", list.getJSONArray("vod_id"));
+                }
+            }
         }
         // suggest 模式覆盖
         if (search.has("vod_id") && "id".equals(search.optString("vod_id", ""))) {
-            JSONObject list = rule.getJSONObject("list");
-            search.put("vod_id", list.getJSONArray("vod_id"));
+            JSONObject list = rule.optJSONObject("list");
+            if (list != null && list.has("vod_id")) {
+                search.put("vod_id", list.getJSONArray("vod_id"));
+            }
         }
     }
 
@@ -5315,7 +5329,7 @@ public class XBPQ extends Spider {
 
         SearchNodeResult result = new SearchNodeResult();
         result.node = node;
-        result.vodId = RuleUtils.findSubString(node, 0, search.getJSONArray("vod_id"));
+        result.vodId = RuleUtils.findSubString(node, 0, search.optJSONArray("vod_id"));
         result.endPos = blockPos + node.length();
         return result;
     }
