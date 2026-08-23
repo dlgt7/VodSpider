@@ -120,15 +120,12 @@ public class XBPQ extends Spider {
     /** 图片代理签名密钥（fixCover 追加 &key=MD5(pic+secretKey)，loadPic 校验防代理滥用） */
     private static volatile String secretKey = "";
 
-    /** 静态主页 URL 快照（供 getCom/getBL 等静态工具方法稳定访问；单例设计，参考文件同款，适用于单源/非并发场景） */
+    /** 静态主页 URL 快照（供 getCom/getBL 等静态工具方法稳定访问；适用于单源/非并发场景） */
     private static volatile String staticHomeUrl = "";
 
     /** 类级共享状态写锁：串行化 initEnhancedConfig/setBL 对 staticHomeUrl/baseEncodeUrl/secretKey/headerMap/debug 的写入，
      *  避免多源并发初始化互相覆盖（P0-3 线程安全）。注意：共享的"类级公共请求头"本身是设计意图，本锁保证写入原子性而非逐源隔离。 */
     private static final Object GLOBAL_STATE_LOCK = new Object();
-
-    /** 单例引用（静态工具方法 getBL/getRV 等使用；参考文件同款设计，单源场景使用） */
-    private static final XBPQ singleton = new XBPQ();
 
     /** 实例级调试开关 */
     private boolean isDebug = false;
@@ -168,6 +165,8 @@ public class XBPQ extends Spider {
     private static final Pattern P_CSS_EQ = Pattern.compile(":eq\\s*\\(\\s*(\\d+)\\s*\\)");
     /** selectByRule: CSS [n] 下标选择器 */
     private static final Pattern P_CSS_INDEX = Pattern.compile("\\[\\s*(\\d+)\\s*\\]$");
+    /** CSS 选择器 :last 的特殊索引标记（表示最后一个元素） */
+    private static final int LAST_INDEX = -1;
     /** 处理标记 [替换|包含|不包含:...] */
     private static final Pattern P_PROC_MARK = Pattern.compile("\\[(替换|包含|不包含):([^\\]]+)\\]");
     /** 表单 action 属性提取（不区分大小写） */
@@ -291,7 +290,6 @@ public class XBPQ extends Spider {
         CHINESE_KEY_MAP.put("搜索请求头", "search_header");
         CHINESE_KEY_MAP.put("搜索后缀", "search_suffix");
         CHINESE_KEY_MAP.put("搜索链接前缀", "search_prefix");
-        CHINESE_KEY_MAP.put("搜索链接后缀", "search_suffix");
         CHINESE_KEY_MAP.put("线路二次截取", "line_second_cut");
         CHINESE_KEY_MAP.put("播放二次截取", "play_twice");
         CHINESE_KEY_MAP.put("多线二次截取", "multi_line_twice");
@@ -923,7 +921,7 @@ public class XBPQ extends Spider {
             }
             // :first / :last
             if (selector.contains(":first")) return 0;
-            if (selector.contains(":last")) return Integer.MAX_VALUE;
+            if (selector.contains(":last")) return LAST_INDEX;
             // [n] 格式
             Pattern bracketPattern = P_CSS_INDEX;
             Matcher bm = bracketPattern.matcher(selector);
@@ -948,7 +946,7 @@ public class XBPQ extends Spider {
          */
         private static Element selectByIndex(Elements elements, int index) {
             if (index >= elements.size()) return null;
-            if (index == Integer.MAX_VALUE) return elements.last(); // :last
+            if (index == LAST_INDEX) return elements.last(); // :last
             return elements.get(index);
         }
 
@@ -1179,7 +1177,11 @@ public class XBPQ extends Spider {
                 String enKey = CHINESE_KEY_MAP.get(key);
                 Object val = json.get(key);
                 json.remove(key);
-                json.put(enKey, val);
+                // 防覆盖：多个中文键别名映射到同一英文键时（如「搜索后缀」「搜索链接后缀」→search_suffix），
+                // 仅保留首个，避免后写入把先写入的有效值冲掉导致数据丢失
+                if (!json.has(enKey)) {
+                    json.put(enKey, val);
+                }
             }
             // 递归处理嵌套对象
             List<String> allKeys = new ArrayList<>();
@@ -1253,11 +1255,55 @@ public class XBPQ extends Spider {
                     initEnhancedConfig();
                     applyPrefMenu();
 
-                    SpiderDebug.log(String.format("默认rule: %s", rule.toString()));
+                    SpiderDebug.log(sanitizeRuleLog(rule));
                 } catch (Exception e) {
                     SpiderDebug.log(e);
                 }
             }
+        }
+    }
+
+    /** 敏感规则键（不区分大小写）：日志输出时掩码，避免 Cookie/密钥 等凭据泄漏到日志 */
+    private static final Set<String> SENSITIVE_RULE_KEYS = new HashSet<>(Arrays.asList(
+            "cookie", "secretkey", "password", "passwd", "pwd",
+            "token", "accesstoken", "authorization", "auth",
+            "header", "headerjson", "userheader", "key", "sign", "signkey", "secret"));
+
+    /**
+     * 生成规则的安全日志文本：
+     * <ul>
+     *   <li>未开启调试时仅打印顶层键名列表，绝不输出值；</li>
+     *   <li>开启调试时打印完整结构，但敏感键的值一律掩码。</li>
+     * </ul>
+     * 防止 homeUrl/search_url 之外的 Cookie、secretKey、header 等凭据被明文打印（旧实现直接 rule.toString()）。
+     */
+    private static String sanitizeRuleLog(JSONObject ruleObj) {
+        try {
+            if (!debug) {
+                JSONArray keys = ruleObj.names();
+                StringBuilder sb = new StringBuilder("已加载规则 keys=[");
+                if (keys != null) {
+                    for (int i = 0; i < keys.length(); i++) {
+                        if (i > 0) sb.append(",");
+                        sb.append(keys.getString(i));
+                    }
+                }
+                sb.append("]");
+                return sb.toString();
+            }
+            JSONObject safe = new JSONObject();
+            Iterator<String> it = ruleObj.keys();
+            while (it.hasNext()) {
+                String k = it.next();
+                if (SENSITIVE_RULE_KEYS.contains(k.toLowerCase())) {
+                    safe.put(k, "***掩码***");
+                } else {
+                    safe.put(k, ruleObj.get(k));
+                }
+            }
+            return "默认rule: " + safe.toString();
+        } catch (Exception e) {
+            return "默认rule: <日志生成失败>";
         }
     }
 
@@ -1570,12 +1616,40 @@ public class XBPQ extends Spider {
     }
 
     /**
-     * 处理线路配置
+     * 处理线路配置：验证并预处理线路二次截取和多线字段
+     * <p>
+     * 线路相关配置在 tryExtractFromArray / tryMultiLineMode / tryFromLinkMode 中使用，
+     * 此处统一验证配置合法性并记录日志，便于排查问题。
      */
     private void processLineConfigs() {
-        // 线路二次截取和多线字段已在上方声明，此处仅记录日志
-        SpiderDebug.log("线路配置已加载");
+        String lineSecondCut = getRuleVal("line_second_cut");
+        String multiLineArray = getRuleVal("multi_line_array");
+        String multiLineUrl = getRuleVal("multi_line_url");
+        String multiLineTwice = getRuleVal("multi_line_twice");
+        String multiLinePrefix = getRuleVal("multi_line_prefix");
+        String multiLineSuffix = getRuleVal("multi_line_suffix");
+
+        boolean hasLineConfig = !lineSecondCut.isEmpty()
+                || (!multiLineArray.isEmpty() && !multiLineUrl.isEmpty())
+                || !multiLineTwice.isEmpty();
+
+        if (hasLineConfig) {
+            SpiderDebug.log(String.format("线路配置: line_second_cut=%s, multi_line_array=%s, multi_line_url=%s",
+                    lineSecondCut.isEmpty() ? "未配置" : lineSecondCut,
+                    multiLineArray.isEmpty() ? "未配置" : multiLineArray,
+                    multiLineUrl.isEmpty() ? "未配置" : multiLineUrl));
+        }
+
+        // 验证多线模式配置完整性
+        if (!multiLineArray.isEmpty() ^ !multiLineUrl.isEmpty()) {
+            SpiderDebug.log("警告: multi_line_array 和 multi_line_url 需同时配置才能启用多线模式");
+        }
     }
+
+    /**
+     * 首页内容缓存（避免重复请求）
+     */
+    private String cachedHomePageBody = null;
 
     /**
      * 尝试猜测分类规则（如果用户未显式配置）
@@ -1583,12 +1657,11 @@ public class XBPQ extends Spider {
     private void guessCateManualIfNeeded() {
         try {
             JSONObject cateManual = rule.optJSONObject("cateManual");
-            String body = "";
+            String body = fetchOrCacheHomePageBody();
             boolean hasExplicitCate = !getRuleVal("fenlei").isEmpty()
                     || (!getRuleVal("class_name").isEmpty() && !getRuleVal("class_value").isEmpty());
 
             if (cateManual == null && !hasExplicitCate) {
-                body = fetchHomePageBody();
                 cateManual = guessRuleCateManual(body);
                 if (cateManual != null) {
                     rule.put("cateManual", cateManual);
@@ -1605,7 +1678,7 @@ public class XBPQ extends Spider {
     private void guessVodIdIfNeeded(JSONObject list) {
         try {
             if (!list.has("vod_id")) {
-                String body = fetchHomePageBody();
+                String body = fetchOrCacheHomePageBody();
                 JSONArray listVodId = guessRuleVodId(body);
                 list.put("vod_id", listVodId);
             }
@@ -1620,7 +1693,7 @@ public class XBPQ extends Spider {
     private void guessSearchUrlIfNeeded() {
         try {
             if (!rule.has("search")) {
-                String body = fetchHomePageBody();
+                String body = fetchOrCacheHomePageBody();
                 String url = guessRuleSearchUrl(body);
                 if (!url.isEmpty()) {
                     JSONObject searchRule = new JSONObject();
@@ -1631,6 +1704,16 @@ public class XBPQ extends Spider {
         } catch (Exception e) {
             SpiderDebug.log(e);
         }
+    }
+
+    /**
+     * 获取首页内容（带缓存，避免重复请求）
+     */
+    private String fetchOrCacheHomePageBody() {
+        if (cachedHomePageBody == null) {
+            cachedHomePageBody = fetchHomePageBody();
+        }
+        return cachedHomePageBody;
     }
 
     /**
@@ -1923,8 +2006,7 @@ public class XBPQ extends Spider {
             supplementMissingFields(item, html);
 
             // 编码
-            item.put("vod_id", Base64.encodeToString(
-                    item.toString().getBytes(StandardCharsets.UTF_8), BASE64_FLAG));
+            item.put("vod_id", encodeVodId(item));
 
             videos.put(item);
         }
@@ -2033,8 +2115,7 @@ public class XBPQ extends Spider {
             if (vodId.isEmpty() || seenIds.contains(vodId)) continue;
 
             seenIds.add(vodId);
-            item.put("vod_id", Base64.encodeToString(
-                    item.toString().getBytes(StandardCharsets.UTF_8), BASE64_FLAG));
+            item.put("vod_id", encodeVodId(item));
             videos.put(item);
         }
 
@@ -2505,6 +2586,28 @@ public class XBPQ extends Spider {
      * @param endFlag 结束标记
      * @return 提取的内容列表
      */
+    /** subContent 编译后正则缓存（规则标志位有限，条目数有界；DOTALL 支持跨换行匹配） */
+    private static final Map<String, Pattern> SUB_CONTENT_PATTERN_CACHE = new ConcurrentHashMap<>();
+
+    /**
+     * 获取/缓存 subContent 使用的正则。
+     * <ul>
+     *   <li>缓存避免每次调用都 Pattern.compile（列表/详情解析是热点，单页数十次调用）；</li>
+     *   <li>使用 Pattern.DOTALL，使 起止标志 之间可跨换行匹配，兼容美化后的多行 HTML，
+     *       修正原先非 DOTALL 下“规则在部分页面匹配、部分页面静默失败”的问题。</li>
+     * </ul>
+     * 标志为字面量，已由 escapeExprSpecialWord 转义为字面匹配，组合后语义不变。
+     */
+    private static Pattern getSubContentPattern(String escapedStart, String escapedEnd) {
+        String regex = escapedStart + "(.*?)" + (escapedEnd.isEmpty() ? "$" : escapedEnd);
+        Pattern p = SUB_CONTENT_PATTERN_CACHE.get(regex);
+        if (p == null) {
+            p = Pattern.compile(regex, Pattern.DOTALL);
+            SUB_CONTENT_PATTERN_CACHE.put(regex, p);
+        }
+        return p;
+    }
+
     protected List<String> subContent(String content, String startFlag, String endFlag) {
         List<String> result = new ArrayList<>();
         if (startFlag.isEmpty() && endFlag.isEmpty()) {
@@ -2514,8 +2617,7 @@ public class XBPQ extends Spider {
         try {
             String escapedStart = escapeExprSpecialWord(startFlag);
             String escapedEnd = escapeExprSpecialWord(endFlag);
-            Pattern pattern = Pattern.compile(escapedStart + "(.*?)" + (escapedEnd.isEmpty() ? "$" : escapedEnd));
-            Matcher matcher = pattern.matcher(content);
+            Matcher matcher = getSubContentPattern(escapedStart, escapedEnd).matcher(content);
             while (matcher.find()) {
                 result.add(matcher.group(1).trim());
             }
@@ -3650,6 +3752,7 @@ public class XBPQ extends Spider {
     @Override
     public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) throws Exception {
         try {
+            fetchRule(); // 与其他入口（home/detail/player/search）一致：保证规则已加载，避免被提前调用时规则为空
             JSONObject list = this.rule.getJSONObject("list");
             String url = categoryUrl(tid, pg, filter, extend);
             String body = fetchUrl(url, list.optJSONObject("header"));
@@ -3879,7 +3982,7 @@ public class XBPQ extends Spider {
         v.put("vod_remarks", remarks);
 
         // 编码 vod_id
-        v.put("vod_id", Base64.encodeToString(v.toString().getBytes(StandardCharsets.UTF_8), BASE64_FLAG));
+        v.put("vod_id", encodeVodId(v));
         return v;
     }
 
@@ -5148,7 +5251,7 @@ public class XBPQ extends Spider {
                     ? o.get(search.getString("vod_pic")).toString() : "");
             v.put("vod_remarks", search.has("vod_remarks") && o.has(search.getString("vod_remarks"))
                     ? o.get(search.getString("vod_remarks")).toString() : "");
-            v.put("vod_id", Base64.encodeToString(v.toString().getBytes(StandardCharsets.UTF_8), BASE64_FLAG));
+            v.put("vod_id", encodeVodId(v));
             videos.put(v);
         }
 
@@ -5227,15 +5330,13 @@ public class XBPQ extends Spider {
         SearchFetchResult result = new SearchFetchResult();
 
         if (!searchUrlFlat.isEmpty()) {
-            // 扁平搜索URL优先
+            // 扁平搜索URL优先（buildSearchUrl 内部已应用 search_suffix）
             result.url = buildSearchUrl(searchUrlFlat, keyword);
-            applySearchSuffix(result.url);
             JSONObject headers = parseSearchHeaders(getRuleVal("search_header"));
             result.content = fetchUrl(result.url, headers);
         } else if (search != null && search.has("url")) {
-            result.url = addHttpPrefix(search.getString("url")
-                    .replace("{wd}", keyword).replace("{pg}", "1"));
-            applySearchSuffix(result.url);
+            result.url = applySearchSuffix(addHttpPrefix(search.getString("url")
+                    .replace("{wd}", keyword).replace("{pg}", "1")));
             JSONObject headers = parseSearchHeaders(getRuleVal("search_header"));
             if (headers == null && search != null) headers = search.optJSONObject("header");
             result.content = fetchUrl(result.url, headers);
@@ -5247,19 +5348,22 @@ public class XBPQ extends Spider {
      * 构建搜索URL
      */
     private String buildSearchUrl(String searchUrlFlat, String keyword) throws Exception {
-        return addHttpPrefix(searchUrlFlat
+        return addHttpPrefix(applySearchSuffix(searchUrlFlat
                 .replace("{wd}", URLEncoder.encode(keyword, "UTF-8"))
-                .replace("{pg}", "1"));
+                .replace("{pg}", "1")));
     }
 
     /**
-     * 应用搜索后缀
+     * 应用搜索后缀（search_suffix / 搜索后缀 / 搜索链接后缀）
+     * <p>
+     * 旧实现为 void 空方法，后缀被静默丢弃；此处改为返回拼接后的 URL，使搜索后缀真正生效。
      */
-    private void applySearchSuffix(String url) {
+    private String applySearchSuffix(String url) {
         String suffix = getRuleVal("search_suffix");
-        if (!suffix.isEmpty()) {
-            // 注意：这里需要修改调用方以支持字符串修改
+        if (!suffix.isEmpty() && !url.isEmpty()) {
+            return url + suffix;
         }
+        return url;
     }
 
     /**
@@ -5444,7 +5548,7 @@ public class XBPQ extends Spider {
             v.put("vod_remarks", guessValueVodRemarks(node, 0, v.getString("vod_name")));
         }
 
-        v.put("vod_id", Base64.encodeToString(v.toString().getBytes(StandardCharsets.UTF_8), BASE64_FLAG));
+        v.put("vod_id", encodeVodId(v));
         return v;
     }
 
@@ -5564,6 +5668,53 @@ public class XBPQ extends Spider {
         r = P_RESIDUAL_SYMS.matcher(r).replaceAll("");
         r = P_WHITESPACE.matcher(r).replaceAll(" ");
         return r.trim();
+    }
+
+    /**
+     * 静态版本：清理HTML标签（供静态方法 getRV 使用）
+     */
+    public static String cleanHtmlStatic(String s) {
+        if (s == null) return "";
+        String r = P_HTML_TAG.matcher(s).replaceAll("");
+        r = P_HTML_ENTITY.matcher(r).replaceAll("");
+        r = P_RESIDUAL_SYMS.matcher(r).replaceAll("");
+        r = P_WHITESPACE.matcher(r).replaceAll(" ");
+        return r.trim();
+    }
+
+    /**
+     * 静态版本：二次截取（供静态方法 getRV 使用）
+     */
+    public static List<String> subContentStatic(String content, String startFlag, String endFlag) {
+        List<String> result = new ArrayList<>();
+        if (startFlag.isEmpty() && endFlag.isEmpty()) {
+            result.add(content);
+            return result;
+        }
+        try {
+            String escapedStart = escapeExprSpecialWord(startFlag);
+            String escapedEnd = escapeExprSpecialWord(endFlag);
+            Matcher matcher = getSubContentPattern(escapedStart, escapedEnd).matcher(content);
+            while (matcher.find()) {
+                result.add(matcher.group(1).trim());
+            }
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+        }
+        if (result.isEmpty()) result.add("");
+        return result;
+    }
+
+    /**
+     * 编码 vod_id：将 JSONObject 序列化为 Base64 字符串
+     */
+    protected String encodeVodId(JSONObject item) {
+        try {
+            return Base64.encodeToString(item.toString().getBytes(StandardCharsets.UTF_8), BASE64_FLAG);
+        } catch (Exception e) {
+            SpiderDebug.log("encodeVodId error: " + e.getMessage());
+            return "";
+        }
     }
 
     /**
@@ -5798,12 +5949,12 @@ public class XBPQ extends Spider {
     protected boolean isGenericBlockPage(String html) {
         if (html == null || html.isEmpty()) return false;
         String lowerHtml = html.toLowerCase();
+        // 显式括号明确优先级（&& 本就优先于 ||，此处仅提升可读性，避免误改）
         return lowerHtml.contains("访问频率")
                 || lowerHtml.contains("请求过于频繁")
-                || lowerHtml.contains("403 forbidden")
-                && lowerHtml.contains("被拦截")
-                || lowerHtml.contains("access denied")
-                && (lowerHtml.contains("waf") || lowerHtml.contains("firewall"));
+                || (lowerHtml.contains("403 forbidden") && lowerHtml.contains("被拦截"))
+                || (lowerHtml.contains("access denied")
+                    && (lowerHtml.contains("waf") || lowerHtml.contains("firewall")));
     }
 
     /**
@@ -6234,38 +6385,6 @@ public class XBPQ extends Spider {
         }
     }
 
-    // ==================== TvJar优秀功能借鉴 ====================
-    
-    // ========== 增强反爬验证模块 ==========
-    
-    /**
-     * 处理滑块/人机验证（借鉴 XYQHiker.handleSniffVerify）
-     * 检测/huadong_、/renji_等验证路径并自动处理
-     * 
-     * @param webUrl 当前 URL
-     * @param html 页面 HTML
-     * @return 处理后的 HTML，如果无需处理则返回原内容
-     */
-    /**
-     * 处理滑块/人机验证（已合并至统一入口 handleAntiCrawler → handleSliderVerify）
-     *
-     * @deprecated 与 {@link #handleSliderVerify(String, String)} 功能重复且逻辑矛盾，统一由 handleAntiCrawler 调度。
-     */
-    @Deprecated
-    protected String handleSniffVerify(String webUrl, String html) {
-        return handleAntiCrawler(webUrl, html);
-    }
-    
-    /**
-     * 处理宝塔 BTWAF 验证（已合并至统一入口 handleAntiCrawler → bypassBaoTaWaf）
-     *
-     * @deprecated 与 {@link #bypassBaoTaWaf(String, String)} 功能重复且逻辑矛盾，统一由 handleAntiCrawler 调度。
-     */
-    @Deprecated
-    protected String handleBtwafVerify(String webUrl, String html) {
-        return bypassBaoTaWaf(webUrl, html);
-    }
-    
     // ========== 编码转换工具方法 ==========
     
     /**
@@ -6639,36 +6758,6 @@ public class XBPQ extends Spider {
         return new JSONObject();
     }
 
-    // ========== 原有兼容方法（保持向后兼容）==========
-
-    /**
-     * BTWAF绕过（无额外参数版本）—— 兼容旧接口
-     * @deprecated 请使用 handleAntiCrawler() 或 bypassBaoTaWaf()
-     */
-    @Deprecated
-    protected String jumpBtwaf(String webUrl, String html) {
-        return bypassBaoTaWaf(webUrl, html);
-    }
-
-    /**
-     * BTWAF绕过（带请求头版本）—— 兼容旧接口
-     * @deprecated 请使用 handleAntiCrawler() 或 bypassBaoTaWaf()
-     */
-    @Deprecated
-    protected String jumpBtwaf(String webUrl, String html, JSONObject h) {
-        return bypassBaoTaWaf(webUrl, html, h);
-    }
-
-    /**
-     * 提取BTWAF Token —— 兼容旧接口
-     */
-    private String extractBtwafToken(String html) {
-        JSONArray keys = new JSONArray();
-        keys.put("btwaf=");
-        keys.put("\"");
-        return RuleUtils.findSubString(html, 0, keys);
-    }
-
     /**
      * 从响应中提取Cookie
      */
@@ -6801,7 +6890,10 @@ public class XBPQ extends Spider {
      */
     private static String safeLog(String s) {
         if (s == null) return "";
-        String r = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        // 先转义 & 避免重复处理，再转义 < 和 >
+        String r = s.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
                 .replace("\n", " ").replace("\r", " ");
         if (r.length() > 2000) r = r.substring(0, 2000) + "...";
         return r;
@@ -6842,20 +6934,10 @@ public class XBPQ extends Spider {
                 }
             }
 
-            if (picHeaderCache == null) {
-                synchronized (XBPQ.class) {
-                    if (picHeaderCache == null) {
-                        Map<String, String> headers = new HashMap<>();
-                        headers.put("User-Agent", UA_PC);
-                        headers.put("referer", site == null ? "" : site);
-                        picHeaderCache = headers;
-                    }
-                }
-            }
-
-            Map<String, String> headers = picHeaderCache;
+            // 每次创建新的 headers，避免 referer 被错误缓存
+            Map<String, String> headers = new HashMap<>();
+            headers.put("User-Agent", UA_PC);
             if (site != null && !site.isEmpty()) {
-                headers = new HashMap<>(picHeaderCache);
                 headers.put("referer", site);
             }
 
@@ -6917,6 +6999,13 @@ public class XBPQ extends Spider {
     }
 
     /**
+     * 弹幕 p 属性下标（B站风格 [time,mode,size,color,source,content,userHash]）
+     * 第 6 个位置（时间戳/日期）在输出时固定为 0。
+     */
+    private static final int DM_TIME = 0, DM_MODE = 1, DM_SIZE = 2, DM_COLOR = 3,
+            DM_SOURCE = 4, DM_CONTENT = 5, DM_USER = 6;
+
+    /**
      * JSON 数组转 XML 格式（B站风格弹幕兼容）
      * 输入格式：{"list": [[time,mode,size,color,source,content,userHash], ...]}
      */
@@ -6930,13 +7019,13 @@ public class XBPQ extends Spider {
             for (int i = 0; i < array.length(); i++) {
                 JSONArray item = array.getJSONArray(i);
                 if (item.length() < 7) continue;
-                sb.append("<d p=\"").append(item.getString(0))
-                        .append(",").append(item.getInt(1))
-                        .append(",").append(item.getInt(2))
-                        .append(",").append(item.getInt(3))
-                        .append(",").append(item.getInt(4))
-                        .append(",0,").append(item.getInt(6))
-                        .append("\">").append(item.getString(5)).append("</d>\n");
+                sb.append("<d p=\"").append(item.getString(DM_TIME))
+                        .append(",").append(item.getInt(DM_MODE))
+                        .append(",").append(item.getInt(DM_SIZE))
+                        .append(",").append(item.getInt(DM_COLOR))
+                        .append(",").append(item.getInt(DM_SOURCE))
+                        .append(",0,").append(item.getInt(DM_USER))
+                        .append("\">").append(item.getString(DM_CONTENT)).append("</d>\n");
             }
             sb.append("</i>");
             return sb.toString();
@@ -7057,7 +7146,7 @@ public class XBPQ extends Spider {
      *   <li>baseEncodeUrl / secretKey 图片代理双模式参数</li>
      *   <li>headerMap 类级公共请求头填充</li>
      *   <li>variableMap 常用变量初始化</li>
-     *   <li>单例镜像同步（供 getBL/getRV/isFail 等静态方法访问）</li>
+     *   <li>静态工具方法同步（getBL/getRV 等使用类级静态字段）</li>
      * </ul>
      */
     private void initEnhancedConfig() {
@@ -7467,17 +7556,11 @@ public class XBPQ extends Spider {
         if (content == null) return;
         synchronized (GLOBAL_STATE_LOCK) {
             staticHomeUrl = content;
-            if (singleton.rule != null) {
-                try {
-                    singleton.rule.put("homeUrl", content);
-                } catch (Exception ignored) {
-                }
-            }
         }
     }
 
     /**
-     * 静态执行规则提取（获取 singleton 主页内容后按选择器提取）
+     * 静态执行规则提取（获取主页内容后按选择器提取）
      * 支持 CSS 选择器（css: 前缀或裸选择器）与 前缀&&后缀 截取规则
      */
     public static String getRV(String selector) {
@@ -7490,8 +7573,8 @@ public class XBPQ extends Spider {
             }
             if (selector.contains("&&")) {
                 String[] se = selector.split("&&", 2);
-                List<String> r = singleton.subContent(html, se[0], se[1]);
-                return r.isEmpty() ? "" : singleton.cleanHtml(r.get(0));
+                List<String> r = subContentStatic(html, se[0], se[1]);
+                return r.isEmpty() ? "" : cleanHtmlStatic(r.get(0));
             }
             return JsoupExtractor.extractSingle(html, "css:" + selector, null);
         } catch (Exception e) {
