@@ -9,6 +9,7 @@ import android.util.Base64;
 import android.util.Pair;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
+import android.webkit.CookieManager;
 import android.webkit.WebViewClient;
 
 import com.github.catvod.crawler.Spider;
@@ -1177,7 +1178,7 @@ public class XBPQ extends Spider {
         this.context = context;
         this.ext = extend;
         // P2: 初始化串行单例 WebView（传入 this，供内部调用实例方法）
-        SingletonWebView.getInstance().init(context, this);
+        SingletonWebView.getInstance().init(context);
     }
 
     /**
@@ -5492,7 +5493,15 @@ public class XBPQ extends Spider {
             // 如果规则启用了 WebView 渲染，则使用 WebView 获取 JS 渲染后的 HTML
             if (isWebViewEnabled()) {
                 SpiderDebug.log("fetchUrl: 使用 WebView 渲染模式: " + url);
-                String html = webViewFetch(url, headers);
+                JSONObject merged = new JSONObject();
+                try {
+                    for (Map.Entry<String, String> e : h.entrySet()) {
+                        if (e.getKey() != null && e.getValue() != null) {
+                            merged.put(e.getKey(), e.getValue());
+                        }
+                    }
+                } catch (Exception ignored) {}
+                String html = webViewFetch(url, merged);
                 if (!html.isEmpty()) {
                     html = bypassBaoTaWaf(url, html, headers);
                     return html;
@@ -5811,7 +5820,6 @@ public class XBPQ extends Spider {
         private volatile Handler mainHandler;
         private volatile boolean destroyed;
         private boolean busy;
-        private static java.lang.ref.WeakReference<XBPQ> ownerRef;
 
         static SingletonWebView getInstance() { return Holder.INSTANCE; }
 
@@ -5822,16 +5830,11 @@ public class XBPQ extends Spider {
         private SingletonWebView() {}
 
         void init(Context ctx) {
-            init(ctx, null);
-        }
-
-        void init(Context ctx, XBPQ owner) {
             lock.lock();
             try {
                 if (webView != null) return;
                 mainHandler = new Handler(android.os.Looper.getMainLooper());
                 webView = buildWebView(ctx);
-                ownerRef = owner != null ? new java.lang.ref.WeakReference<>(owner) : null;
                 SpiderDebug.log("SingletonWebView: 创建单例实例");
             } finally {
                 lock.unlock();
@@ -5942,11 +5945,19 @@ public class XBPQ extends Spider {
                 }
             });
 
-            Map<String, String> h = getHeadersXbpq(url);
-            if (headers != null) h = mergeHeadersXbpq(h, headers);
-            String userAgent = h.getOrDefault("User-Agent", ua);
+            Map<String, String> h = new HashMap<>();
+            if (headers != null) {
+                try {
+                    java.util.Iterator<String> iter = headers.keys();
+                    while (iter.hasNext()) {
+                        String k = iter.next();
+                        h.put(k, headers.optString(k, ""));
+                    }
+                } catch (Exception ignored) {}
+            }
+            String userAgent = !h.containsKey("User-Agent") ? ua : h.get("User-Agent");
             wv.getSettings().setUserAgentString(userAgent);
-            syncCookiesToWebViewXbpq(url, headers);
+            syncCookiesToWebView(url, headers);
             wv.loadUrl(url, h);
         }
 
@@ -5972,7 +5983,7 @@ public class XBPQ extends Spider {
                             } catch (Exception e) {
                                 SpiderDebug.log("runExtract error: " + e.getMessage());
                             }
-                            try { backfillCookiesFromWebViewXbpq(view.getUrl()); } catch (Exception ignored) {}
+                            try { backfillCookiesFromWebViewXbpq(view.getUrl(), req); } catch (Exception ignored) {}
                             req.complete(html); // P1: 唤醒 await
                             onComplete.run();
                         });
@@ -6015,25 +6026,42 @@ public class XBPQ extends Spider {
             }
         }
 
-        // ---- 从 owner 委派实例方法调用 ----
-        private static Map<String, String> getHeadersXbpq(String url) {
-            XBPQ o = ownerRef != null ? ownerRef.get() : null;
-            return o != null ? o.getHeaders(url) : new HashMap<>();
+        /** 按 req.headers 向 CookieManager 注入 Cookie，多源安全 */
+        private static void syncCookiesToWebView(String url, JSONObject headers) {
+            try {
+                CookieManager cm = CookieManager.getInstance();
+                cm.setAcceptCookie(true);
+                if (headers == null) return;
+                String cookieStr = headers.optString("Cookie", headers.optString("cookie", ""));
+                if (!cookieStr.isEmpty()) {
+                    for (String pair : cookieStr.split(";")) {
+                        String trimmed = pair.trim();
+                        if (!trimmed.isEmpty()) {
+                            try { cm.setCookie(url, trimmed); } catch (Exception ignored) {}
+                        }
+                    }
+                    SpiderDebug.log("syncCookiesToWebView: 已注入 Cookie");
+                }
+            } catch (Exception e) {
+                SpiderDebug.log("syncCookiesToWebView error: " + e.getMessage());
+            }
         }
 
-        private static Map<String, String> mergeHeadersXbpq(Map<String, String> base, JSONObject extra) {
-            XBPQ o = ownerRef != null ? ownerRef.get() : null;
-            return o != null ? o.mergeHeaders(base, extra) : base;
-        }
-
-        private static void syncCookiesToWebViewXbpq(String url, JSONObject headers) {
-            XBPQ o = ownerRef != null ? ownerRef.get() : null;
-            if (o != null) o.syncCookiesToWebView(url, headers);
-        }
-
-        private static void backfillCookiesFromWebViewXbpq(String pageUrl) {
-            XBPQ o = ownerRef != null ? ownerRef.get() : null;
-            if (o != null) o.backfillCookiesFromWebView(pageUrl);
+        /** Cookie 回写：将 WebView 拿到的 cookie 写回 req.headers */
+        private static void backfillCookiesFromWebViewXbpq(String pageUrl, Req req) {
+            if (pageUrl == null || pageUrl.isEmpty()) return;
+            try {
+                CookieManager cm = CookieManager.getInstance();
+                String cookies = cm.getCookie(pageUrl);
+                if (cookies == null || cookies.isEmpty()) return;
+                if (req.headers != null) {
+                    req.headers.put("Cookie", SliderVerifyUtils.mergeCookies(
+                            req.headers.optString("Cookie", ""), cookies));
+                }
+                SpiderDebug.log("backfillCookies: 已回写, len=" + cookies.length());
+            } catch (Exception e) {
+                SpiderDebug.log("backfillCookies error: " + e.getMessage());
+            }
         }
     }
 
