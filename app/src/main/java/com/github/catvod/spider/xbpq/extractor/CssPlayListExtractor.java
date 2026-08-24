@@ -1,0 +1,101 @@
+package com.github.catvod.spider.xbpq.extractor;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
+import org.jsoup.select.Elements;
+
+import com.github.catvod.crawler.SpiderDebug;
+import com.github.catvod.spider.xbpq.config.CssRule;
+
+/**
+ * CSS播放列表提取器
+ * <p>
+ * 两种模式：
+ * <ul>
+ *   <li>多线模式：from_array 选择器切分线路，每条线路<b>内部</b>用 from_title 提取线路名、
+ *       url_array 提取集数（url_title/url_url）</li>
+ *   <li>单线模式：无 from_array 时在全文用 play_array/url_array 提取集数，线路名固定为"播放"</li>
+ * </ul>
+ * 输出结构：[{name: 线路名, episodes: ["标题$链接", ...]}, ...]
+ *
+ * @author CatVodSpider Team
+ * @version 2.1
+ */
+public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor {
+
+    @Override
+    public JSONArray extract(String html, JSONObject config, int sort) throws Exception {
+        JSONArray playList = new JSONArray();
+
+        try {
+            String lineArrayRule = config.optString("from_array", "");
+            Document doc = Jsoup.parse(html);
+
+            if (!lineArrayRule.isEmpty()) {
+                // 多线模式：每条线路内部提取集数
+                String lineTitleRule = config.optString("from_title", "");
+                Elements lines = doc.select(CssRule.stripPrefix(lineArrayRule));
+
+                int lineIndex = 0;
+                for (Element line : lines) {
+                    lineIndex++;
+                    String lineName = CssRule.extractByCss(line.outerHtml(), lineTitleRule, 0);
+                    if (lineName.isEmpty()) lineName = "线路" + lineIndex;
+
+                    JSONArray episodes = extractEpisodes(line.outerHtml(), config);
+                    if (episodes.length() == 0) continue;
+
+                    JSONObject source = new JSONObject();
+                    source.put("name", lineName);
+                    source.put("episodes", episodes);
+                    playList.put(source);
+                }
+            } else {
+                // 单线模式：全文提取集数
+                JSONArray episodes = extractEpisodes(html, config);
+                if (episodes.length() > 0) {
+                    JSONObject source = new JSONObject();
+                    source.put("name", "播放");
+                    source.put("episodes", episodes);
+                    playList.put(source);
+                }
+            }
+        } catch (Exception e) {
+            SpiderDebug.log("CssPlayListExtractor error: " + e.getMessage());
+        }
+
+        return playList;
+    }
+
+    /**
+     * 在范围内用 url_array（或 play_array）选择器提取集数（"标题$链接"列表）
+     */
+    private JSONArray extractEpisodes(String scope, JSONObject config) throws Exception {
+        JSONArray episodes = new JSONArray();
+        String arrayRule = config.optString("url_array", "");
+        if (arrayRule.isEmpty()) arrayRule = config.optString("play_array", "");
+        if (arrayRule.isEmpty()) return episodes;
+
+        String titleRule = config.optString("url_title", "");
+        String urlRule = config.optString("url_url", "");
+        String prefix = config.optString("play_prefix", "");
+        String suffix = config.optString("play_suffix", "");
+
+        Document doc = Jsoup.parse(scope);
+        Elements items = doc.select(CssRule.stripPrefix(arrayRule));
+
+        for (Element item : items) {
+            String itemHtml = item.outerHtml();
+            String title = CssRule.extractByCss(itemHtml, titleRule, 0);
+            String url = CssRule.extractByCss(itemHtml, urlRule, 0);
+            if (url.isEmpty()) continue;
+            episodes.put((title.isEmpty() ? String.valueOf(episodes.length() + 1) : title)
+                    + "$" + prefix + url + suffix);
+        }
+        return episodes;
+    }
+}
