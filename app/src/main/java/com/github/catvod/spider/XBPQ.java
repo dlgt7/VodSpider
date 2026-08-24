@@ -112,20 +112,20 @@ public class XBPQ extends Spider {
     /** 类级调试开关（任一源 openDebug=1 即全局生效，"只升不降"，避免多源互相关闭日志） */
     private static volatile boolean debug = false;
 
-    /** 类级公共请求头表（"公共请求头"/headerJson 配置填充，所有请求默认携带，跨实例共享） */
-    private static final Map<String, String> headerMap = new ConcurrentHashMap<>();
+    /** 公共请求头表（"公共请求头"/headerJson 配置填充，所有请求默认携带）。
+     *  实例级隔离：此前为类级共享 + clear() 重填，多源并发时 B 源初始化会抹掉 A 源的
+     *  公共头（Cookie/Token 串源），读取端（getHeaders/loadPic/loadM3u8/loadDanmu）无锁
+     *  存在 check-then-act 竞态窗口，与 configJson/playHeaderCache 实例化方向一致改为实例字段。 */
+    private final Map<String, String> headerMap = new ConcurrentHashMap<>();
 
-    /** 图片远端 base64 代理前缀（fixCover 双模式：非空时走 远端代理防盗链图床中转） */
-    private static volatile String baseEncodeUrl = "";
+    /** 图片远端 base64 代理前缀（fixCover 双模式：非空时走 远端代理防盗链图床中转；实例级隔离） */
+    private String baseEncodeUrl = "";
 
-    /** 图片代理签名密钥（fixCover 追加 &key=MD5(pic+secretKey)，loadPic 校验防代理滥用） */
-    private static volatile String secretKey = "";
+    /** 图片代理签名密钥（fixCover 追加 &key=MD5(pic+secretKey)，loadPic 校验防代理滥用；实例级隔离） */
+    private String secretKey = "";
 
-    /** 静态主页 URL 快照（供 getCom/getBL 等静态工具方法稳定访问；适用于单源/非并发场景） */
-    private static volatile String staticHomeUrl = "";
-
-    /** 类级共享状态写锁：串行化 initEnhancedConfig/setBL 对 staticHomeUrl/baseEncodeUrl/secretKey/headerMap/debug 的写入，
-     *  避免多源并发初始化互相覆盖（P0-3 线程安全）。注意：共享的"类级公共请求头"本身是设计意图，本锁保证写入原子性而非逐源隔离。 */
+    /** 类级共享状态写锁：串行化 initEnhancedConfig 对 debug 的写入（只升不降的复合读写需原子性）。
+     *  headerMap/baseEncodeUrl/secretKey 已转实例字段，天然逐源隔离，不再需要锁保护。 */
     private static final Object GLOBAL_STATE_LOCK = new Object();
 
     /** 实例级调试开关 */
@@ -162,9 +162,9 @@ public class XBPQ extends Spider {
 
     // ==================== 预编译正则常量（避免每次调用重复 Pattern.compile，P1 性能优化） ====================
 
-    /** selectByRule: CSS :eq(n) 选择器 */
+    /** CSS :eq(n) 选择器 */
     private static final Pattern P_CSS_EQ = Pattern.compile(":eq\\s*\\(\\s*(\\d+)\\s*\\)");
-    /** selectByRule: CSS [n] 下标选择器 */
+    /** CSS [n] 下标选择器 */
     private static final Pattern P_CSS_INDEX = Pattern.compile("\\[\\s*(\\d+)\\s*\\]$");
     /** CSS 选择器 :last 的特殊索引标记（表示最后一个元素） */
     private static final int LAST_INDEX = -1;
@@ -195,16 +195,10 @@ public class XBPQ extends Spider {
     private static final Pattern P_LOCATION_HREF = Pattern.compile("location\\.href\\s*=\\s*[\"']([^\"']+)[\"']");
     /** window.location 跳转 */
     private static final Pattern P_WINDOW_LOCATION = Pattern.compile("window\\.location\\s*=\\s*[\"']([^\"']+)[\"']");
-    /** selectByRule: xxx:eq(n) 形式 */
-    private static final Pattern P_SELECT_EQ = Pattern.compile("(.+?):eq\\((\\d+)\\)");
     /** {{变量}} 模板 */
     private static final Pattern P_TEMPLATE_VAR = Pattern.compile("\\{\\{([^}]+)\\}\\}");
     /** Unicode 转义 \\uXXXX 解码（hexEscapeDecode，group(1)=十六进制） */
     private static final Pattern P_UNICODE_ESCAPE = Pattern.compile("\\\\u([0-9A-Fa-f]{4})");
-    /** clan(): 干扰标记 [.*?] */
-    private static final Pattern P_CLAN_BRACKET = Pattern.compile("\\[.*?\\]");
-    /** clan(): 干扰标记 ￥.*?￥ */
-    private static final Pattern P_CLAN_YUAN = Pattern.compile("￥.*?￥");
     /** cleanHtml: HTML 标签 <...> */
     private static final Pattern P_HTML_TAG = Pattern.compile("<[^>]+>");
     /** cleanHtml: HTML 实体 &xxx; */
@@ -1396,9 +1390,11 @@ public class XBPQ extends Spider {
     private void initializeHomeUrl(JSONObject list) throws JSONException, MalformedURLException {
         String homeUrl = rule.getString("homeUrl");
         if (homeUrl.contains("{cateId}")) {
+            // 基于 URL 对象重构 origin（协议+域名+端口），
+            // 旧实现 homeUrl.indexOf(path) 在 path 为 "/" 时会命中协议后的第一个斜杠，
+            // 把 homeUrl 截成 "https:"
             URL url = new URL(homeUrl);
-            String path = url.getPath();
-            rule.put("homeUrl", homeUrl.substring(0, homeUrl.indexOf(path)));
+            rule.put("homeUrl", url.getProtocol() + "://" + url.getAuthority());
             if (!list.has("url")) {
                 list.put("url", homeUrl);
             }
@@ -2170,20 +2166,16 @@ public class XBPQ extends Spider {
             JSONObject v = new JSONObject();
 
             if (search.has("vod_id_css")) {
-                String idRule = search.getString("vod_id_css").replace("@text", ":eq(" + i + ")@text");
-                v.put("vod_id", JsoupExtractor.extractSingle(html, idRule, null));
+                v.put("vod_id", JsoupExtractor.extractSingle(html, injectEqIndex(search.getString("vod_id_css"), i), null));
             }
             if (search.has("vod_name_css")) {
-                String nameRule = search.getString("vod_name_css").replace("@text", ":eq(" + i + ")@text");
-                v.put("vod_name", JsoupExtractor.extractSingle(html, nameRule, null));
+                v.put("vod_name", JsoupExtractor.extractSingle(html, injectEqIndex(search.getString("vod_name_css"), i), null));
             }
             if (search.has("vod_pic_css")) {
-                String picRule = search.getString("vod_pic_css").replace("@attr", ":eq(" + i + ")@attr");
-                v.put("vod_pic", addHttpPrefix(JsoupExtractor.extractSingle(html, picRule, null)));
+                v.put("vod_pic", addHttpPrefix(JsoupExtractor.extractSingle(html, injectEqIndex(search.getString("vod_pic_css"), i), null)));
             }
             if (search.has("vod_remarks_css")) {
-                String remarksRule = search.getString("vod_remarks_css").replace("@text", ":eq(" + i + ")@text");
-                v.put("vod_remarks", JsoupExtractor.extractSingle(html, remarksRule, null));
+                v.put("vod_remarks", JsoupExtractor.extractSingle(html, injectEqIndex(search.getString("vod_remarks_css"), i), null));
             }
 
             if (!v.optString("vod_id", "").isEmpty()) {
@@ -2191,12 +2183,25 @@ public class XBPQ extends Spider {
                 String rawId = getRuleVal("search_prefix") + v.optString("vod_id", "") + getRuleVal("search_suffix");
                 if (seenIds.contains(rawId)) continue;
                 seenIds.add(rawId);
-                v.put("vod_id", rawId);
                 v.put("vod_id", encodeVodId(v));
                 videos.put(v);
             }
         }
         return videos;
+    }
+
+    /**
+     * 在 CSS 规则的提取标记前插入 :eq(index)，用于无容器逐项提取模式。
+     * 规则形如 ".thumb@src" / ".title a@text" / ".title"，返回 ".thumb:eq(0)@src"。
+     * 相比逐标记 replace 的方式，可正确处理 @src/@data-original 等任意属性标记
+     * （旧实现对 @attr 的替换是 no-op，导致逐项模式下图片永远取第 1 个匹配）。
+     */
+    private static String injectEqIndex(String rule, int index) {
+        if (rule == null || rule.isEmpty()) return rule;
+        int atIdx = rule.indexOf('@');
+        String selector = atIdx >= 0 ? rule.substring(0, atIdx) : rule;
+        String extract = atIdx >= 0 ? rule.substring(atIdx) : "";
+        return selector + ":eq(" + index + ")" + extract;
     }
 
     /**
@@ -2505,14 +2510,14 @@ public class XBPQ extends Spider {
 
     /**
      * 获取请求头
-     * 合并顺序：headerMap（类级公共请求头，"公共请求头"配置） → rule.header（本源配置） → 默认UA
+     * 合并顺序：headerMap（实例级公共请求头，"公共请求头"配置） → rule.header（本源配置） → 默认UA
      * @param url 请求URL
      * @return 请求头Map
      */
     protected Map<String, String> getHeaders(String url) {
         Map<String, String> headers = new HashMap<>();
         try {
-            // 1. 类级公共请求头（多源共享 Cookie/Token 等，避免重复配置）
+            // 1. 公共请求头（本源 headerJson/userHeader 配置，实例级隔离）
             if (!headerMap.isEmpty()) headers.putAll(headerMap);
             // 2. 本源 rule.header 配置（优先级高于公共请求头）
             if (rule.has("header")) {
@@ -3098,7 +3103,10 @@ public class XBPQ extends Spider {
      * 猜测播放列表规则
      */
     public JSONArray guessRuleVodPlayUrl(String str, String vid) {
-        String regex = "href=\"(/.+?)\"";
+        // 匹配任意非空 href（含 play/1.html 这类无前导斜杠的相对路径，
+        // 旧正则 href="(/.+?)" 漏掉相对路径）；排除 javascript:/#/mailto 等非导航链接，
+        // 误匹配风险由下方 href.indexOf(vid) 过滤兜底
+        String regex = "href=\"(?!javascript:|#|mailto:)([^\"<>]+?)\"";
         Pattern pattern = Pattern.compile(regex, Pattern.CASE_INSENSITIVE);
         Matcher m = pattern.matcher(str);
         HtmlMatchInfo info = new HtmlMatchInfo();
@@ -3787,8 +3795,12 @@ public class XBPQ extends Spider {
                 }
             }
 
-            // 替换占位符
-            cateUrl = cateUrl.replace("{cateId}", tid).replace("{catePg}", shiftStartPage(pg));
+            // 替换占位符（同时兼容小写变体 {cateid}/{catepg} 与页码简写 {pg}/{page}；
+            // {pg}/{page} 此前仅在白名单中却从未赋值，会被静默删除导致 URL 残缺）
+            String shiftedPg = shiftStartPage(pg);
+            cateUrl = cateUrl.replace("{cateId}", tid).replace("{cateid}", tid)
+                    .replace("{catePg}", shiftedPg).replace("{catepg}", shiftedPg)
+                    .replace("{pg}", shiftedPg).replace("{page}", shiftedPg);
             // 清除剩余花括号变量：仅处理已知占位符白名单，
             // 防止规则误写的 {xxx} 或 URL 中合法的花括号字符被通配正则误删
             Matcher matcher = P_BRACE_VAR.matcher(cateUrl);
@@ -4995,18 +5007,21 @@ public class XBPQ extends Spider {
             reorderPlaySources(playlist, vodPlayUrl, vodPlayFrom);
 
             // 线路合并：将多线路剧集合并为单一线路（线路合并=1）
+            // 注意：每个元素本身是 "标题$链接#标题$链接" 格式，元素之间必须用 # 拼接；
+            // 用 $ 会与"标题$链接"的分隔符冲突，导致播放器无法区分集与集的边界
             if (mergeLines && vodPlayUrl.size() > 1) {
                 String firstName = !vodPlayFrom.isEmpty() ? vodPlayFrom.get(0) : "线路";
+                int lineCount = vodPlayUrl.size();
                 StringBuilder sb = new StringBuilder();
                 for (int i = 0; i < vodPlayUrl.size(); i++) {
-                    if (i > 0) sb.append("$");
+                    if (i > 0) sb.append("#");
                     sb.append(vodPlayUrl.get(i));
                 }
                 vodPlayUrl.clear();
                 vodPlayUrl.add(sb.toString());
                 vodPlayFrom.clear();
                 vodPlayFrom.add(firstName);
-                SpiderDebug.log("线路合并：已将 " + (sb.toString().split("\\$").length) + " 条线路合并为单一线路");
+                SpiderDebug.log("线路合并：已将 " + lineCount + " 条线路合并为单一线路");
             }
 
             // 写入结果
@@ -5168,8 +5183,9 @@ public class XBPQ extends Spider {
         int ri = region.indexOf('>', li);
         if (ri <= li) return null;
         String anchor = region.substring(li, ri + 1);
-        // 标题 = anchor 内 &gt; 之后、下一个 &lt; 之前的文本
-        int ti = anchor.indexOf('>', li) + 1;
+        // 标题 = anchor 内第一个 &gt; 之后、下一个 &lt; 之前的文本
+        // （anchor 是新串下标从 0 起，不可沿用 region 坐标的 li）
+        int ti = anchor.indexOf('>') + 1;
         int te = anchor.indexOf('<', ti);
         String title = (te > ti) ? anchor.substring(ti, te).trim() : "";
         if (title.isEmpty()) title = "第1集";
@@ -5191,6 +5207,7 @@ public class XBPQ extends Spider {
 
         List<String> urls = new ArrayList<>();
         List<String> froms = new ArrayList<>();
+        boolean[] matched = new boolean[vodPlayFrom.size()];
 
         JSONArray rulePlayFrom = playlist.getJSONArray("vod_play_from");
         for (int i = 0; i < rulePlayFrom.length(); ++i) {
@@ -5205,10 +5222,19 @@ public class XBPQ extends Spider {
             }
 
             for (int j = 0; j < vodPlayFrom.size(); ++j) {
-                if (vodPlayFrom.get(j).equals(alias)) {
+                if (!matched[j] && vodPlayFrom.get(j).equals(alias)) {
+                    matched[j] = true;
                     urls.add(vodPlayUrl.get(j));
                     froms.add(vodPlayFrom.get(j));
                 }
+            }
+        }
+
+        // 配置中未列出但站点实际存在的线路按原序追加到尾部，避免静默丢失
+        for (int j = 0; j < vodPlayFrom.size(); ++j) {
+            if (!matched[j]) {
+                urls.add(vodPlayUrl.get(j));
+                froms.add(vodPlayFrom.get(j));
             }
         }
 
@@ -5685,11 +5711,21 @@ public class XBPQ extends Spider {
             JSONObject headers = parseSearchHeaders(getRuleVal("search_header"));
             result.content = fetchUrl(result.url, headers);
         } else if (search != null && search.has("url")) {
-            result.url = applySearchSuffix(addHttpPrefix(search.getString("url")
-                    .replace("{wd}", keyword).replace("{pg}", page)));
-            JSONObject headers = parseSearchHeaders(getRuleVal("search_header"));
-            if (headers == null && search != null) headers = search.optJSONObject("header");
-            result.content = fetchUrl(result.url, headers);
+            JSONObject postCfg = search.optJSONObject("post");
+            if (postCfg == null) postCfg = search.optJSONObject("postBody");
+            if (postCfg != null) {
+                // POST 搜索：search.post / search.postBody 表单配置（此前解析了 payload 却无调用链，配置不生效）
+                result.url = addHttpPrefix(search.getString("url"));
+                result.content = postSearch(keyword, page);
+            } else {
+                // {wd} 与扁平路径 buildSearchUrl 保持一致：统一 URL 编码，
+                // 否则含 空格/&/= 的关键词会直接破坏 URL 结构
+                result.url = applySearchSuffix(addHttpPrefix(search.getString("url")
+                        .replace("{wd}", URLEncoder.encode(keyword, "UTF-8")).replace("{pg}", page)));
+                JSONObject headers = parseSearchHeaders(getRuleVal("search_header"));
+                if (headers == null) headers = search.optJSONObject("header");
+                result.content = fetchUrl(result.url, headers);
+            }
         }
         return result;
     }
@@ -5883,16 +5919,17 @@ public class XBPQ extends Spider {
         if ("1".equals(getRuleVal("PicNeedProxy")) && !vodPic.isEmpty()) {
             vodPic = fixCover(vodPic, url);
         }
+        // 播放图片兜底：与 buildVideoObject 保持一致，搜索结果无图时使用占位封面
+        if (vodPic.isEmpty() && !playImage.isEmpty()) {
+            vodPic = playImage;
+        }
         v.put("vod_pic", vodPic);
 
         v.put("vod_remarks", RuleUtils.findSubString(node, 0, search.optJSONArray("vod_remarks")));
 
-        // 补充缺失字段
+        // 补充缺失字段（vod_pic 已在上方完成 规则+猜测+兜底 三级取值，无需重复猜测）
         if (v.getString("vod_name").isEmpty()) {
             v.put("vod_name", guessValueVodName(node, 0));
-        }
-        if (v.getString("vod_pic").isEmpty()) {
-            v.put("vod_pic", guessValueVodPic(node, 0));
         }
         if (v.getString("vod_remarks").isEmpty()) {
             v.put("vod_remarks", guessValueVodRemarks(node, 0, v.getString("vod_name")));
@@ -5970,31 +6007,21 @@ public class XBPQ extends Spider {
     protected String convertUnicodeToChinese(String str) {
         if (str == null || !str.contains("\\u")) return str;
         try {
+            // appendReplacement 单次遍历替换（与 hexEscapeDecode 风格一致）；
+            // 旧实现循环内对原串做 str.replace 再继续遍历旧 Matcher，O(n²) 且
+            // 替换后新形成的 \\uXXXX 转义（如 \\u005c 解出 \\ 后拼接）不再被扫描
             Matcher matcher = P_UNICODE_SEQ.matcher(str);
+            StringBuilder sb = new StringBuilder();
             while (matcher.find()) {
-                String unicodeNum = matcher.group(2);
-                char c = (char) Integer.parseInt(unicodeNum, 16);
-                str = str.replace(matcher.group(1), String.valueOf(c));
+                char c = (char) Integer.parseInt(matcher.group(2), 16);
+                matcher.appendReplacement(sb, Matcher.quoteReplacement(String.valueOf(c)));
             }
-            return str;
+            matcher.appendTail(sb);
+            return sb.toString();
         } catch (Exception e) {
             // parseInt 理论上不会失败（正则已限定 [0-9A-Fa-f]{4}），兜底防中断
             return str;
         }
-    }
-
-    /**
-     * 统一获取页面内容（带Unicode转换）
-     */
-    protected String fetch(String webUrl) {
-        if (isInternalUrl(webUrl)) {
-            SpiderDebug.log(safeLog("fetch SSRF blocked: " + webUrl));
-            return "";
-        }
-        String html = OkHttp.string(webUrl, getHeaders(webUrl));
-        html = bypassBaoTaWaf(webUrl, html);
-        html = convertUnicodeToChinese(html);
-        return cleanHtmlResponse(html);
     }
 
     /**
@@ -6023,41 +6050,6 @@ public class XBPQ extends Spider {
     }
 
     /**
-     * 静态版本：清理HTML标签（供静态方法 getRV 使用）
-     */
-    public static String cleanHtmlStatic(String s) {
-        if (s == null) return "";
-        String r = P_HTML_TAG.matcher(s).replaceAll("");
-        r = P_HTML_ENTITY.matcher(r).replaceAll("");
-        r = P_RESIDUAL_SYMS.matcher(r).replaceAll("");
-        r = P_WHITESPACE.matcher(r).replaceAll(" ");
-        return r.trim();
-    }
-
-    /**
-     * 静态版本：二次截取（供静态方法 getRV 使用）
-     */
-    public static List<String> subContentStatic(String content, String startFlag, String endFlag) {
-        List<String> result = new ArrayList<>();
-        if (startFlag.isEmpty() && endFlag.isEmpty()) {
-            result.add(content);
-            return result;
-        }
-        try {
-            String escapedStart = escapeExprSpecialWord(startFlag);
-            String escapedEnd = escapeExprSpecialWord(endFlag);
-            Matcher matcher = getSubContentPattern(escapedStart, escapedEnd).matcher(content);
-            while (matcher.find()) {
-                result.add(matcher.group(1).trim());
-            }
-        } catch (Exception e) {
-            SpiderDebug.log(e);
-        }
-        if (result.isEmpty()) result.add("");
-        return result;
-    }
-
-    /**
      * 编码 vod_id：将 JSONObject 序列化为 Base64 字符串
      */
     protected String encodeVodId(JSONObject item) {
@@ -6070,37 +6062,19 @@ public class XBPQ extends Spider {
     }
 
     /**
-     * POST请求
+     * POST请求搜索（search.post / search.postBody 表单配置）
+     * <p>
+     * 表单值经 OkHttp FormBody 自动 URL 编码，{wd}/{pg} 原样替换即可，勿手动编码（避免双重编码）。
+     *
+     * @param keyword 搜索关键词
+     * @param page    页码（替换 {pg} 占位符）
      */
-    private String fetchPost(String webUrl) {
-        try {
-            String postUrl = webUrl.split("\\?")[0].replace("？？", "?");
-            String body = webUrl.contains("?") ? webUrl.split("\\?")[1].split(";")[0] : "";
-            if (body.startsWith("{")) {
-                return convertUnicodeToChinese(OkHttp.post(postUrl, body, getHeaders(postUrl)));
-            } else {
-                LinkedHashMap<String, String> params = new LinkedHashMap<>();
-                for (String p : body.split("&")) {
-                    int idx = p.indexOf("=");
-                    if (idx > 0) params.put(p.substring(0, idx), p.substring(idx + 1));
-                }
-                return convertUnicodeToChinese(OkHttp.post(postUrl, params, getHeaders(postUrl)));
-            }
-        } catch (Exception e) {
-            SpiderDebug.log(e);
-        }
-        return "";
-    }
-
-    /**
-     * POST请求搜索
-     */
-    protected String postSearch(String keyword, boolean quick) {
+    protected String postSearch(String keyword, String page) {
         try {
             JSONObject search = rule.optJSONObject("search");
             if (search == null) return "";
 
-            String url = search.getString("url");
+            String url = addHttpPrefix(search.getString("url"));
             JSONObject params = search.optJSONObject("post");
             if (params == null) params = search.optJSONObject("postBody");
             if (params == null) return "";
@@ -6109,11 +6083,22 @@ public class XBPQ extends Spider {
             Iterator<String> iter = params.keys();
             while (iter.hasNext()) {
                 String key = iter.next();
-                String value = params.getString(key).replace("{wd}", keyword);
+                String value = params.getString(key).replace("{wd}", keyword).replace("{pg}", page);
                 payload.put(key, value);
             }
 
+            // 请求头：getHeaders（公共头+rule.header）→ 搜索头（search_header/search.header，
+            // 与 GET 分支 fetchSearchContent 的 parseSearchHeaders 逻辑一致）
             Map<String, String> headers = getHeaders(url);
+            JSONObject searchHeaders = parseSearchHeaders(getRuleVal("search_header"));
+            if (searchHeaders == null) searchHeaders = search.optJSONObject("header");
+            if (searchHeaders != null) {
+                Iterator<String> keys = searchHeaders.keys();
+                while (keys.hasNext()) {
+                    String k = keys.next();
+                    headers.put(k, searchHeaders.optString(k));
+                }
+            }
             headers.put("content-type", "application/x-www-form-urlencoded");
             return convertUnicodeToChinese(OkHttp.post(url, payload, headers));
         } catch (Exception e) {
@@ -6141,109 +6126,27 @@ public class XBPQ extends Spider {
     /** 反爬检测间隔（毫秒） */
     private static final long ANTI_CRAWLER_DELAY_MS = 1500;
 
-    /** Cloudflare 检测关键词 */
+    /** Cloudflare 检测关键词（仅保留 CF 专有特征，不含裸词 "cloudflare"——
+     *  正常页面页脚的 "Protected by Cloudflare" 徽标会误命中，导致失败响应被误判为反爬页而拦截） */
     private static final List<String> CF_DETECT_KEYWORDS = Arrays.asList(
             "cf-browser-verification", "cf-challenge", "cf_clearance",
-            "Just a moment...", "Checking your browser", "cloudflare",
+            "Just a moment...", "Checking your browser",
             "_cf_chl", "__cf_bm", "challenge-platform"
     );
 
-    /** 宝塔WAF检测关键词 */
+    /** 宝塔WAF检测关键词（注：/cdn-cgi/ 是 Cloudflare 静态资源路径而非宝塔特征，
+     *  误纳入会导致所有 CF 站点每个请求触发 bypassBaoTaWaf 的 5 次重试 + 12.5s 睡眠） */
     private static final List<String> BT_DETECT_KEYWORDS = Arrays.asList(
             "btwaf", "检测中", "跳转中", "安全检测",
-            "yanzheng_huadong", "huadong_", "/cdn-cgi/"
+            "yanzheng_huadong", "huadong_"
     );
 
-    /** 滑块验证检测关键词 */
+    /** 滑块验证检测关键词（不含裸词 "captcha"/"verify"——
+     *  正常 API 错误页常含 "verify your..." 等文案会误命中） */
     private static final List<String> SLIDER_DETECT_KEYWORDS = Arrays.asList(
             "滑动验证", "滑块验证", "huadong_", "click_captcha",
-            "slider-verify", "geetest", "captcha", "verify"
+            "slider-verify", "geetest"
     );
-
-    /**
-     * 统一反爬入口方法（替代原有 jumpBtwaf）
-     * <p>
-     * 检测并自动处理以下反爬场景：
-     * <ol>
-     *   <li>Cloudflare JS Challenge / 5秒盾</li>
-     *   <li>宝塔 WAF 防护</li>
-     *   <li>滑块/点选验证</li>
-     *   <li>其他常见 WAF 拦截</li>
-     * </ol>
-     *
-     * @param webUrl 请求URL
-     * @param html    原始HTML响应
-     * @return 处理后的HTML内容（可能已通过验证重新获取）
-     */
-    protected String handleAntiCrawler(String webUrl, String html) {
-        try {
-            if (html == null || html.isEmpty()) return html;
-
-            // 快速判断：如果页面正常（无反爬标记），直接返回
-            if (!isAntiCrawlerPage(html)) return html;
-
-            SpiderDebug.log(String.format("检测到反爬保护: %s", detectAntiCrawlerType(html)));
-
-            // 1. 尝试 Cloudflare 绕过
-            if (isCloudflarePage(html)) {
-                html = bypassCloudflare(webUrl, html);
-                if (!isAntiCrawlerPage(html)) return html;
-            }
-
-            // 2. 尝试宝塔 WAF 绕过
-            if (isBaoTaWafPage(html)) {
-                html = bypassBaoTaWaf(webUrl, html);
-                if (!isAntiCrawlerPage(html)) return html;
-            }
-
-            // 3. 尝试滑块验证处理
-            if (isSliderVerifyPage(html)) {
-                boolean handled = handleSliderVerify(webUrl, html);
-                if (handled) {
-                    html = fetchUrl(webUrl, rule.optJSONObject("header"));
-                    if (!isAntiCrawlerPage(html)) return html;
-                }
-            }
-
-            // 4. 通用重试机制
-            for (int i = 0; i < MAX_ANTI_CRAWLER_RETRY; i++) {
-                Thread.sleep(ANTI_CRAWLER_DELAY_MS);
-                html = fetchUrlWithRetry(webUrl);
-                if (!isAntiCrawlerPage(html)) break;
-                SpiderDebug.log(String.format("反爬重试 %d/%d", i + 1, MAX_ANTI_CRAWLER_RETRY));
-            }
-        } catch (Exception e) {
-            SpiderDebug.log("反爬处理异常: " + e.getMessage());
-        }
-        return html;
-    }
-
-    /**
-     * 统一反爬入口方法（带自定义请求头版本）
-     */
-    protected String handleAntiCrawler(String webUrl, String html, JSONObject customHeaders) {
-        try {
-            if (html == null || html.isEmpty()) return html;
-            if (!isAntiCrawlerPage(html)) return html;
-
-            // 使用自定义头部的版本优先
-            if (isCloudflarePage(html)) {
-                html = bypassCloudflare(webUrl, html, customHeaders);
-            } else if (isBaoTaWafPage(html)) {
-                html = bypassBaoTaWaf(webUrl, html, customHeaders);
-            } else if (isSliderVerifyPage(html)) {
-                handleSliderVerify(webUrl, html);
-                html = fetchUrl(webUrl, customHeaders);
-            }
-
-            if (isAntiCrawlerPage(html)) {
-                html = handleAntiCrawler(webUrl, html); // 回退到默认处理
-            }
-        } catch (Exception e) {
-            SpiderDebug.log(e);
-        }
-        return html;
-    }
 
     // ========== 反爬检测方法 ==========
 
@@ -6307,107 +6210,6 @@ public class XBPQ extends Spider {
                 || (lowerHtml.contains("403 forbidden") && lowerHtml.contains("被拦截"))
                 || (lowerHtml.contains("access denied")
                     && (lowerHtml.contains("waf") || lowerHtml.contains("firewall")));
-    }
-
-    /**
-     * 检测反爬类型（用于日志记录）
-     */
-    protected String detectAntiCrawlerType(String html) {
-        if (isCloudflarePage(html)) return "Cloudflare";
-        if (isBaoTaWafPage(html)) return "宝塔WAF";
-        if (isSliderVerifyPage(html)) return "滑块验证";
-        if (isGenericBlockPage(html)) return "通用拦截";
-        return "未知";
-    }
-
-    // ========== Cloudflare 绕过 ==========
-
-    /**
-     * Cloudflare 5秒盾 / JS Challenge 绕过
-     * <p>
-     * 策略：
-     * <ul>
-     *   <li>等待一段时间后重新请求（模拟浏览器等待）</li>
-     *   <li>携带已有的 cf_clearance cookie</li>
-     *   <li>使用完整的浏览器 UA 和 Accept 头部</li>
-     *   <li>尝试解析 challenge 页面中的 JS 验证逻辑</li>
-     * </ul>
-     *
-     * @param webUrl 目标URL
-     * @param html   当前HTML（CF挑战页面）
-     * @return 通过验证后的HTML
-     */
-    protected String bypassCloudflare(String webUrl, String html) {
-        return bypassCloudflare(webUrl, html, null);
-    }
-
-    /**
-     * Cloudflare 绕过（带自定义头部）
-     */
-    protected String bypassCloudflare(String webUrl, String html, JSONObject customHeaders) {
-        try {
-            SpiderDebug.log("尝试绕过 Cloudflare 保护...");
-
-            // 策略1：添加完整的浏览器伪装头
-            Map<String, String> headers = customHeaders != null
-                    ? mergeHeaders(getHeaders(webUrl), customHeaders)
-                    : getHeaders(webUrl);
-            headers = enhanceForCloudflare(headers);
-
-            // 策略2：延迟后重试（模拟人类浏览行为）
-            Thread.sleep(2000 + (long)(Math.random() * 2000));
-
-            // 策略3：预访问一次目标页（携带增强浏览器头），
-            // OkHttp 未配置 cookieJar（默认 NO_COOKIES），需手动从 Response 提取 set-cookie
-            // 写入 rule.header.cookie 后由 getHeaders() 在后续请求自动携带。
-            // 注：/cdn-cgi/challenge-platform 为 CF 静态资源路径，GET 它不会签发 cf_clearance，
-            // 故不再伪挑战预访问，直接回访目标页收集服务端下发的 Cookie。
-            okhttp3.Response cfResp = null;
-            try {
-                cfResp = OkHttp.newCall(webUrl, headers);
-                extractAllCookies(cfResp);
-            } catch (Exception cfEx) {
-                SpiderDebug.log("Cloudflare 预访问异常: " + cfEx.getMessage());
-            } finally {
-                if (cfResp != null) cfResp.close();
-            }
-
-            // 再等一下
-            Thread.sleep(3000);
-
-            // 策略4：重新请求目标页面（cf_clearance 已写入 rule.header.cookie，getHeaders 自动携带）
-            html = OkHttp.string(webUrl, headers);
-
-            if (!isCloudflarePage(html)) {
-                SpiderDebug.log("Cloudflare 绕过成功");
-            }
-        } catch (Exception e) {
-            SpiderDebug.log("Cloudflare 绕过失败: " + e.getMessage());
-        }
-        return html;
-    }
-
-    /**
-     * 增强 HTTP 头部以通过 Cloudflare 检测
-     */
-    private Map<String, String> enhanceForCloudflare(Map<String, String> headers) {
-        // 必须的 CF 相关头部
-        headers.put("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
-        headers.put("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
-        headers.put("Cache-Control", "max-age=0");
-        headers.put("Upgrade-Insecure-Requests", "1");
-        // Sec-Fetch 系列头部（现代浏览器标准）
-        headers.put("Sec-Fetch-Dest", "document");
-        headers.put("Sec-Fetch-Mode", "navigate");
-        headers.put("Sec-Fetch-Site", "none");
-        headers.put("Sec-Fetch-User", "?1");
-
-        // 确保 UA 是桌面版 Chrome
-        String ua = headers.getOrDefault("User-Agent", "");
-        if (ua.contains("Mobile") || ua.isEmpty()) {
-            headers.put("User-Agent", UA_PC);
-        }
-        return headers;
     }
 
     // ========== 宝塔 WAF 绕过 ==========
@@ -6526,126 +6328,6 @@ public class XBPQ extends Spider {
         return "";
     }
 
-    // ========== 滑块验证集成 ==========
-
-    /**
-     * 处理滑块验证（集成 SliderVerifyUtils）
-     * <p>
-     * 支持：
-     * <ul>
-     *   <li>本地自动滑动（模拟轨迹）</li>
-     *   <li>外部打码服务（ddddocr API）</li>
-     *   <li>JS Key 接口获取验证码</li>
-     * </ul>
-     *
-     * @param webUrl 目标网站URL
-     * @param html   包含滑块验证的HTML
-     * @return 是否成功处理
-     */
-    protected boolean handleSliderVerify(String webUrl, String html) {
-        try {
-            SpiderDebug.log("检测到滑块验证，开始处理...");
-
-            // 创建验证工具实例
-            SliderVerifyUtils verifier = createSliderVerifier(webUrl);
-
-            // 配置验证参数
-            configureSliderVerifier(verifier);
-
-            // 执行验证流程：先检测是否为验证页面，再尝试带验证的请求
-            boolean success;
-            if (verifier.isVerifyPage(html)) {
-                SpiderDebug.log("检测到滑块验证页面，尝试自动验证...");
-                String verifiedHtml = verifier.requestWithVerify(webUrl);
-                success = verifiedHtml != null && !verifiedHtml.isEmpty()
-                        && !verifier.isVerifyPage(verifiedHtml);
-                if (success) {
-                    mergeVerifyCookie(verifier);
-                }
-            } else {
-                success = true;
-            }
-
-            return success;
-        } catch (Exception e) {
-            SpiderDebug.log("滑块验证处理异常: " + e.getMessage());
-        }
-        return false;
-    }
-
-    /**
-     * 创建滑块验证器实例
-     */
-    private SliderVerifyUtils createSliderVerifier(String siteUrl) {
-        SliderVerifyUtils verifier = new SliderVerifyUtils(siteUrl);
-
-        // 从规则配置读取 JS Key URL
-        String jsKeyUrl = rule.optString("js_key_url", "");
-        if (!jsKeyUrl.isEmpty()) {
-            verifier.setJsKeyUrl(jsKeyUrl);
-        }
-
-        // 从规则配置读取外部打码API
-        String ocrApi = rule.optString("ocr_api", "");
-        if (!ocrApi.isEmpty()) {
-            verifier.setDdddOcrApi(ocrApi);
-        }
-
-        return verifier;
-    }
-
-    /**
-     * 配置滑块验证器参数
-     */
-    private void configureSliderVerifier(SliderVerifyUtils verifier) {
-        try {
-            // 设置验证类型（注意：SliderVerifyUtils 只支持 setVerifyType）
-            String verifyType = rule.optString("verify_type", "auto");
-            if ("slider".equals(verifyType)) {
-                verifier.setVerifyType(SliderVerifyUtils.VerifyType.SLIDER);
-            } else if ("click".equals(verifyType)) {
-                verifier.setVerifyType(SliderVerifyUtils.VerifyType.CLICK);
-            }
-            // 注意：verify_timeout 和 verify_retries 在当前 SliderVerifyUtils 版本中不直接支持，
-            // 配置项已被忽略。如需超时控制可在 OkHttp 层面设置。
-        } catch (Exception e) {
-            SpiderDebug.log("验证器偏好配置异常: " + e.getMessage());
-        }
-    }
-
-    /**
-     * 合并验证后的 Cookie 到全局请求头
-     */
-    private void mergeVerifyCookie(SliderVerifyUtils verifier) {
-        try {
-            String verifyCookie = verifier.getVerifyCookie();
-            if (verifyCookie == null || verifyCookie.isEmpty()) return;
-
-            if (!rule.has("header")) {
-                rule.put("header", new JSONObject());
-            }
-            JSONObject hdr = rule.getJSONObject("header");
-            String existingCookie = hdr.optString("cookie", "");
-            String merged = SliderVerifyUtils.mergeCookies(existingCookie, verifyCookie);
-            hdr.put("cookie", merged);
-
-            SpiderDebug.log("验证 Cookie 已合并到全局请求头");
-        } catch (Exception e) {
-            SpiderDebug.log(e);
-        }
-    }
-
-    /**
-     * 尝试外部打码服务（已适配：当前 SliderVerifyUtils 不提供 verifyByExternalService，
-     * 外部打码逻辑已内置在 requestWithVerify 中，当配置了 ocr_api 时会自动使用）
-     */
-    @SuppressWarnings("unused")
-    private boolean tryExternalVerifyService(String webUrl, String html, SliderVerifyUtils verifier) {
-        // 当前版本的外部打码已在 requestWithVerify 内部处理
-        // 此方法保留为兼容桩，直接返回 false 表示需要上层用 requestWithVerify 重试
-        return false;
-    }
-
     // ========== Cookie 管理 ==========
 
     /**
@@ -6697,22 +6379,6 @@ public class XBPQ extends Spider {
     // ========== 请求辅助方法 ==========
 
     /**
-     * 带重试的 URL 获取
-     */
-    private String fetchUrlWithRetry(String url) {
-        try {
-            Map<String, String> headers = getHeaders(url);
-            // 随机化延迟，避免固定模式被检测
-            long delay = ANTI_CRAWLER_DELAY_MS + (long)(Math.random() * 1000);
-            Thread.sleep(delay);
-            return OkHttp.string(url, headers);
-        } catch (Exception e) {
-            SpiderDebug.log(e);
-        }
-        return "";
-    }
-
-    /**
      * 向 URL 追加查询参数
      */
     private String appendQueryParam(String url, String key, String value) {
@@ -6723,375 +6389,6 @@ public class XBPQ extends Spider {
         } catch (Exception e) {
             return url + (url.contains("?") ? "&" : "?") + key + "=" + value;
         }
-    }
-
-    // ========== 编码转换工具方法 ==========
-    
-    /**
-     * 字符串转 Hex 编码（借鉴 XYQHiker.string2Hex）
-     * 
-     * @param str 输入字符串
-     * @return Hex 编码字符串
-     */
-    protected String string2Hex(String str) {
-        if (str == null || str.isEmpty()) return "";
-        StringBuilder sb = new StringBuilder();
-        byte[] bytes = str.getBytes(StandardCharsets.UTF_8);
-        for (byte b : bytes) {
-            sb.append(String.format("%02x", b & 0xff));
-        }
-        return sb.toString();
-    }
-    
-    /**
-     * 解码 Unicode 转义字符（\\uXXXX 格式）（借鉴 XYQHiker.decodeHexChars）
-     *
-     * @param str 包含 Unicode 转义的字符串
-     * @return 解码后的字符串
-     * @deprecated 逻辑已统一至 {@link #hexEscapeDecode(String)}，请改用该方法。
-     */
-    @Deprecated
-    protected String decodeHexChars(String str) {
-        return hexEscapeDecode(str);
-    }
-    
-    /**
-     * 移除 Unicode 转义序列（借鉴 XBiubiu.removeUnicode）
-     * 将 \\uXXXX 格式转换为中文字符
-     *
-     * @param str 输入字符串
-     * @return 转换后的字符串
-     * @deprecated 原实现正则错误（字面匹配 \\u 而非转义序列），已统一至 {@link #hexEscapeDecode(String)}。
-     */
-    @Deprecated
-    protected String removeUnicode(String str) {
-        return hexEscapeDecode(str);
-    }
-    
-    /**
-     * 移除 HTML 标签（借鉴 XBiubiu.removeHtml）
-     * 
-     * @param text 包含 HTML 的文本
-     * @return 纯文本
-     */
-    protected String removeHtml(String text) {
-        if (text == null || text.isEmpty()) return "";
-        try {
-            return Jsoup.parse(text).text();
-        } catch (Exception e) {
-            return text;
-        }
-    }
-    
-    // ========== 高级 Jsoup 导航与提取 ==========
-    
-    /**
-     * 根据规则选择元素（支持 -- 链式、|| 回退、index、range）（借鉴 XYQHiker.selectByRule）
-     * 
-     * @param doc Jsoup Document
-     * @param rule 选择规则，支持：
-     *             - 普通 CSS 选择器：.class#id
-     *             - 链式操作：selector1--selector2
-     *             - 回退选择：selector1||selector2
-     *             - 索引选择：selector:eq(0)
-     *             - 范围选择：selector:gt(0):lt(5)
-     * @return 选中的 Element，未找到返回 null
-     */
-    protected Element selectByRule(Document doc, String rule) {
-        if (doc == null || rule == null || rule.isEmpty()) return null;
-        
-        try {
-            // 处理 || 回退选择
-            if (rule.contains("||")) {
-                String[] parts = rule.split("\\|\\|");
-                for (String part : parts) {
-                    Element result = selectByRule(doc, part.trim());
-                    if (result != null) return result;
-                }
-                return null;
-            }
-            
-            // 处理 -- 链式选择
-            if (rule.contains("--")) {
-                String[] parts = rule.split("--");
-                Element current = doc;
-                for (String part : parts) {
-                    if (current == null) return null;
-                    current = current.selectFirst(part.trim());
-                }
-                return current;
-            }
-            
-            // 处理 index 选择 :eq(n)
-            if (rule.contains(":eq(")) {
-                Pattern p = P_SELECT_EQ;
-                Matcher m = p.matcher(rule);
-                if (m.matches()) {
-                    String selector = m.group(1);
-                    int index = Integer.parseInt(m.group(2));
-                    Elements elements = doc.select(selector);
-                    return (index >= 0 && index < elements.size()) ? elements.get(index) : null;
-                }
-            }
-            
-            // 处理范围选择 :gt(n):lt(m)
-            if (rule.contains(":gt(") || rule.contains(":lt(")) {
-                return doc.selectFirst(rule);
-            }
-            
-            // 普通选择
-            return doc.selectFirst(rule);
-        } catch (Exception e) {
-            SpiderDebug.log("selectByRule 异常：" + e.getMessage());
-            return null;
-        }
-    }
-    
-    /**
-     * 根据规则获取文本（支持 +/＋ 拼接）（借鉴 XYQHiker.getTextByRule）
-     * 
-     * @param doc Jsoup Document
-     * @param rule 选择规则，支持多个选择器用 + 或 ＋ 连接
-     * @return 拼接后的文本
-     */
-    protected String getTextByRule(Document doc, String rule) {
-        if (doc == null || rule == null || rule.isEmpty()) return "";
-        
-        try {
-            // 处理 + 或 ＋ 拼接
-            if (rule.contains("+") || rule.contains("＋")) {
-                String[] parts = rule.split("[+＋]");
-                StringBuilder sb = new StringBuilder();
-                for (String part : parts) {
-                    Element elem = selectByRule(doc, part.trim());
-                    if (elem != null) {
-                        sb.append(elem.text());
-                    }
-                }
-                return sb.toString();
-            }
-            
-            // 单个选择器
-            Element elem = selectByRule(doc, rule);
-            return elem != null ? elem.text() : "";
-        } catch (Exception e) {
-            SpiderDebug.log("getTextByRule 异常：" + e.getMessage());
-            return "";
-        }
-    }
-    
-    // ========== JSON/HTML双模式与二次截取 ==========
-    
-    /**
-     * 检查是否为 JSON 模式（借鉴 XYQBiu.cat_mode）
-     * 
-     * @return true 如果是 JSON 模式
-     */
-    protected boolean isJsonMode() {
-        try {
-            if (rule.has("cat_mode")) {
-                String mode = rule.getString("cat_mode");
-                return "0".equals(mode);
-            }
-            // 兼容性检查：json 字段
-            return rule.optBoolean("json", false);
-        } catch (Exception e) {
-            return false;
-        }
-    }
-    
-    /**
-     * 执行二次截取（借鉴 XYQBiu.YN_twice）
-     * 
-     * @param content 原始内容
-     * @param twicePre 截取前缀
-     * @param twiceSuf 截取后缀
-     * @return 截取后的内容
-     */
-    protected String applyTwiceCut(String content, String twicePre, String twiceSuf) {
-        if (content == null || content.isEmpty()) return "";
-        
-        try {
-            // 检查是否需要二次截取
-            boolean needTwice = false;
-            if (rule.has("cat_YN_twice")) {
-                needTwice = "1".equals(rule.getString("cat_YN_twice"));
-            } else if (rule.has("YN_twice")) {
-                needTwice = rule.getBoolean("YN_twice");
-            }
-            
-            if (!needTwice || twicePre == null || twicePre.isEmpty() || 
-                twiceSuf == null || twiceSuf.isEmpty()) {
-                return content;
-            }
-            
-            // 执行二次截取
-            int startIdx = content.indexOf(twicePre);
-            if (startIdx == -1) return content;
-            startIdx += twicePre.length();
-            
-            int endIdx = content.indexOf(twiceSuf, startIdx);
-            if (endIdx == -1) return content;
-            
-            return content.substring(startIdx, endIdx);
-        } catch (Exception e) {
-            SpiderDebug.log("applyTwiceCut 异常：" + e.getMessage());
-            return content;
-        }
-    }
-    
-    /**
-     * 数组提取（借鉴 XYQBiu.cat_arr_pre/cat_arr_suf）
-     * 
-     * @param content 原始内容
-     * @param arrPre 数组开始标记
-     * @param arrSuf 数组结束标记
-     * @return 提取的数组内容列表
-     */
-    protected List<String> extractArray(String content, String arrPre, String arrSuf) {
-        List<String> result = new ArrayList<>();
-        if (content == null || content.isEmpty() || 
-            arrPre == null || arrPre.isEmpty() || 
-            arrSuf == null || arrSuf.isEmpty()) {
-            return result;
-        }
-        
-        try {
-            int startPos = 0;
-            while (result.size() < MAX_MATCH_COUNT) {
-                int startIdx = content.indexOf(arrPre, startPos);
-                if (startIdx == -1) break;
-                startIdx += arrPre.length();
-
-                int endIdx = content.indexOf(arrSuf, startIdx);
-                if (endIdx == -1) break;
-
-                result.add(content.substring(startIdx, endIdx));
-                startPos = endIdx + arrSuf.length();
-            }
-        } catch (Exception e) {
-            SpiderDebug.log("extractArray 异常：" + e.getMessage());
-        }
-        
-        return result;
-    }
-    
-    // ========== 增强请求方法 ==========
-    
-    /**
-     * POST 表单请求（带 charset 处理）（借鉴 XYQHiker.fetchPostForm）
-     * 
-     * @param webUrl 目标 URL
-     * @param params POST 参数
-     * @param charset 字符集，默认 UTF-8
-     * @return 响应内容
-     */
-    protected String fetchPostForm(String webUrl, Map<String, String> params, String charset) {
-        if (charset == null || charset.isEmpty()) charset = "UTF-8";
-
-        try {
-            // SSRF 防护：与其他请求路径一致，拦截内网/本机/危险协议
-            if (isInternalUrl(webUrl)) {
-                SpiderDebug.log(safeLog("fetchPostForm SSRF blocked: " + webUrl));
-                return "";
-            }
-
-            // 构建表单数据
-            StringBuilder sb = new StringBuilder();
-            for (Map.Entry<String, String> entry : params.entrySet()) {
-                if (sb.length() > 0) sb.append("&");
-                sb.append(URLEncoder.encode(entry.getKey(), charset))
-                  .append("=")
-                  .append(URLEncoder.encode(entry.getValue(), charset));
-            }
-            
-            // 设置请求头
-            Map<String, String> headers = getHeaders(webUrl);
-            headers.put("Content-Type", "application/x-www-form-urlencoded; charset=" + charset);
-            
-            // 发送 POST 请求
-            String response = OkHttp.post(webUrl, sb.toString(), headers);
-            return response != null ? response : "";
-        } catch (Exception e) {
-            SpiderDebug.log("fetchPostForm 异常：" + e.getMessage());
-            return "";
-        }
-    }
-    
-    /**
-     * 带响应头捕获的请求（借鉴 XYQHiker.fetchWithHeaders）
-     * 
-     * @param webUrl 目标 URL
-     * @param headers 请求头
-     * @return Pair<响应内容，响应头 Map>
-     */
-    protected Pair<String, Map<String, List<String>>> fetchWithHeaders(String webUrl, HashMap<String, String> headers) {
-        okhttp3.Response response = null;
-        try {
-            response = OkHttp.newCall(webUrl, headers);
-            String body = response.body() != null ? response.body().string() : "";
-
-            // 提取响应头
-            Map<String, List<String>> responseHeaders = new HashMap<>();
-            for (String name : response.headers().names()) {
-                responseHeaders.put(name, response.headers(name));
-            }
-
-            return new Pair<>(body, responseHeaders);
-        } catch (Exception e) {
-            SpiderDebug.log("fetchWithHeaders 异常：" + e.getMessage());
-            return new Pair<>("", new HashMap<>());
-        } finally {
-            if (response != null) response.close();
-        }
-    }
-    
-    // ========== 辅助工具方法 ==========
-    
-    /**
-     * 构建年份范围（用于筛选条件）（借鉴 XYQHiker.buildYearRange）
-     * 
-     * @param startYear 起始年份
-     * @param endYear 结束年份
-     * @return 年份列表
-     */
-    protected List<String> buildYearRange(int startYear, int endYear) {
-        List<String> years = new ArrayList<>();
-        // minSdk 21 且未启用 desugaring，不能用 java.time，改用 Calendar
-        int currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR);
-        
-        if (endYear <= 0) endYear = currentYear;
-        if (startYear <= 0) startYear = endYear - 10;
-        
-        for (int year = startYear; year <= endYear; year++) {
-            years.add(String.valueOf(year));
-        }
-        
-        return years;
-    }
-    
-    /**
-     * 从 clan:// 加载外部过滤器（借鉴 XYQHiker.loadExtFilter）
-     * 
-     * @param url clan:// 开头的 URL
-     * @return 过滤器 JSON 对象
-     */
-    protected JSONObject loadExtFilter(String url) {
-        try {
-            if (url.startsWith("clan://")) {
-                // 本地文件路径
-                String filePath = url.substring(7);
-                String content = Util.readStringFromFile(filePath);
-                return new JSONObject(content);
-            } else if (url.startsWith("http")) {
-                // 网络 URL
-                String content = OkHttp.string(url, null);
-                return new JSONObject(content);
-            }
-        } catch (Exception e) {
-            SpiderDebug.log("loadExtFilter 异常：" + e.getMessage());
-        }
-        return new JSONObject();
     }
 
     // ==================== 图片代理（双模式 + 签名，借鉴第18次升级版/参考文件） ====================
@@ -7136,12 +6433,9 @@ public class XBPQ extends Spider {
         return cover;
     }
 
-    /** 图片代理缓存头（volatile + DCL 保证多线程懒加载安全） */
-    private static volatile Map<String, String> picHeaderCache = null;
-
     /**
      * SSRF 防护：判断 URL 是否指向内网/本机/危险协议。
-     * 用于 proxy() 外露入口（loadPic/loadM3u8/loadDanmu）及 fetch/getBL 中拦截
+     * 用于 proxy() 外露入口（loadPic/loadM3u8/loadDanmu）中拦截
      * 配置可控的内网回源请求，防止探测内网服务。
      */
     private static boolean isInternalUrl(String url) {
@@ -7288,7 +6582,7 @@ public class XBPQ extends Spider {
      * </ul>
      * secretKey 非空时强制签名校验，不匹配则拒绝回源（防代理滥用）。
      */
-    public static Object[] loadPic(Map<String, String> params) {
+    public Object[] loadPic(Map<String, String> params) {
         try {
             // 兼容新旧参数
             String pic = params.containsKey("url") ? params.get("url") : params.get("pic");
@@ -7345,7 +6639,7 @@ public class XBPQ extends Spider {
      *
      * @param map 参数表，弹幕URL键为 danmu_url（兼容 danmuUrl）
      */
-    public static Object[] loadDanmu(Map<String, String> map) {
+    public Object[] loadDanmu(Map<String, String> map) {
         try {
             String danmuUrl = map.get("danmu_url");
             if (danmuUrl == null || danmuUrl.isEmpty()) {
@@ -7440,7 +6734,7 @@ public class XBPQ extends Spider {
      *
      * @param map 参数表：url=M3U8地址（或Base64内嵌内容），base=相对路径基准（可选）
      */
-    public static Object[] loadM3u8(Map<String, String> map) {
+    public Object[] loadM3u8(Map<String, String> map) {
         try {
             String m3u8Url = map.get("url");
             String baseUrl = map.get("base");
@@ -7483,14 +6777,19 @@ public class XBPQ extends Spider {
             // 处理相对路径：逐行补全非 http 开头的分片地址
             StringBuilder result = new StringBuilder();
             String[] lines = content.split("\n");
+            // 基准 URL：优先显式 base；否则用源 m3u8 地址本身（repairUrl 会取其目录部分）。
+            // 注意不能用 extractDomain(m3u8Url)+"/"：extractDomain 只返回 host 无协议，
+            // repairUrl 内 Uri.parse 解析无协议基准会得到 null scheme，拼出 "null://..." 废地址
             String resolvedBase = baseUrl != null && !baseUrl.isEmpty()
-                    ? baseUrl : Util.extractDomain(m3u8Url) + "/";
+                    ? baseUrl : m3u8Url;
 
             for (String line : lines) {
                 line = line.trim();
                 if (line.isEmpty() || line.startsWith("#")) {
                     result.append(line).append("\n");
-                } else if (!line.startsWith("http") && !line.startsWith("//")) {
+                } else if (!line.startsWith("http")) {
+                    // 覆盖三种形态：根相对 /x.ts、相对 x.ts、协议相对 //cdn.com/x.ts
+                    // （repairUrl 对 // 前缀会继承基准 URL 的协议）
                     result.append(Util.repairUrl(resolvedBase, line)).append("\n");
                 } else {
                     result.append(line).append("\n");
@@ -7515,14 +6814,16 @@ public class XBPQ extends Spider {
      *   <li>含 m3u8 → loadM3u8（直播/点播流）</li>
      *   <li>其余（含 url/pic/site/referer）→ loadPic（图片回源）</li>
      * </ul>
-     * 多源防串扰：headerMap/secretKey/baseEncodeUrl/staticHomeUrl 为类级共享状态，
-     * 回源分发前先以「当前实例」的规则刷新一遍，确保签名校验/公共头/回源地址与发起代理请求的源一致。
+     * 多源防串扰：headerMap/secretKey/baseEncodeUrl 已为实例字段（逐源隔离），
+     * 签名校验/公共头与发起代理请求的源天然一致；loadPic/loadM3u8/loadDanmu
+     * 因此从 static 改为实例方法，直接读取本实例配置。
      */
     @Override
     public Object[] proxy(Map<String, String> params) {
         if (params == null) return null;
         try {
-            // 实例已被框架 init 过，fetchRule 命中缓存不发网络；initEnhancedConfig 仅做 JSON 解析与加锁赋值
+            // 实例已被框架 init 过，fetchRule 命中缓存不发网络；
+            // initEnhancedConfig 仅做 JSON 解析与实例字段赋值（幂等重跑，防御未 init 场景）
             fetchRule();
             initEnhancedConfig();
         } catch (Exception ignored) {
@@ -7538,10 +6839,9 @@ public class XBPQ extends Spider {
      * 初始化增强特性配置：
      * <ul>
      *   <li>openDebug 调试开关（类级"只升不降"）</li>
-     *   <li>baseEncodeUrl / secretKey 图片代理双模式参数</li>
-     *   <li>headerMap 类级公共请求头填充</li>
+     *   <li>baseEncodeUrl / secretKey 图片代理双模式参数（实例级）</li>
+     *   <li>headerMap 公共请求头填充（实例级，多源隔离）</li>
      *   <li>variableMap 常用变量初始化</li>
-     *   <li>静态工具方法同步（getBL/getRV 等使用类级静态字段）</li>
      * </ul>
      */
     private void initEnhancedConfig() {
@@ -7565,36 +6865,37 @@ public class XBPQ extends Spider {
             variableMap.put("后缀", rule.optString("domainSuffix", ""));
             variableMap.put("密钥", getRuleVal("secretKey"));
 
-            // 类级共享状态：加锁串行化写入，避免多源并发初始化互相覆盖（P0-3 线程安全）
+            // 类级共享状态：仅剩 debug（只升不降的复合读写需原子性）
             synchronized (GLOBAL_STATE_LOCK) {
                 debug = debug || isDebug;
-                baseEncodeUrl = getRuleVal("baseEncodeUrl");
-                secretKey = getRuleVal("secretKey");
-                staticHomeUrl = rule.optString("homeUrl", "");
+            }
 
-                // 类级公共请求头表填充（JSON 对象串或 Key$Value#Key$Value 格式）
-                headerMap.clear();
-                String headerJsonStr = getRuleVal("headerJson");
-                if (!headerJsonStr.isEmpty()) {
-                    try {
-                        JSONObject headerObj = headerJsonStr.startsWith("{")
-                                ? new JSONObject(headerJsonStr)
-                                : parseHeader(headerJsonStr);
-                        Iterator<String> keys = headerObj.keys();
-                        while (keys.hasNext()) {
-                            String k = keys.next();
-                            headerMap.put(k, headerObj.optString(k));
-                        }
-                    } catch (Exception e) {
-                        SpiderDebug.log("headerMap parse error: " + e.getMessage());
+            // 实例级隔离状态（多源并发时互不串扰）
+            baseEncodeUrl = getRuleVal("baseEncodeUrl");
+            secretKey = getRuleVal("secretKey");
+
+            // 公共请求头表填充（JSON 对象串或 Key$Value#Key$Value 格式）
+            headerMap.clear();
+            String headerJsonStr = getRuleVal("headerJson");
+            if (!headerJsonStr.isEmpty()) {
+                try {
+                    JSONObject headerObj = headerJsonStr.startsWith("{")
+                            ? new JSONObject(headerJsonStr)
+                            : parseHeader(headerJsonStr);
+                    Iterator<String> keys = headerObj.keys();
+                    while (keys.hasNext()) {
+                        String k = keys.next();
+                        headerMap.put(k, headerObj.optString(k));
                     }
+                } catch (Exception e) {
+                    SpiderDebug.log("headerMap parse error: " + e.getMessage());
                 }
+            }
 
-                // User：独立请求头（Key:Value 形式，支持 # 分隔多行），注入类级公共请求头
-                String userHeaderStr = getRuleVal("userHeader");
-                if (!userHeaderStr.isEmpty()) {
-                    injectUserHeader(userHeaderStr);
-                }
+            // User：独立请求头（Key:Value 形式，支持 # 分隔多行），注入公共请求头
+            String userHeaderStr = getRuleVal("userHeader");
+            if (!userHeaderStr.isEmpty()) {
+                injectUserHeader(userHeaderStr);
             }
         } catch (Exception e) {
             SpiderDebug.log("initEnhancedConfig error: " + e.getMessage());
@@ -7712,13 +7013,23 @@ public class XBPQ extends Spider {
 
     /**
      * 检查 HTTP 状态码是否表示失败
-     * 优先使用配置的 failCodes/errorCodes 列表（# 或 , 分隔），为空则回退默认 4xx/5xx 判定
+     * 判定优先级：successCodes 显式豁免 > failCodes/errorCodes 显式判定 > 默认 4xx/5xx 兜底。
+     * successCodes 豁免用于"站点对某接口返回非 2xx 属正常"的场景（如配 404 为成功码），
+     * 与 isSuccess 形成闭环：此前 successCodes 配置存在时 isFail 完全不感知，形同虚设。
      */
     public boolean isFail(int code) {
         try {
             JSONObject r = rule;
             if (r != null) {
                 String codeStr = String.valueOf(code);
+                // 1. successCodes 显式声明的成功码优先豁免
+                String successCodes = r.optString("successCodes", "");
+                if (!successCodes.isEmpty()) {
+                    for (String sc : successCodes.split("[#,，]")) {
+                        if (codeStr.equals(sc.trim())) return false;
+                    }
+                }
+                // 2. failCodes/errorCodes 显式判定
                 String failCodes = r.optString("failCodes", "") + "#" + r.optString("errorCodes", "");
                 for (String fc : failCodes.split("[#,，]")) {
                     if (!fc.trim().isEmpty() && codeStr.equals(fc.trim())) return true;
@@ -7910,83 +7221,6 @@ public class XBPQ extends Spider {
         } catch (Exception e) {
             SpiderDebug.log("insertActionTabs error: " + e.getMessage());
             return classes;
-        }
-    }
-
-    // ==================== 静态工具方法（借鉴第18次升级版 getBL/setBL/getRV/getCom/clan） ====================
-
-    /**
-     * 清理字符串中的干扰标记 [.*?] 和 ￥.*?￥
-     */
-    public static String clan(String input) {
-        if (input == null || input.isEmpty()) return input;
-        // 长度上限：规避对超长无闭合输入的回溯开销（ReDoS 缓解，正常标题远小于此）
-        if (input.length() > 4096) input = input.substring(0, 4096);
-        String s = P_CLAN_BRACKET.matcher(input).replaceAll("");
-        s = P_CLAN_YUAN.matcher(s).replaceAll("");
-        return s;
-    }
-
-    /**
-     * 静态获取任意 URL 内容（相对路径基于 homeUrl 补全，携带公共请求头）
-     */
-    public static String getBL(String path) {
-        try {
-            if (staticHomeUrl.isEmpty()) return "";
-            String fullUrl = path.startsWith("http") ? path : Util.repairUrl(staticHomeUrl, path);
-            if (isInternalUrl(fullUrl)) {
-                SpiderDebug.log(safeLog("getBL SSRF blocked: " + fullUrl));
-                return "";
-            }
-            Map<String, String> headers = new HashMap<>();
-            if (!headerMap.isEmpty()) headers.putAll(headerMap);
-            headers.put("User-Agent", UA_PC);
-            return OkHttp.string(fullUrl, headers);
-        } catch (Exception e) {
-            SpiderDebug.log("getBL error: " + e.getMessage());
-            return "";
-        }
-    }
-
-    /**
-     * 获取配置组合字符串（homeUrl，供宿主框架使用）
-     */
-    public static String getCom() {
-        return staticHomeUrl;
-    }
-
-    /**
-     * 静态设置 homeUrl（供外部回源框架调用）。
-     * 兼容两种调用形态：setBL(homeUrl, null) 直接设置主页地址；
-     * setBL(任意path, content) 以 content 覆盖主页地址（历史行为保留）。
-     */
-    public static void setBL(String path, String content) {
-        synchronized (GLOBAL_STATE_LOCK) {
-            staticHomeUrl = (content != null && !content.isEmpty()) ? content : (path != null ? path : "");
-        }
-    }
-
-    /**
-     * 静态执行规则提取（获取主页内容后按选择器提取）
-     * 支持 CSS 选择器（css: 前缀或裸选择器）与 前缀&&后缀 截取规则
-     */
-    public static String getRV(String selector) {
-        try {
-            if (staticHomeUrl.isEmpty() || selector == null || selector.isEmpty()) return "";
-            String html = getBL(staticHomeUrl);
-            if (html == null || html.isEmpty()) return "";
-            if (JsoupExtractor.isCssRule(selector)) {
-                return JsoupExtractor.extractSingle(html, selector, null);
-            }
-            if (selector.contains("&&")) {
-                String[] se = selector.split("&&", 2);
-                List<String> r = subContentStatic(html, se[0], se[1]);
-                return r.isEmpty() ? "" : cleanHtmlStatic(r.get(0));
-            }
-            return JsoupExtractor.extractSingle(html, "css:" + selector, null);
-        } catch (Exception e) {
-            SpiderDebug.log("getRV error: " + e.getMessage());
-            return "";
         }
     }
 
