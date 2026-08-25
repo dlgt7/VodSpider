@@ -127,7 +127,7 @@ final class RegexFieldHelper {
         if (si2 >= 0) {
             int se2 = rule.indexOf("]", si2);
             if (se2 > si2) {
-                int n = parseIntSafe(rule.substring(si2 + 5, se2), 0);
+                int n = Integer.parseInt(rule.substring(si2 + 5, se2));
                 if (n > 0) {
                     pp.seqFrom = n;
                     pp.seqTo = n;
