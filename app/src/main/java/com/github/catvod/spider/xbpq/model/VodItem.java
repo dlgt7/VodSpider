@@ -68,7 +68,7 @@ public class VodItem {
 
     private static void putIfNotEmpty(JSONObject json, String key, String value) {
         if (value != null && !value.isEmpty()) {
-            json.put(key, value);
+            try { json.put(key, value); } catch (Exception ignored) {}
         }
     }
 
