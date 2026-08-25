@@ -118,7 +118,7 @@ public class XBPQ extends Spider {
     // ==================== 实例状态 ====================
     private String ext;
     private JSONObject rule;
-    private HttpClient httpClient;
+    private static HttpClient httpClient;
     private boolean reverse;
     private boolean mergeLines;
     private boolean hotRecommend;
@@ -260,7 +260,8 @@ public class XBPQ extends Spider {
         if (json == null || json.isEmpty()) return;
         JSONObject obj = JsonParser.safeParseObject(json);
         if (obj == null) return;
-        for (String key : obj.keySet()) {
+        for (int i = 0; i < obj.length(); i++) {
+            String key = obj.name(i);
             String value = obj.optString(key, "");
             if (!value.isEmpty()) headers.put(key, value);
         }
@@ -903,7 +904,7 @@ public class XBPQ extends Spider {
         // CSS 模式以 from_array 为准：播放列表提取器仅按 from_array 判断模式；
         // url_array/play_array 可能为纯正则，误入 CSS 模式会导致线路切分失败。
         boolean cssMode = CssRule.isCssRule(getVal("from_array"));
-        JSONArray lines = ExtractorFactory.createPlayListExtractor(cssMode).extract(body, rule);
+        JSONArray lines = ExtractorFactory.createPlayListExtractor(cssMode).extract(body, rule, 0);
 
         // 剧集过滤（复用已支持的 episode_filter / 剧集过滤 键，借鉴各爬虫对按钮/广告集的剔除）
         String epFilter = getVal("episode_filter");
