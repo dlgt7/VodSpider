@@ -251,9 +251,8 @@ public class RuleConfig {
                 "detail_actor", "detail_type", "detail_year", "detail_area", "detail_remarks"
         ));
         for (String key : extractKeys) {
-            if (!rule.containsKey(key)) continue;
-            Object val = rule.get(key);
-            if (!(val instanceof String)) continue;
+            String val = rule.optString(key, "");
+            if (val.isEmpty()) continue;
             if (CssRule.isCssRule((String) val)) return true;
         }
         return false;
