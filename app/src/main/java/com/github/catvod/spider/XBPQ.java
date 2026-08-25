@@ -140,17 +140,22 @@ public class XBPQ extends Spider {
         if (rule != null && rule.length() > 0) return;
         try {
             String content = ext.startsWith("http") ? fetchUrl(ext, null) : ext;
+            if (content.isEmpty()) {
+                SpiderDebug.log("规则内容为空: " + ext);
+                return;
+            }
             rule = RuleConfig.convertChineseKeys(JsonParser.parseObject(content));
         } catch (Exception e) {
             SpiderDebug.log("规则解析失败: " + e.getMessage());
-            rule = new JSONObject();
+            // 不设置 rule，保持 null，允许后续重试
+            return;
         }
         reverse = "1".equals(RuleConfig.getRuleVal(rule, "reverse"));
         mergeLines = "1".equals(RuleConfig.getRuleVal(rule, "merge_lines"));
         hotRecommend = "1".equals(RuleConfig.getRuleVal(rule, "hot_recommend"));
     }
 
-    /** 读规则值（"空"/"&&"占位视为未配置） */
+    /** 读规则值（"空"/"&&"占位视为未配置；rule 为 null 时安全返回默认值） */
     private String getVal(String key) {
         return RuleConfig.getRuleVal(rule, key);
     }
@@ -354,6 +359,7 @@ public class XBPQ extends Spider {
     public String homeContent(boolean filter) {
         try {
             fetchRule();
+            if (rule == null) return "";
             JSONObject result = new JSONObject();
             result.put("class", buildClassList());
 
@@ -484,6 +490,7 @@ public class XBPQ extends Spider {
     public String categoryContent(String tid, String pg, boolean filter, HashMap<String, String> extend) {
         try {
             fetchRule();
+            if (rule == null) return "";
             String url = buildCategoryUrl(tid, pg, extend);
             if (url.isEmpty()) return "";
 
@@ -648,6 +655,7 @@ public class XBPQ extends Spider {
     public String detailContent(List<String> ids) {
         try {
             fetchRule();
+            if (rule == null) return "";
             if (ids == null || ids.isEmpty()) return "";
             String vid = ids.get(0);
             JSONObject vinfo = decodeVinfo(vid);
@@ -975,6 +983,7 @@ public class XBPQ extends Spider {
     public String searchContent(String keyword, boolean quick, String pg) {
         try {
             fetchRule();
+            if (rule == null) return "";
             String template = getVal("search_url");
             if (template.isEmpty() || keyword == null || keyword.isEmpty()) return "";
 
@@ -1142,6 +1151,7 @@ public class XBPQ extends Spider {
     public String playerContent(String flag, String url, List<String> vipFlags) {
         try {
             fetchRule();
+            if (rule == null) return "";
             JSONObject result;
 
             // 1. 直链视频 → 直接播放
@@ -1296,7 +1306,7 @@ public class XBPQ extends Spider {
     @Override
     public boolean manualVideoCheck() {
         fetchRule();
-        return "1".equals(getVal("manualVideoCheck"));
+        return rule != null && "1".equals(getVal("manualVideoCheck"));
     }
 
     /**
@@ -1306,7 +1316,7 @@ public class XBPQ extends Spider {
     @Override
     public boolean isVideoFormat(String url) {
         fetchRule();
-        return isVideoUrl(url);
+        return rule != null && isVideoUrl(url);
     }
 
     /**
