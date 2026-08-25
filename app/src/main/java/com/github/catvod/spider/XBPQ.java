@@ -122,6 +122,8 @@ public class XBPQ extends Spider {
     private boolean reverse;
     private boolean mergeLines;
     private boolean hotRecommend;
+    /** homeUrl 的协议+主机，首次解析后缓存（避免 absUrl 每次重建 Matcher） */
+    private String homeHostCache;
 
     // ==================== 初始化 ====================
 
@@ -129,7 +131,7 @@ public class XBPQ extends Spider {
     public void init(Context context, String extend) throws Exception {
         super.init(context, extend);
         this.ext = extend;
-        this.rule = null;
+        this.rule = new JSONObject();
     }
 
     /** 懒加载规则：extend 为 http 链接时先拉取远程规则（synchronized 防并发首次调用重复拉取） */
@@ -140,9 +142,6 @@ public class XBPQ extends Spider {
             rule = RuleConfig.convertChineseKeys(JsonParser.parseObject(content));
         } catch (Exception e) {
             SpiderDebug.log("规则解析失败: " + e.getMessage());
-            rule = new JSONObject();
-        }
-        if (rule == null) {
             rule = new JSONObject();
         }
         reverse = "1".equals(RuleConfig.getRuleVal(rule, "reverse"));
@@ -632,8 +631,9 @@ public class XBPQ extends Spider {
         } catch (Exception e) {
             // ignore
         }
-        // 兜底：列表满员视为可能还有更多页（避免无分页文本的站点无法翻页），否则按单页处理
-        return listSize >= PAGE_LIMIT ? 999 : 1;
+        // 兜底：列表为空视为单页；列表满员视为可能还有更多页（返回 2 而非 999，
+        // 避免永远返回 999 导致翻页按钮一直可用却无后续数据）
+        return listSize >= PAGE_LIMIT ? 2 : 1;
     }
 
     // ==================== 详情页 ====================
@@ -900,10 +900,10 @@ public class XBPQ extends Spider {
     /** 播放线路提取：多线（from_array）/单线（play_array/url_array），支持线路合并与剧集过滤 */
     private List<PlaySource> extractPlaySources(String body) throws Exception {
         List<PlaySource> sources = new ArrayList<>();
-        boolean cssMode = CssRule.isCssRule(getVal("from_array"))
-                || CssRule.isCssRule(getVal("url_array"))
-                || CssRule.isCssRule(getVal("play_array"));
-        JSONArray lines = ExtractorFactory.createPlayListExtractor(cssMode).extract(body, rule, 0);
+        // CSS 模式以 from_array 为准：播放列表提取器仅按 from_array 判断模式；
+        // url_array/play_array 可能为纯正则，误入 CSS 模式会导致线路切分失败。
+        boolean cssMode = CssRule.isCssRule(getVal("from_array"));
+        JSONArray lines = ExtractorFactory.createPlayListExtractor(cssMode).extract(body, rule);
 
         // 剧集过滤（复用已支持的 episode_filter / 剧集过滤 键，借鉴各爬虫对按钮/广告集的剔除）
         String epFilter = getVal("episode_filter");
