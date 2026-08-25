@@ -146,10 +146,14 @@ public class JsonParser {
                 boolean idOk = object.has(idKey) || hasAlias(object, idKey);
                 boolean nameOk = object.has(nameKey) || hasAlias(object, nameKey);
                 if (idOk && nameOk) return object;
-                for (int i = 0; i < object.length(); i++) {
-                    String key = object.name(i);
-                    Object r = findTarget(object.get(key), idKey, nameKey);
-                    if (r != null) return r;
+                JSONArray nk = object.names();
+                if (nk != null) {
+                    for (int i = 0; i < nk.length(); i++) {
+                        String key = nk.optString(i);
+                        if (key == null) continue;
+                        Object r = findTarget(object.opt(key), idKey, nameKey);
+                        if (r != null) return r;
+                    }
                 }
             } else if (obj instanceof JSONArray) {
                 JSONArray array = (JSONArray) obj;
@@ -283,11 +287,13 @@ public class JsonParser {
     }
 
     private static void flattenRecursive(JSONObject source, String prefix, JSONObject target) throws JSONException {
-        String[] keys = source.names();
-        if (keys != null) {
-            for (String key : keys) {
+        JSONArray nk = source.names();
+        if (nk != null) {
+            for (int i = 0; i < nk.length(); i++) {
+                String key = nk.optString(i);
+                if (key == null) continue;
                 String fullKey = prefix.isEmpty() ? key : prefix + "." + key;
-                Object val = source.get(key);
+                Object val = source.opt(key);
                 if (val instanceof JSONObject) {
                     flattenRecursive((JSONObject) val, fullKey, target);
                 } else if (val instanceof JSONArray) {
