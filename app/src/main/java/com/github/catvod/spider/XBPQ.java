@@ -604,14 +604,17 @@ public class XBPQ extends Spider {
                 if (mode.contains("folder")) {
                     // 从 class 列表中移除被标记为 folder 的分类
                     JSONArray filtered = new JSONArray();
-                    for (int i = 0; i < result.opt("class").length(); i++) {
-                        JSONObject cls = result.opt("class").getJSONObject(i);
-                        String typeName = cls.optString("type_name", "");
-                        boolean isFolder = false;
-                        for (String folder : folders.split(",")) {
-                            if (typeName.contains(folder.trim())) { isFolder = true; break; }
+                    JSONArray classArr = result.optJSONArray("class");
+                    if (classArr != null) {
+                        for (int i = 0; i < classArr.length(); i++) {
+                            JSONObject cls = classArr.getJSONObject(i);
+                            String typeName = cls.optString("type_name", "");
+                            boolean isFolder = false;
+                            for (String folder : folders.split(",")) {
+                                if (typeName.contains(folder.trim())) { isFolder = true; break; }
+                            }
+                            if (!isFolder) filtered.put(cls);
                         }
-                        if (!isFolder) filtered.put(cls);
                     }
                     result.put("class", filtered);
                 }
