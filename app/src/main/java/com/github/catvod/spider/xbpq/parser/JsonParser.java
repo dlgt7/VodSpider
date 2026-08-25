@@ -80,7 +80,8 @@ public class JsonParser {
         }
         // 如果是对象，尝试提取第一个数组值
         JSONObject obj = new JSONObject(cleaned);
-        for (String key : obj.keySet()) {
+        for (int i = 0; i < obj.length(); i++) {
+            String key = obj.name(i);
             Object val = obj.get(key);
             if (val instanceof JSONArray) {
                 return (JSONArray) val;
@@ -143,7 +144,8 @@ public class JsonParser {
                 boolean idOk = object.has(idKey) || hasAlias(object, idKey);
                 boolean nameOk = object.has(nameKey) || hasAlias(object, nameKey);
                 if (idOk && nameOk) return object;
-                for (String key : object.keySet()) {
+                for (int i = 0; i < object.length(); i++) {
+                    String key = object.name(i);
                     Object r = findTarget(object.get(key), idKey, nameKey);
                     if (r != null) return r;
                 }
@@ -279,7 +281,8 @@ public class JsonParser {
     }
 
     private static void flattenRecursive(JSONObject source, String prefix, JSONObject target) throws JSONException {
-        for (String key : source.keySet()) {
+        for (int i = 0; i < source.length(); i++) {
+            String key = source.name(i);
             String fullKey = prefix.isEmpty() ? key : prefix + "." + key;
             Object val = source.get(key);
             if (val instanceof JSONObject) {
