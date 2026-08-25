@@ -119,7 +119,7 @@ final class RegexFieldHelper {
         if (si >= 0) {
             int se = rule.indexOf("]", si);
             if (se > si) {
-                pp.seqIndex = parseIntSafe(rule.substring(si + 6, se), 0);
+                pp.seqIndex = Integer.parseInt(rule.substring(si + 6, se));
                 pp.rule = rule.substring(0, si) + rule.substring(se + 1);
             }
         }
