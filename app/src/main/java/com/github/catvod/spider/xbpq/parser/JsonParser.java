@@ -80,10 +80,12 @@ public class JsonParser {
         }
         // 如果是对象，尝试提取第一个数组值
         JSONObject obj = new JSONObject(cleaned);
-        String[] keys = obj.names();
-        if (keys != null) {
-            for (String key : keys) {
-                Object val = obj.get(key);
+        JSONArray nk = obj.names();
+        if (nk != null) {
+            for (int i = 0; i < nk.length(); i++) {
+                String key = nk.optString(i);
+                if (key == null) continue;
+                Object val = obj.opt(key);
                 if (val instanceof JSONArray) {
                     return (JSONArray) val;
                 }
