@@ -72,13 +72,27 @@ final class RegexFieldHelper {
     }
 
     /**
-     * 按数组规则循环切分出所有列表项
+     * 按数组规则循环切分出所有列表项。
+     * <p>
+     * 支持两种规则格式：
+     * <ol>
+     *   <li>{@code 前缀&&后缀} 前后缀截取格式：以"前缀"起始、"后缀"结束的文本块逐段提取（含交叉匹配）</li>
+     *   <li>普通正则格式：直接编译为正则，捕获组1优先，无捕获组则 group(0)</li>
+     * </ol>
      *
-     * @return 列表项集合（优先捕获组1），规则非法返回空
+     * @return 列表项集合，规则非法返回空
      */
     static List<String> splitItems(String content, String arrayRule) {
         List<String> items = new ArrayList<>();
         if (content == null || content.isEmpty() || arrayRule == null || arrayRule.isEmpty()) return items;
+
+        // 优先尝试 && 前后缀截取格式（兼容 XBPQ 常见写法如 <li class="x"&&</li>）
+        if (arrayRule.contains("&&")) {
+            items = splitByCutRule(content, arrayRule);
+            if (!items.isEmpty()) return items;
+        }
+
+        // 回退到正则匹配
         try {
             Matcher m = Pattern.compile(arrayRule, Pattern.DOTALL).matcher(content);
             while (m.find()) {
@@ -87,6 +101,33 @@ final class RegexFieldHelper {
             }
         } catch (Exception ignored) {
             // 非法正则
+        }
+        return items;
+    }
+
+    /**
+     * 用 && 前后缀截取规则分割 HTML 内容，支持交叉重叠匹配。
+     * <p>
+     * 规则格式：{@code 前缀&&后缀}，例如 {@code <li class="hl-list-item"&&</li>}
+     * 每次从当前位置查找前缀，再从该位置查找后缀，截取中间内容作为一项。
+     */
+    private static List<String> splitByCutRule(String content, String arrayRule) {
+        List<String> items = new ArrayList<>();
+        int idx = arrayRule.indexOf("&&");
+        if (idx < 0) return items;
+        String start = arrayRule.substring(0, idx).trim();
+        String end = arrayRule.substring(idx + 2).trim();
+        if (start.isEmpty() || end.isEmpty()) return items;
+
+        int pos = 0;
+        while (pos <= content.length()) {
+            int startIdx = content.indexOf(start, pos);
+            if (startIdx < 0) break;
+            int afterStart = startIdx + start.length();
+            int endIdx = content.indexOf(end, afterStart);
+            if (endIdx < 0) break;
+            items.add(content.substring(afterStart, endIdx));
+            pos = endIdx + end.length();
         }
         return items;
     }
