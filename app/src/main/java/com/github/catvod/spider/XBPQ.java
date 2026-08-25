@@ -325,9 +325,20 @@ public class XBPQ extends Spider {
 
     private String getRedirectUrl(String url) {
         try {
+            // 自建临时客户端并关闭自动重定向，才能拿到 3xx 的 Location 头；
+            // 共享的 OkHttpClient 默认会跟随重定向，直接拿到的将是最终页而非跳转地址。
+            okhttp3.OkHttpClient client = new okhttp3.OkHttpClient.Builder()
+                    .followRedirects(false)
+                    .followSslRedirects(false)
+                    .build();
             okhttp3.Request req = new okhttp3.Request.Builder().url(url).get().build();
-            okhttp3.Response resp = httpClient.client().newCall(req).execute();
-            return resp.header("Location") != null ? resp.header("Location") : url;
+            okhttp3.Response resp = client.newCall(req).execute();
+            try {
+                String location = resp.header("Location");
+                return location != null ? location : url;
+            } finally {
+                resp.close();
+            }
         } catch (Exception e) {
             return url;
         }
@@ -656,40 +667,30 @@ public class XBPQ extends Spider {
                 String url = expandVariables(rawUrl);
                 int zIdx = url.indexOf(";;z");
                 int mrcIdx = url.indexOf(";;mrc");
-                int keywordIdx = -1;
-                String keyword = "";
-                if (zIdx >= 0 && mrcIdx >= 0) {
-                    keywordIdx = Math.min(zIdx, mrcIdx);
-                    keyword = url.substring(keywordIdx, Math.min(keywordIdx + 4, url.length()));
-                } else if (zIdx >= 0) {
-                    keywordIdx = zIdx;
-                    keyword = ";;z";
-                } else if (mrcIdx >= 0) {
-                    keywordIdx = mrcIdx;
-                    keyword = ";;mrc";
-                }
-                if (keywordIdx >= 0) {
-                    // 找到 ;;z/;;mrc，尝试从 [替换:xxx] 提取备用URL
-                    int bracketOpen = url.lastIndexOf("[", keywordIdx);
-                    int bracketClose = url.indexOf("]", bracketOpen);
-                    if (bracketOpen >= 0 && bracketClose > bracketOpen && bracketClose < keywordIdx) {
-                        String replaceContent = url.substring(bracketOpen + 1, bracketClose);
-                        if (replaceContent.startsWith("[替换:")) {
-                            replaceContent = replaceContent.substring(8);
-                            int rc = replaceContent.indexOf("]");
-                            if (rc > 0) replaceContent = replaceContent.substring(0, rc);
-                        }
-                        url = expandVariables(replaceContent);
+                if (zIdx >= 0 || mrcIdx >= 0) {
+                    int keywordIdx = (zIdx >= 0 && mrcIdx >= 0) ? Math.min(zIdx, mrcIdx)
+                                    : (zIdx >= 0 ? zIdx : mrcIdx);
+                    boolean isMrc = url.startsWith(";;mrc", keywordIdx);
+                    // ;;mrc* 后缀：提取关键字之后附加到 URL 的内容（如 ";;mrc*abc" 的 "*abc"）
+                    String mrcSuffix = "";
+                    if (isMrc && keywordIdx + 5 <= url.length()) {
+                        mrcSuffix = url.substring(keywordIdx + 5);
                     }
-                    url = url.substring(0, keywordIdx).trim();
-                    int lt = url.lastIndexOf("[");
-                    if (lt >= 0) url = url.substring(0, lt).trim();
-                    // ;;mrc* 后缀：提取随机字符并附加到 URL
-                    if (keyword.startsWith(";;mrc")) {
-                        String suffix = keyword.substring(5);
-                        if (!suffix.isEmpty()) {
-                            url = url + suffix;
-                        }
+                    // 尝试从最近的 [替换:xxx] 提取真实 URL 作为首页
+                    int bracketOpen = url.lastIndexOf("[", keywordIdx);
+                    int bracketClose = (bracketOpen >= 0) ? url.indexOf("]", bracketOpen) : -1;
+                    if (bracketOpen >= 0 && bracketClose > bracketOpen && bracketClose < keywordIdx) {
+                        String inner = url.substring(bracketOpen + 1, bracketClose);
+                        if (inner.startsWith("替换:")) inner = inner.substring(3);
+                        url = expandVariables(inner);
+                    } else {
+                        // 无 [替换:] 包裹：截断到关键字前并去掉可能残留的 "["
+                        url = url.substring(0, keywordIdx).trim();
+                        int lt = url.lastIndexOf("[");
+                        if (lt >= 0) url = url.substring(0, lt).trim();
+                    }
+                    if (!mrcSuffix.isEmpty()) {
+                        url = url + mrcSuffix;
                     }
                 }
                 addClass(classes, url, name);
@@ -843,28 +844,29 @@ public class XBPQ extends Spider {
         // ;;mrc* 语法：类似 ;;z，但随机后缀附加到 URL 末尾
         int zIdx = classUrl.indexOf(";;z");
         int mrcIdx = classUrl.indexOf(";;mrc");
-        int reserveIdx = Math.min(zIdx >= 0 && mrcIdx >= 0 ? Math.min(zIdx, mrcIdx) : (zIdx >= 0 ? zIdx : (mrcIdx >= 0 ? mrcIdx : -1)), classUrl.length());
-        if (reserveIdx >= 0 && reserveIdx < classUrl.length()) {
-            String keyword = classUrl.substring(reserveIdx, reserveIdx + 4); // ;;z 或 ;;mrc
-            int bracketOpen = classUrl.lastIndexOf("[", reserveIdx);
-            int bracketClose = classUrl.indexOf("]", bracketOpen);
-            if (bracketOpen >= 0 && bracketClose > bracketOpen && bracketClose < reserveIdx) {
-                String replaceContent = classUrl.substring(bracketOpen + 1, bracketClose);
-                // 剥去 [替换:xxx] 外层
-                if (replaceContent.startsWith("[替换:")) {
-                    replaceContent = replaceContent.substring(8);
-                    int rc = replaceContent.indexOf("]");
-                    if (rc > 0) replaceContent = replaceContent.substring(0, rc);
-                }
-                classUrl = expandVariables(replaceContent);
+        if (zIdx >= 0 || mrcIdx >= 0) {
+            int reserveIdx = (zIdx >= 0 && mrcIdx >= 0) ? Math.min(zIdx, mrcIdx)
+                            : (zIdx >= 0 ? zIdx : mrcIdx);
+            boolean isMrc = classUrl.startsWith(";;mrc", reserveIdx);
+            // ;;mrc* 后缀：提取关键字之后附加到 URL 的内容
+            String mrcSuffix = "";
+            if (isMrc && reserveIdx + 5 <= classUrl.length()) {
+                mrcSuffix = classUrl.substring(reserveIdx + 5);
             }
-            classUrl = classUrl.substring(0, reserveIdx).trim();
-            // ;;mrc* 后缀：提取随机字符
-            if (keyword.startsWith(";;mrc")) {
-                String suffix = keyword.substring(5); // 去掉 ";;mrc"
-                if (!suffix.isEmpty()) {
-                    classUrl = classUrl + suffix;
-                }
+            // 尝试从最近的 [替换:xxx] 提取真实 URL 作为模板
+            int bracketOpen = classUrl.lastIndexOf("[", reserveIdx);
+            int bracketClose = (bracketOpen >= 0) ? classUrl.indexOf("]", bracketOpen) : -1;
+            if (bracketOpen >= 0 && bracketClose > bracketOpen && bracketClose < reserveIdx) {
+                String inner = classUrl.substring(bracketOpen + 1, bracketClose);
+                if (inner.startsWith("替换:")) inner = inner.substring(3);
+                classUrl = expandVariables(inner);
+            } else {
+                classUrl = classUrl.substring(0, reserveIdx).trim();
+                int lt = classUrl.lastIndexOf("[");
+                if (lt >= 0) classUrl = classUrl.substring(0, lt).trim();
+            }
+            if (!mrcSuffix.isEmpty()) {
+                classUrl = classUrl + mrcSuffix;
             }
         }
 
