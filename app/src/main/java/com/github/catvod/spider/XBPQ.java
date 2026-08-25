@@ -88,6 +88,10 @@ public class XBPQ extends Spider {
 
     /** 规则 URL 占位符（{key}）：用于 class_url 中的分类筛选占位替换 */
     private static final Pattern P_PLACEHOLDER = Pattern.compile("\\{(\\w+)\\}");
+    /** {{key}} 变量引用占位符 */
+    private static final Pattern P_VAR_REF = Pattern.compile("\\{\\{(\\w+)\\}\\}");
+    /** [工具:xxx] 工具链标记 */
+    private static final Pattern P_TOOL = Pattern.compile("\\[工具:([^\\]]+)\\]");
 
     /** 懒加载图片占位图特征（借鉴 Hgdj/Glod/Duboku/Kkys/Libvio/Jable 的占位图过滤思路）。
      *  注意：不收 ".gif"/"empty"/"icon." 等过宽关键词，避免误杀正常封面 */
@@ -157,7 +161,186 @@ public class XBPQ extends Spider {
 
     /** 读规则值（"空"/"&&"占位视为未配置；rule 为 null 时安全返回默认值） */
     private String getVal(String key) {
-        return RuleConfig.getRuleVal(rule, key);
+        return expandVariables(RuleConfig.getRuleVal(rule, key));
+    }
+
+    /**
+     * 获取首页 URL，优先展开动态域名链（dynamic_domain → home_url_c → homeUrl）。
+     * <p>支持 {{key}} 变量引用递归展开。
+     */
+    private String getHomeUrl() {
+        String dynamicDomain = getVal("dynamic_domain");
+        if (!dynamicDomain.isEmpty()) return expandVariables(dynamicDomain);
+        String homeUrlC = getVal("home_url_c");
+        if (!homeUrlC.isEmpty()) return expandVariables(homeUrlC);
+        return getVal("homeUrl");
+    }
+
+    /**
+     * 展开 {{key}} 变量引用，递归处理嵌套引用，最多 10 轮防止死循环。
+     * <p>每轮从规则对象中读取 key 对应的值（再次展开），直到无 {{}} 或达到最大轮数。
+     */
+    private String expandVariables(String value) {
+        if (value == null || value.isEmpty()) {
+            return executeTools(value);
+        }
+        boolean hasVar = value.indexOf('{') >= 0;
+        if (!hasVar) {
+            return applyReplaceInValue(executeTools(value));
+        }
+        for (int round = 0; round < 10; round++) {
+            Matcher m = P_VAR_REF.matcher(value);
+            if (!m.find()) break;
+            StringBuilder sb = new StringBuilder();
+            m.reset();
+            boolean changed = false;
+            while (m.find()) {
+                String varKey = m.group(1);
+                String varVal = RuleConfig.getRuleVal(rule, varKey);
+                if (varVal != null && !varVal.isEmpty()) {
+                    varVal = executeTools(varVal);
+                    m.appendReplacement(sb, Matcher.quoteReplacement(varVal));
+                    changed = true;
+                } else {
+                    m.appendReplacement(sb, Matcher.quoteReplacement(m.group(0)));
+                }
+            }
+            m.appendTail(sb);
+            if (!changed) break;
+            value = sb.toString();
+        }
+        value = applyReplaceInValue(value);
+        return executeTools(value);
+    }
+
+    /**
+     * 处理字符串中的 [替换:a>>b#x>>y] 语法（不限于 [工具:xxx] 内）。
+     * 用于变量定义中直接使用替换语法，如 "域名-c": "{{主页url-c}}[替换:https://>>https://666.]"
+     */
+    private String applyReplaceInValue(String value) {
+        if (value == null || value.isEmpty() || value.indexOf('[') < 0) return value;
+        int ri = value.indexOf("[替换:");
+        if (ri < 0) return value;
+        int re = value.indexOf("]", ri);
+        if (re <= ri) return value;
+        String replaceContent = value.substring(ri + 4, re);
+        String result = value.substring(0, ri);
+        // 处理剩余的 [替换:] 部分
+        for (String pair : replaceContent.split("#")) {
+            int idx = pair.indexOf(">>");
+            if (idx > 0) {
+                result = result.replace(pair.substring(0, idx).trim(), pair.substring(idx + 2).trim());
+            }
+        }
+        result += value.substring(re + 1);
+        return result;
+    }
+
+    /**
+     * 执行 [工具:xxx] 工具链。支持：
+     * <ul>
+     *   <li>[工具:源码] — 抓取发布页HTML并返回</li>
+     *   <li>[工具:重定向] — 跟随HTTP重定向获取最终URL</li>
+     *   <li>[工具:解url] — URL解码</li>
+     *   <li>[工具:解b64] / [工具:Base64#解密] — Base64解码</li>
+     *   <li>[工具:SHA] — SHA-256哈希</li>
+     *   <li>[工具:1截取N] — 取第N个片段</li>
+     *   <li>[工具:随机字符-N-唯一] — 生成随机字符串</li>
+     *   <li>[工具:源码转b64#解密aes-key-iv-AES/CBC/PKCS7Padding] — AES解密</li>
+     * </ul>
+     */
+    private String executeTools(String input) {
+        if (input == null || input.isEmpty() || input.indexOf('[') < 0) return input;
+        Matcher m = P_TOOL.matcher(input);
+        if (!m.find()) return input;
+        StringBuilder sb = new StringBuilder();
+        m.reset();
+        while (m.find()) {
+            String toolSpec = m.group(1);
+            String result = executeSingleTool(toolSpec);
+            m.appendReplacement(sb, Matcher.quoteReplacement(result == null ? "" : result));
+        }
+        m.appendTail(sb);
+        return sb.toString();
+    }
+
+    private String executeSingleTool(String spec) {
+        if (spec == null || spec.isEmpty()) return "";
+        String[] parts = spec.split("#", 2);
+        String toolName = parts[0].trim();
+        String arg = parts.length > 1 ? parts[1].trim() : "";
+
+        try {
+            switch (toolName) {
+                case "源码":
+                    // 从上下文获取主页URL，抓发布页
+                    return fetchUrl(getHomeUrl(), buildHeaders(null));
+                case "重定向":
+                    return getRedirectUrl(arg);
+                case "解url":
+                    return java.net.URLDecoder.decode(arg, "UTF-8");
+                case "urlDecode":
+                    return java.net.URLDecoder.decode(arg, "UTF-8");
+                case "urlEncode":
+                    return java.net.URLEncoder.encode(arg, "UTF-8");
+                case "解b64":
+                case "Base64#解密":
+                    return new String(java.util.Base64.getDecoder().decode(arg), "UTF-8");
+                case "SHA":
+                    java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+                    byte[] digest = md.digest(arg.getBytes("UTF-8"));
+                    StringBuilder hex = new StringBuilder();
+                    for (byte b : digest) hex.append(String.format("%02x", b));
+                    return hex.toString();
+                case "1截取": {
+                    int n = Integer.parseInt(arg);
+                    String[] ss = arg.split("", -1);
+                    return (n >= 0 && n < ss.length) ? ss[n] : "";
+                }
+                case "随机字符-3-唯一":
+                    return randomString(3);
+                case "源码转b64": {
+                    // 格式：源码转b64#解密aes-key-iv-AES/CBC/PKCS7Padding
+                    String decrypted = executeAesDecrypt(arg, "f5d965df75336270", "97b60394abc2fbe1");
+                    return new String(java.util.Base64.getEncoder().encode(decrypted.getBytes("UTF-8")), "UTF-8");
+                }
+                default:
+                    return "";
+            }
+        } catch (Exception e) {
+            SpiderDebug.log("工具执行失败: " + toolName + " - " + e.getMessage());
+            return "";
+        }
+    }
+
+    private String executeAesDecrypt(String input, String key, String iv) throws Exception {
+        javax.crypto.Cipher cipher = javax.crypto.Cipher.getInstance("AES/CBC/PKCS7Padding");
+        javax.crypto.spec.IvParameterSpec ivSpec = new javax.crypto.spec.IvParameterSpec(iv.getBytes("UTF-8"));
+        javax.crypto.spec.SecretKeySpec keySpec = new javax.crypto.spec.SecretKeySpec(key.getBytes("UTF-8"), "AES");
+        cipher.init(javax.crypto.Cipher.DECRYPT_MODE, keySpec, ivSpec);
+        byte[] decoded = java.util.Base64.getDecoder().decode(input);
+        byte[] decrypted = cipher.doFinal(decoded);
+        return new String(decrypted, "UTF-8");
+    }
+
+    private String getRedirectUrl(String url) {
+        try {
+            okhttp3.Request req = new okhttp3.Request.Builder().url(url).get().build();
+            okhttp3.Response resp = httpClient.client().newCall(req).execute();
+            return resp.header("Location") != null ? resp.header("Location") : url;
+        } catch (Exception e) {
+            return url;
+        }
+    }
+
+    private String randomString(int length) {
+        String chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        StringBuilder sb = new StringBuilder(length);
+        java.util.Random rand = new java.util.Random();
+        for (int i = 0; i < length; i++) {
+            sb.append(chars.charAt(rand.nextInt(chars.length())));
+        }
+        return sb.toString();
     }
 
     // ==================== 取值增强助手（借鉴 20+ 爬虫新思想，不新增字段） ====================
@@ -402,6 +585,27 @@ public class XBPQ extends Spider {
             JSONObject result = new JSONObject();
             result.put("class", buildClassList());
 
+            // 二级目录：部分分类标记为 folder 模式（folder-0-0-H），不进入 class 列表
+            String twoLevelDir = getVal("二级目录");
+            if (!twoLevelDir.isEmpty() && twoLevelDir.contains("|")) {
+                String folders = twoLevelDir.split("\\|")[0].trim();
+                String mode = twoLevelDir.contains("|") ? twoLevelDir.substring(twoLevelDir.indexOf("|") + 1) : "";
+                if (mode.contains("folder")) {
+                    // 从 class 列表中移除被标记为 folder 的分类
+                    JSONArray filtered = new JSONArray();
+                    for (int i = 0; i < result.opt("class").length(); i++) {
+                        JSONObject cls = result.opt("class").getJSONObject(i);
+                        String typeName = cls.optString("type_name", "");
+                        boolean isFolder = false;
+                        for (String folder : folders.split(",")) {
+                            if (typeName.contains(folder.trim())) { isFolder = true; break; }
+                        }
+                        if (!isFolder) filtered.put(cls);
+                    }
+                    result.put("class", filtered);
+                }
+            }
+
             if (filter) {
                 JSONObject filters = extractFilters();
                 if (filters != null && filters.length() > 0) result.put("filters", filters);
@@ -422,7 +626,8 @@ public class XBPQ extends Spider {
      * 分类列表构建。
      * <p>兼容规则中实际出现的多种写法（字段同名但格式不同，视为同一功能，不新增键）：
      * <ol>
-     *   <li>{@code 分类="电影$1#剧集$2#..."} —— name$id 用 # 串联（最常见）</li>
+     *   <li>{@code 特殊分类链接="name$url#name$url"} —— name$id 用 # 串联（最常见，优先）</li>
+     *   <li>{@code 分类="电影$1#剧集$2#..."} —— name$id 用 # 串联（次常见）</li>
      *   <li>{@code 分类url} 含 {class} —— 分类名即作为 type_id</li>
      *   <li>{@code 分类名称 + 分类值} 两个 & 分隔的并行数组</li>
      *   <li>{@code 分类 + 分类值}（如「电影&剧集&...」配「1&2&...」）回退写法</li>
@@ -432,8 +637,65 @@ public class XBPQ extends Spider {
         JSONArray classes = new JSONArray();
         String classUrl = getVal("class_url");
         String fenlei = getVal("fenlei");
+        String specialLinks = getVal("特殊分类链接");
         String classNames = getVal("class_name");
         String classValues = getVal("class_value");
+
+        // 0) 特殊分类链接 优先：name$url#name$url 格式，含动态域名变量 {{域名-c}} 等
+        //    支持 ;;z 语法（备用首页）、[替换:xxx] 备用URL
+        if (!specialLinks.isEmpty() && specialLinks.contains("$")) {
+            for (String pair : specialLinks.split("#")) {
+                pair = pair.trim();
+                if (pair.isEmpty()) continue;
+                int idx = pair.indexOf("$");
+                if (idx < 0) continue;
+                String name = pair.substring(0, idx).trim();
+                String rawUrl = pair.substring(idx + 1).trim();
+                if (name.isEmpty()) continue;
+                // 处理 [替换:xxx];;z / ;;mrc* 语法：;;z/;;mrc 表示使用 [替换:...] 中的 URL 作为首页
+                String url = expandVariables(rawUrl);
+                int zIdx = url.indexOf(";;z");
+                int mrcIdx = url.indexOf(";;mrc");
+                int keywordIdx = -1;
+                String keyword = "";
+                if (zIdx >= 0 && mrcIdx >= 0) {
+                    keywordIdx = Math.min(zIdx, mrcIdx);
+                    keyword = url.substring(keywordIdx, Math.min(keywordIdx + 4, url.length()));
+                } else if (zIdx >= 0) {
+                    keywordIdx = zIdx;
+                    keyword = ";;z";
+                } else if (mrcIdx >= 0) {
+                    keywordIdx = mrcIdx;
+                    keyword = ";;mrc";
+                }
+                if (keywordIdx >= 0) {
+                    // 找到 ;;z/;;mrc，尝试从 [替换:xxx] 提取备用URL
+                    int bracketOpen = url.lastIndexOf("[", keywordIdx);
+                    int bracketClose = url.indexOf("]", bracketOpen);
+                    if (bracketOpen >= 0 && bracketClose > bracketOpen && bracketClose < keywordIdx) {
+                        String replaceContent = url.substring(bracketOpen + 1, bracketClose);
+                        if (replaceContent.startsWith("[替换:")) {
+                            replaceContent = replaceContent.substring(8);
+                            int rc = replaceContent.indexOf("]");
+                            if (rc > 0) replaceContent = replaceContent.substring(0, rc);
+                        }
+                        url = expandVariables(replaceContent);
+                    }
+                    url = url.substring(0, keywordIdx).trim();
+                    int lt = url.lastIndexOf("[");
+                    if (lt >= 0) url = url.substring(0, lt).trim();
+                    // ;;mrc* 后缀：提取随机字符并附加到 URL
+                    if (keyword.startsWith(";;mrc")) {
+                        String suffix = keyword.substring(5);
+                        if (!suffix.isEmpty()) {
+                            url = url + suffix;
+                        }
+                    }
+                }
+                addClass(classes, url, name);
+            }
+            return classes;
+        }
 
         // 1) name$id#name$id 格式（最常见，约 1/3 规则使用）
         if (fenlei.contains("$")) {
@@ -513,7 +775,7 @@ public class XBPQ extends Spider {
 
     /** 热门推荐：抓取主页并用列表规则提取 */
     private JSONArray fetchHotRecommend() throws Exception {
-        String homeUrl = getVal("homeUrl");
+        String homeUrl = getHomeUrl();
         if (homeUrl.isEmpty()) return new JSONArray();
         String body = fetchUrl(homeUrl, buildHeaders(null));
         if (body.isEmpty()) return new JSONArray();
@@ -563,7 +825,7 @@ public class XBPQ extends Spider {
      * </ul>
      */
     private String buildCategoryUrl(String tid, String pg, Map<String, String> extend) {
-        String classUrl = getVal("class_url");
+        String classUrl = expandVariables(getVal("class_url"));
         if (classUrl.isEmpty()) return "";
 
         // [firstPage=...] 语法：首页使用括号内无页码链接
@@ -574,6 +836,35 @@ public class XBPQ extends Spider {
                 String firstPageTpl = classUrl.substring(br + "[firstPage=".length(), end);
                 String normalTpl = classUrl.substring(0, br);
                 classUrl = ("1".equals(pg)) ? firstPageTpl : normalTpl;
+            }
+        }
+
+        // ;;z 语法：分类url 末尾有 ;;z 时，使用 [替换:xxx] 中的URL作为模板（首页备用）
+        // ;;mrc* 语法：类似 ;;z，但随机后缀附加到 URL 末尾
+        int zIdx = classUrl.indexOf(";;z");
+        int mrcIdx = classUrl.indexOf(";;mrc");
+        int reserveIdx = Math.min(zIdx >= 0 && mrcIdx >= 0 ? Math.min(zIdx, mrcIdx) : (zIdx >= 0 ? zIdx : (mrcIdx >= 0 ? mrcIdx : -1)), classUrl.length());
+        if (reserveIdx >= 0 && reserveIdx < classUrl.length()) {
+            String keyword = classUrl.substring(reserveIdx, reserveIdx + 4); // ;;z 或 ;;mrc
+            int bracketOpen = classUrl.lastIndexOf("[", reserveIdx);
+            int bracketClose = classUrl.indexOf("]", bracketOpen);
+            if (bracketOpen >= 0 && bracketClose > bracketOpen && bracketClose < reserveIdx) {
+                String replaceContent = classUrl.substring(bracketOpen + 1, bracketClose);
+                // 剥去 [替换:xxx] 外层
+                if (replaceContent.startsWith("[替换:")) {
+                    replaceContent = replaceContent.substring(8);
+                    int rc = replaceContent.indexOf("]");
+                    if (rc > 0) replaceContent = replaceContent.substring(0, rc);
+                }
+                classUrl = expandVariables(replaceContent);
+            }
+            classUrl = classUrl.substring(0, reserveIdx).trim();
+            // ;;mrc* 后缀：提取随机字符
+            if (keyword.startsWith(";;mrc")) {
+                String suffix = keyword.substring(5); // 去掉 ";;mrc"
+                if (!suffix.isEmpty()) {
+                    classUrl = classUrl + suffix;
+                }
             }
         }
 
@@ -915,7 +1206,10 @@ public class XBPQ extends Spider {
 
     /**
      * 详情 URL：detail_url 模板（{vid}）优先；其次 vid 为完整 URL / 绝对路径，
-     * 兜底用 homeUrl 主机拼接
+     * 兜底用 homeUrl 主机拼接。
+     * <p>
+     * 特殊处理：当 vid 为纯链接格式（如 /detail/34414.html）且 list_prefix 已包含主机时，
+     * 不再重复拼接主机前缀。
      */
     private String buildDetailUrl(JSONObject vinfo, String vid) {
         String innerId = vinfo.optString("vod_id", vid);
@@ -925,11 +1219,17 @@ public class XBPQ extends Spider {
             // 模板可能为相对/协议相对路径，统一补全为绝对地址
             return absUrl(template.replace("${vid}", innerId).replace("{vid}", innerId));
         }
-        if (vid.startsWith("http://") || vid.startsWith("https://")) return vid;
+        if (innerId.startsWith("http://") || innerId.startsWith("https://")) return innerId;
 
-        String host = hostOf(getVal("homeUrl"));
-        if (vid.startsWith("/")) return host.isEmpty() ? vid : host + vid;
-        return host.isEmpty() ? vid : host + "/" + vid;
+        String host = hostOf(getHomeUrl());
+        String prefix = getVal("list_prefix");
+        // 如果 list_prefix 已包含完整主机，直接使用 innerId
+        if (!prefix.isEmpty() && (prefix.contains("http://") || prefix.contains("https://"))) {
+            if (innerId.startsWith("/")) return prefix + innerId.substring(1);
+            return prefix + innerId;
+        }
+        if (innerId.startsWith("/")) return host.isEmpty() ? innerId : host + innerId;
+        return host.isEmpty() ? innerId : host + "/" + innerId;
     }
 
     /** 提取 URL 的协议+主机部分 */
@@ -946,7 +1246,7 @@ public class XBPQ extends Spider {
     private String absUrl(String url) {
         if (url == null || url.isEmpty()) return url;
         if (url.startsWith("http://") || url.startsWith("https://")) return url;
-        String host = hostOf(getVal("homeUrl"));
+        String host = hostOf(getHomeUrl());
         if (host.isEmpty()) return url;
         if (url.startsWith("//")) return "https:" + url;
         return host + (url.startsWith("/") ? url : "/" + url);
