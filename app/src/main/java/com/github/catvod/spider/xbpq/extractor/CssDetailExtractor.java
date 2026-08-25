@@ -58,10 +58,14 @@ public class CssDetailExtractor implements ExtractorFactory.DetailExtractor {
     private void putByCss(JSONObject vod, String scope, String field, String cssRule) {
         if (cssRule == null || cssRule.isEmpty()) return;
         String value = CssRule.extractByCss(scope, cssRule, 0);
-        if (!value.isEmpty()) vod.put(field, value);
+        if (!value.isEmpty()) {
+            try { vod.put(field, value); } catch (Exception ignored) {}
+        }
     }
 
     private void fillIfMissing(JSONObject vod, String key, String value) {
-        if (value != null && !value.isEmpty() && !vod.has(key)) vod.put(key, value);
+        if (value != null && !value.isEmpty() && !vod.has(key)) {
+            try { vod.put(key, value); } catch (Exception ignored) {}
+        }
     }
 }
