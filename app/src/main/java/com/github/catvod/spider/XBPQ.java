@@ -243,22 +243,61 @@ public class XBPQ extends Spider {
         return false;
     }
 
+    /** PC UA */
+    private static final String PC_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36 Edg/110.0.1587.57";
+    /** Mobile UA */
+    private static final String MOBILE_UA = "Mozilla/5.0 (Linux; Android 13; Xiaomi 13 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.5672.131 Mobile Safari/537.36";
+    /** iOS UA */
+    private static final String IOS_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1";
+
     // ==================== 请求头 ====================
 
     /**
-     * 合并请求头：公共 header &lt; 分区 header &lt; User-Agent/Referer 平铺键
-     *
-     * @param sectionKey 分区请求头键（如 search_header），可为 null
+     * 构建请求头 Map
+     * <p>支持三种配置形式：
+     * <ol>
+     *   <li>JSON 对象：{"User-Agent": "...", "Referer": "..."} → mergeJsonHeader 处理</li>
+     *   <li>UA 简写："手机"/"电脑"/"苹果手机" → 替换为对应 UA 字符串</li>
+     *   <li>平铺键 "User-Agent" / "Referer" → 直接 put</li>
+     * </ol>
      */
     private Map<String, String> buildHeaders(String sectionKey) {
         Map<String, String> headers = new HashMap<>();
-        mergeJsonHeader(headers, getVal("header"));
-        if (sectionKey != null) mergeJsonHeader(headers, getVal(sectionKey));
+        String headerRaw = getVal("header");
+        // 优先处理 UA 简写
+        if (headerRaw != null && !headerRaw.isEmpty() && !headerRaw.startsWith("{")) {
+            String ua = resolveUaAlias(headerRaw);
+            if (ua != null) headers.put("User-Agent", ua);
+        } else {
+            // JSON 格式请求头
+            mergeJsonHeader(headers, headerRaw);
+        }
+        if (sectionKey != null) {
+            String sectionRaw = getVal(sectionKey);
+            if (sectionRaw != null && !sectionRaw.isEmpty() && !sectionRaw.startsWith("{")) {
+                String ua = resolveUaAlias(sectionRaw);
+                if (ua != null) headers.put("User-Agent", ua);
+            } else {
+                mergeJsonHeader(headers, sectionRaw);
+            }
+        }
         String ua = getVal("User-Agent");
-        if (ua != null && !ua.isEmpty()) headers.put("User-Agent", ua);
+        if (ua != null && !ua.isEmpty()) headers.put("User-Agent", resolveUaAlias(ua));
         String referer = getVal("Referer");
         if (referer != null && !referer.isEmpty()) headers.put("Referer", referer);
         return headers.isEmpty() ? null : headers;
+    }
+
+    /**
+     * 将 UA 简写（"手机"/"电脑"/"苹果手机"）替换为实际 UA 字符串，其他原样返回。
+     */
+    private String resolveUaAlias(String value) {
+        if (value == null) return null;
+        String v = value.trim();
+        if ("手机".equals(v) || "MOBILE_UA".equals(v)) return MOBILE_UA;
+        if ("电脑".equals(v) || "PC_UA".equals(v)) return PC_UA;
+        if ("苹果手机".equals(v) || "IOS_UA".equals(v)) return IOS_UA;
+        return v;
     }
 
     /** 将 JSON 字符串形式的请求头合并进 map，非法 JSON 忽略 */
