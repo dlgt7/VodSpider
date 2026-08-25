@@ -840,7 +840,7 @@ public class XBPQ extends Spider {
 
         String existing = vod.optString("vod_content", "");
         String merged = existing.isEmpty() ? extra.toString() : existing + "\n" + extra.toString();
-        vod.put("vod_content", merged);
+        try { vod.put("vod_content", merged); } catch (Exception ignored) {}
         return vod;
     }
 
