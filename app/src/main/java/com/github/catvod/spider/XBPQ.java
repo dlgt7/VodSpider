@@ -796,7 +796,9 @@ public class XBPQ extends Spider {
                 String val = m.group(1).trim()
                         .replaceAll("^[:：\\s]+", "")
                         .replaceAll("[\\s]+$", "");
-                if (!val.isEmpty()) vod.put(field, val);
+                if (!val.isEmpty()) {
+                    try { vod.put(field, val); } catch (Exception ignored) {}
+                }
             }
         }
         return vod;
@@ -1193,7 +1195,9 @@ public class XBPQ extends Spider {
         String playHeader = getVal("play_header");
         if (playHeader.isEmpty()) return;
         JSONObject header = JsonParser.safeParseObject(playHeader);
-        if (header != null && header.length() > 0) result.put("header", header);
+        if (header != null && header.length() > 0) {
+            try { result.put("header", header); } catch (Exception ignored) {}
+        }
     }
 
     /** 跳转播放：抓取集数链接页面，按 jump_url 规则（css/&&/正则）提取真实地址 */
