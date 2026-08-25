@@ -33,31 +33,35 @@ public class VodDetail {
      * 输出 detailContent 标准结果
      */
     public String toJSON() {
-        JSONObject vod = item.toJSON();
-        if (!playSources.isEmpty()) {
-            StringBuilder from = new StringBuilder();
-            StringBuilder url = new StringBuilder();
-            for (PlaySource source : playSources) {
-                if (from.length() > 0) {
-                    from.append("$$$");
-                    url.append("$$$");
+        try {
+            JSONObject vod = item.toJSON();
+            if (!playSources.isEmpty()) {
+                StringBuilder from = new StringBuilder();
+                StringBuilder url = new StringBuilder();
+                for (PlaySource source : playSources) {
+                    if (from.length() > 0) {
+                        from.append("$$$");
+                        url.append("$$$");
+                    }
+                    from.append(source.getName());
+                    StringBuilder eps = new StringBuilder();
+                    for (String ep : source.getEpisodes()) {
+                        if (eps.length() > 0) eps.append("#");
+                        eps.append(ep);
+                    }
+                    url.append(eps);
                 }
-                from.append(source.getName());
-                StringBuilder eps = new StringBuilder();
-                for (String ep : source.getEpisodes()) {
-                    if (eps.length() > 0) eps.append("#");
-                    eps.append(ep);
-                }
-                url.append(eps);
+                vod.put("vod_play_from", from.toString());
+                vod.put("vod_play_url", url.toString());
             }
-            vod.put("vod_play_from", from.toString());
-            vod.put("vod_play_url", url.toString());
+            JSONArray list = new JSONArray();
+            list.put(vod);
+            JSONObject result = new JSONObject();
+            result.put("list", list);
+            return result.toString();
+        } catch (Exception e) {
+            return "{}";
         }
-        JSONArray list = new JSONArray();
-        list.put(vod);
-        JSONObject result = new JSONObject();
-        result.put("list", list);
-        return result.toString();
     }
 
     public VodItem getItem() { return item; }
