@@ -260,9 +260,11 @@ public class XBPQ extends Spider {
         if (json == null || json.isEmpty()) return;
         JSONObject obj = JsonParser.safeParseObject(json);
         if (obj == null) return;
-        String[] keys = obj.names();
-        if (keys != null) {
-            for (String key : keys) {
+        JSONArray nk = obj.names();
+        if (nk != null) {
+            for (int i = 0; i < nk.length(); i++) {
+                String key = nk.optString(i);
+                if (key == null) continue;
                 String value = obj.optString(key, "");
                 if (!value.isEmpty()) headers.put(key, value);
             }
@@ -336,7 +338,7 @@ public class XBPQ extends Spider {
         return !"1".equals(getVal("allow_internal"));
     }
 
-    private HttpClient client() {
+    private static HttpClient client() {
         if (httpClient == null) {
             httpClient = new OkHttpWrapper();
             httpClient.addInterceptor(new WafBypassInterceptor());
