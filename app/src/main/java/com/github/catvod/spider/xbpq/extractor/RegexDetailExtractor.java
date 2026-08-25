@@ -57,11 +57,13 @@ public class RegexDetailExtractor implements ExtractorFactory.DetailExtractor {
 
     private void putIfFound(JSONObject vod, String key, String value) {
         if (value != null && !value.isEmpty()) {
-            vod.put(key, value);
+            try { vod.put(key, value); } catch (Exception ignored) {}
         }
     }
 
     private void fillIfMissing(JSONObject vod, String key, String value) {
-        if (value != null && !value.isEmpty() && !vod.has(key)) vod.put(key, value);
+        if (value != null && !value.isEmpty() && !vod.has(key)) {
+            try { vod.put(key, value); } catch (Exception ignored) {}
+        }
     }
 }
