@@ -150,6 +150,32 @@ public class RuleConfig {
         CHINESE_KEY_MAP.put("超时", "timeout");
         CHINESE_KEY_MAP.put("重试", "retry");
         CHINESE_KEY_MAP.put("重试次数", "retry");
+
+        // ===== 动态域名/变量链 =====
+        CHINESE_KEY_MAP.put("域名-c", "dynamic_domain");
+        CHINESE_KEY_MAP.put("主页url-c", "home_url_c");
+        CHINESE_KEY_MAP.put("发布页", "publish_page");
+        CHINESE_KEY_MAP.put("发布站-b", "publish_station_b");
+        CHINESE_KEY_MAP.put("原始网址-b", "original_url_b");
+        CHINESE_KEY_MAP.put("固定直链", "fixed_link");
+
+        // ===== 二级目录/特殊分类 =====
+        CHINESE_KEY_MAP.put("二级目录", "二级目录");
+        CHINESE_KEY_MAP.put("二级ID", "二级ID");
+        CHINESE_KEY_MAP.put("特殊分类链接", "特殊分类链接");
+
+        // ===== 筛选参数 =====
+        CHINESE_KEY_MAP.put("排序", "排序");
+        CHINESE_KEY_MAP.put("时段", "时段");
+        CHINESE_KEY_MAP.put("顺序", "顺序");
+        CHINESE_KEY_MAP.put("类型", "筛选类型");
+
+        // ===== 额外详情字段 =====
+        CHINESE_KEY_MAP.put("影片状态", "detail_remarks");
+        CHINESE_KEY_MAP.put("影片年代", "detail_year");
+        CHINESE_KEY_MAP.put("影片类型", "detail_type");
+        CHINESE_KEY_MAP.put("影片地区", "detail_area");
+        CHINESE_KEY_MAP.put("影片名称", "vod_name");
     }
 
     /**

@@ -33,6 +33,8 @@ public class CssRule {
     /** CSS选择器协议前缀 */
     public static final String CSS_PREFIX = "css:";
     public static final String CSS_PREFIX_FULL = "css://";
+    /** XBPQ 简写 CSS 前缀（p:a->href、p:.class->text 等） */
+    public static final String P_PREFIX = "p:";
 
     /** 属性提取标记 */
     private static final char ATTR_MARKER = '@';
@@ -76,12 +78,14 @@ public class CssRule {
 
     /**
      * 判断规则字符串是否为CSS选择器格式
+     * <p>支持：css: / css:// / p: 三种前缀
      *
      * @param rule 规则字符串
      * @return true如果是CSS选择器
      */
     public static boolean isCssRule(String rule) {
-        return rule != null && (rule.startsWith(CSS_PREFIX_FULL) || rule.startsWith(CSS_PREFIX));
+        if (rule == null) return false;
+        return rule.startsWith(CSS_PREFIX_FULL) || rule.startsWith(CSS_PREFIX) || rule.startsWith(P_PREFIX);
     }
 
     /**
@@ -157,13 +161,25 @@ public class CssRule {
     }
 
     /**
-     * 解析精简语法：
+     * 剥去 +( 和 +) 拼接包装：+(+p:a->href+) → p:a->href
+     */
+    public static String stripConcatWrap(String rule) {
+        if (rule == null) return "";
+        String r = rule.trim();
+        while (r.startsWith("+(") && r.endsWith(")+")) {
+            r = r.substring(2, r.length() - 2).trim();
+        }
+        return r;
+    }
+
+    /**
+     * 解析精简语法（支持嵌套 +(+p:xxx+) 拼接）：
      * <ul>
-     *   <li>css:div.item->text => div.item:text</li>
-     *   <li>css:div.item->attr(src) => div.item[attr]</li>
-     *   <li>p:span->text => span:text（p 仅当含 -> 时才作为 tag 前缀）</li>
-     *   <li>tag:a->attr(href) => a[href]</li>
-     *   <li>tag:.item => .item（纯选择器无 -> 时直接返回）</li>
+     *   <li>p:a->href => a[href]</li>
+     *   <li>p:.class->text => .class:text</li>
+     *   <li>p:div[class*="x"]->text => div[class*="x"]:text</li>
+     *   <li>+(+p:a->href+) => a[href]（剥去 +( 和 +) 包装）</li>
+     *   <li>css:div->text => div:text（保留原 css: 前缀处理逻辑）</li>
      * </ul>
      */
     public static String parseCssShortSyntax(String expr) {
@@ -171,18 +187,20 @@ public class CssRule {
             return expr;
         }
 
+        // 处理 +(+xxx+) 嵌套拼接包装：剥去外层的 +( 和 +)
+        if (expr.startsWith("+(") && expr.endsWith(")+")) {
+            expr = expr.substring(2, expr.length() - 2).trim();
+        }
+
+        // 再次检查 p: 前缀（剥去嵌套包装后可能暴露新的 p:）
+        if (expr.startsWith(P_PREFIX)) {
+            return convertPShortcut(expr);
+        }
+
         int arrowIdx = expr.indexOf("->");
 
-        // 无 -> 时直接返回原表达式（包括 tag:.class 这种纯选择器写法）
+        // 无 -> 时直接返回原表达式（纯选择器，如 tag:.class）
         if (arrowIdx < 0) {
-            // 处理 tag:p 或 p:xxx 无前缀简写
-            if (expr.startsWith("p:")) {
-                String suffix = expr.substring(2);
-                // 不含 -> 且是简单标签选择器时才简化（排除 .class, #id 等 CSS 选择器）
-                if (!suffix.isEmpty() && !suffix.startsWith(".") && !suffix.startsWith("#") && !suffix.startsWith("[")) {
-                    return suffix;
-                }
-            }
             if (expr.startsWith("tag:")) {
                 return expr.substring(4);
             }
@@ -193,16 +211,13 @@ public class CssRule {
         String left = expr.substring(0, arrowIdx).trim();
         String right = expr.substring(arrowIdx + 2).trim();
 
-        String tag = null;
-        String selector = left;
+        String selector = "";
 
-        // 处理 tag:p 前缀
+        // 处理 tag:p 或 p: 前缀
         if (left.startsWith("tag:")) {
-            tag = left.substring(4).trim();
-            selector = "";
-        } else if (left.startsWith("p:")) {
-            tag = left.substring(2).trim();
-            selector = "";
+            selector = left.substring(4).trim();
+        } else if (left.startsWith(P_PREFIX)) {
+            selector = left.substring(2).trim();
         }
 
         if (right.contains("(") && right.contains(")")) {
@@ -210,9 +225,44 @@ public class CssRule {
             int end = right.indexOf(')');
             String attrName = right.substring(start + 1, end);
             String attrExpr = "[" + attrName + "]";
-            return selector.isEmpty() ? tag + attrExpr : selector + " " + tag + attrExpr;
+            return selector.isEmpty() ? attrExpr : selector + attrExpr;
         } else {
-            return selector.isEmpty() ? tag + ":" + right : selector + " " + tag + ":" + right;
+            return selector.isEmpty() ? ":" + right : selector + ":" + right;
+        }
+    }
+
+    /**
+     * 处理 p:xxx 精简语法（含嵌套 +(+p:xxx+) 展开）
+     */
+    private static String convertPShortcut(String expr) {
+        // 递归剥去 +( ... )+ 包装
+        while (expr.startsWith("+(") && expr.endsWith(")+")) {
+            expr = expr.substring(2, expr.length() - 2).trim();
+        }
+        if (!expr.startsWith(P_PREFIX)) return expr;
+        String body = expr.substring(2).trim();
+
+        int arrowIdx = body.indexOf("->");
+        if (arrowIdx < 0) {
+            // p:a 或 p:.class 纯选择器
+            if (body.isEmpty() || body.startsWith(".") || body.startsWith("#") || body.startsWith("[")) {
+                return body;
+            }
+            return body;
+        }
+
+        String left = body.substring(0, arrowIdx).trim();
+        String right = body.substring(arrowIdx + 2).trim();
+        String selector = left.isEmpty() ? "" : left;
+
+        if (right.contains("(") && right.contains(")")) {
+            int start = right.indexOf('(');
+            int end = right.indexOf(')');
+            return selector.isEmpty()
+                    ? "[" + right.substring(start + 1, end) + "]"
+                    : selector + "[" + right.substring(start + 1, end) + "]";
+        } else {
+            return selector.isEmpty() ? ":" + right : selector + ":" + right;
         }
     }
 
@@ -259,6 +309,9 @@ public class CssRule {
      */
     public static String extractByCss(String html, String cssRule, int index) {
         if (html == null || html.isEmpty() || !isCssRule(cssRule)) return "";
+        // 剥去 +( 和 +) 拼接包装（如 +(+p:a->href+) → p:a->href）
+        cssRule = stripConcatWrap(cssRule);
+        if (!isCssRule(cssRule)) return "";
         try {
             CssRuleInfo info = parseRule(cssRule);
             if (info == null) return "";
