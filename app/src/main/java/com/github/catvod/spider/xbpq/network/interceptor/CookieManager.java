@@ -69,7 +69,7 @@ public class CookieManager implements HttpClient.HttpInterceptor, CookieJar {
             if (httpUrl == null) return;
 
             String domain = httpUrl.host();
-            String path = httpUrl.path() != null ? httpUrl.path() : "/";
+            String path = httpUrl.encodedPath() != null ? httpUrl.encodedPath() : "/";
 
             // 解析Cookie
             Cookie.Builder builder = new Cookie.Builder()
