@@ -285,7 +285,7 @@ public class XBPQ extends Spider {
             return "";
         }
         final int timeout = resolveTimeout(timeoutKey);
-        return doWithRetry(url, () -> client().string(url, headers, timeout));
+        return doWithRetry(url, () -> httpClient().string(url, headers, timeout));
     }
 
     /** 解析超时配置（默认 10 秒，可按 timeoutKey 指定规则键） */
@@ -334,11 +334,11 @@ public class XBPQ extends Spider {
 
     /** 是否应拦截该 URL（内网/保留地址且未显式允许内网访问） */
     private boolean isSsrfBlocked(String url) {
-        if (!client().isInternalUrl(url)) return false;
+        if (!httpClient().isInternalUrl(url)) return false;
         return !"1".equals(getVal("allow_internal"));
     }
 
-    public static HttpClient client() {
+    public static HttpClient httpClient() {
         if (httpClient == null) {
             httpClient = new OkHttpWrapper();
             httpClient.addInterceptor(new WafBypassInterceptor());
@@ -1088,7 +1088,7 @@ public class XBPQ extends Spider {
             Map<String, String> h = new HashMap<>();
             if (headers != null) h.putAll(headers);
             h.put("Content-Type", "application/x-www-form-urlencoded");
-            String resp = client().string(url, h, body);
+            String resp = httpClient().string(url, h, body);
             return resp != null ? resp : "";
         } catch (Exception e) {
             SpiderDebug.log("POST 请求失败: " + url + " " + e.getMessage());
@@ -1273,7 +1273,7 @@ public class XBPQ extends Spider {
             decodedUrl = danmuUrl;
         }
         // proxy 入口由播放器/外部传入 URL，属不可信输入，强制 SSRF 防护（不受 allow_internal 影响）
-        if (client().isInternalUrl(decodedUrl)) {
+        if (httpClient().isInternalUrl(decodedUrl)) {
             SpiderDebug.log("proxy SSRF 拦截: " + decodedUrl);
             return new Object[]{403, "text/plain; charset=utf-8",
                     new java.io.ByteArrayInputStream("forbidden".getBytes("UTF-8"))};
