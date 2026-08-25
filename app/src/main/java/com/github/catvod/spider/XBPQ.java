@@ -260,10 +260,12 @@ public class XBPQ extends Spider {
         if (json == null || json.isEmpty()) return;
         JSONObject obj = JsonParser.safeParseObject(json);
         if (obj == null) return;
-        for (int i = 0; i < obj.length(); i++) {
-            String key = obj.name(i);
-            String value = obj.optString(key, "");
-            if (!value.isEmpty()) headers.put(key, value);
+        String[] keys = obj.names();
+        if (keys != null) {
+            for (String key : keys) {
+                String value = obj.optString(key, "");
+                if (!value.isEmpty()) headers.put(key, value);
+            }
         }
     }
 
