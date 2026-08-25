@@ -292,8 +292,9 @@ public class JsonParser {
                     flattenRecursive((JSONObject) val, fullKey, target);
                 } else if (val instanceof JSONArray) {
                     flattenRecursive((JSONArray) val, fullKey, target);
-            } else {
-                target.put(fullKey, val);
+                } else {
+                    target.put(fullKey, val);
+                }
             }
         }
     }
