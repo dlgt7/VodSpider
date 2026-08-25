@@ -338,7 +338,7 @@ public class XBPQ extends Spider {
         return !"1".equals(getVal("allow_internal"));
     }
 
-    private static HttpClient client() {
+    public static HttpClient client() {
         if (httpClient == null) {
             httpClient = new OkHttpWrapper();
             httpClient.addInterceptor(new WafBypassInterceptor());
