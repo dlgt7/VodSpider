@@ -131,12 +131,13 @@ public class XBPQ extends Spider {
     public void init(Context context, String extend) throws Exception {
         super.init(context, extend);
         this.ext = extend;
-        this.rule = new JSONObject();
+        // 不在这里预初始化 rule，让 fetchRule() 懒加载规则
     }
 
     /** 懒加载规则：extend 为 http 链接时先拉取远程规则（synchronized 防并发首次调用重复拉取） */
     protected synchronized void fetchRule() {
-        if (rule != null || ext == null) return;
+        if (ext == null) return;
+        if (rule != null && rule.length() > 0) return;
         try {
             String content = ext.startsWith("http") ? fetchUrl(ext, null) : ext;
             rule = RuleConfig.convertChineseKeys(JsonParser.parseObject(content));
