@@ -3,6 +3,9 @@ package com.github.catvod.spider;
 import android.content.Context;
 import android.util.Base64;
 
+import com.github.catvod.bean.Class;
+import com.github.catvod.bean.Filter;
+import com.github.catvod.bean.Result;
 import com.github.catvod.crawler.Spider;
 import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.spider.xbpq.config.CssRule;
@@ -23,9 +26,12 @@ import com.github.catvod.spider.xbpq.parser.JsonParser;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.math.BigInteger;
 import java.net.URLEncoder;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -121,12 +127,15 @@ public class XBPQ extends Spider {
     private static final Pattern P_JS_BYTE = Pattern.compile("(?i)%([0-9a-f]{2})");
 
     // ==================== 实例状态 ====================
+    // volatile：五大内容方法可能被框架并发调用，规则加载后的可见性由 JMM 保证
+    //（原实现每次调用都进 synchronized 方法，锁释放隐式保证可见性但有无谓锁开销）
     private String ext;
-    private JSONObject rule;
+    private volatile JSONObject rule;
+    private String cachedHost; // absUrl 结果缓存，避免每次重复 hostOf(getHomeUrl())
     private static HttpClient httpClient;
-    private boolean reverse;
-    private boolean mergeLines;
-    private boolean hotRecommend;
+    private volatile boolean reverse;
+    private volatile boolean mergeLines;
+    private volatile boolean hotRecommend;
 
     // ==================== 初始化 ====================
 
@@ -137,32 +146,40 @@ public class XBPQ extends Spider {
         // 不在这里预初始化 rule，让 fetchRule() 懒加载规则
     }
 
-    /** 懒加载规则：extend 为 http 链接时先拉取远程规则（synchronized 防并发首次调用重复拉取） */
-    protected synchronized void fetchRule() {
+    /**
+     * 懒加载规则：extend 为 http 链接时先拉取远程规则。
+     * <p>
+     * 优化：原实现为 synchronized 方法，五大内容方法每次调用都进入锁。
+     * 现改为双重检查锁定——规则已加载时走无锁快速路径（volatile 读），
+     * 仅首次加载在临界区内完成，远程规则不会被并发重复拉取。
+     */
+    protected void fetchRule() {
+        if (rule != null) return;  // 快速路径：规则已加载
         if (ext == null) return;
-        if (rule != null && rule.length() > 0) return;
-        try {
-            // 防御：ext 可能为 null/空 字符串拼接成空内容导致 NPE
-            String content = (ext != null && ext.startsWith("http")) ? fetchUrl(ext, null) : (ext != null ? ext : "");
-            if (content.isEmpty()) {
-                SpiderDebug.log("规则内容为空: " + ext);
+        synchronized (this) {
+            if (rule != null && rule.length() > 0) return;
+            try {
+                String content = ext.startsWith("http") ? fetchUrl(ext, null) : ext;
+                if (content == null || content.isEmpty()) {
+                    SpiderDebug.log("规则内容为空: " + ext);
+                    return;
+                }
+                rule = RuleConfig.convertChineseKeys(JsonParser.parseObject(content));
+            } catch (Exception e) {
+                SpiderDebug.log("规则解析失败: " + e.getMessage());
+                // 不设置 rule，保持 null，允许后续重试
                 return;
             }
-            rule = RuleConfig.convertChineseKeys(JsonParser.parseObject(content));
-        } catch (Exception e) {
-            SpiderDebug.log("规则解析失败: " + e.getMessage());
-            // 不设置 rule，保持 null，允许后续重试
-            return;
+            // Maccms 自动猜测（借鉴 XBiu.guess_rule_* 思想）：
+            // 当规则内容标记 auto_maccms=1 且关键字段缺失时，注入 Maccms 默认规则
+            // 使极简规则可正常工作
+            if (rule != null && "1".equals(RuleConfig.getRuleVal(rule, "auto_maccms"))) {
+                applyMaccmsDefaults(rule);
+            }
+            reverse = "1".equals(RuleConfig.getRuleVal(rule, "reverse"));
+            mergeLines = "1".equals(RuleConfig.getRuleVal(rule, "merge_lines"));
+            hotRecommend = "1".equals(RuleConfig.getRuleVal(rule, "hot_recommend"));
         }
-        // Maccms 自动猜测（借鉴 XBiu.guess_rule_* 思想）：
-        // 当规则内容标记 auto_maccms=1 且关键字段缺失时，注入 Maccms 默认规则
-        // 使极简规则可正常工作
-        if (rule != null && "1".equals(RuleConfig.getRuleVal(rule, "auto_maccms"))) {
-            applyMaccmsDefaults(rule);
-        }
-        reverse = "1".equals(RuleConfig.getRuleVal(rule, "reverse"));
-        mergeLines = "1".equals(RuleConfig.getRuleVal(rule, "merge_lines"));
-        hotRecommend = "1".equals(RuleConfig.getRuleVal(rule, "hot_recommend"));
     }
 
     /**
@@ -462,6 +479,10 @@ public class XBPQ extends Spider {
         return out;
     }
 
+    /** 标题噪声后缀预编译（cleanTitle 热点：列表/搜索每条结果都调用，避免每次重编译正则） */
+    private static final Pattern P_TITLE_NOISE = Pattern.compile(
+            "[\\(\\[（【]\\s*(高清|HD|BD|TC|DVDrip|评分\\d+(\\.\\d+)?)\\s*[\\)\\]）】]");
+
     /**
      * 标题/备注清洗（借鉴 Hgdj.cleanName / Glod.cleanTitle 思路）：
      * 去除《》、首尾空格、常见的 "高清"、"评分N.N" 等质量/分数噪声后缀。
@@ -470,8 +491,7 @@ public class XBPQ extends Spider {
         if (title == null) return "";
         String out = title.trim().replace("《", "").replace("》", "");
         // 去除形如 "(高清)" / "[HD]" / "评分8.5" 等常见尾缀
-        out = out.replaceAll("[\\(\\[（【]\\s*(高清|HD|BD|TC|DVDrip|评分\\d+(\\.\\d+)?)\\s*[\\)\\]）】]", "")
-                 .trim();
+        out = P_TITLE_NOISE.matcher(out).replaceAll("").trim();
         return out;
     }
 
@@ -509,6 +529,20 @@ public class XBPQ extends Spider {
             if (lower.contains(mark)) return true;
         }
         return false;
+    }
+
+    /**
+     * 图片代理转换（借鉴 XYQBiu.fixCover）。
+     * 当 PicNeedProxy=1 时，将图片地址转换为 proxy://do=XBPQ 代理形式，
+     * 使图片可经框架代理后展示，兼容防盗链图片。
+     */
+    private String fixCover(String cover, String site) {
+        try {
+            return "proxy://do=XBPQ&site=" + site + "&pic=" + URLEncoder.encode(cover, "UTF-8");
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+        }
+        return cover;
     }
 
     /** PC UA */
@@ -672,43 +706,131 @@ public class XBPQ extends Spider {
         try {
             fetchRule();
             if (rule == null) return "";
-            JSONObject result = new JSONObject();
-            result.put("class", buildClassList());
 
-            // 二级目录：部分分类标记为 folder 模式（folder-0-0-H），不进入 class 列表
+            // 读取动态筛选配置（借鉴 XYQHiker / XYQBiu homeContent）
+            String classNamesCfg = getVal("class_name");
+            String classValuesCfg = getVal("class_value");
+            String fclass_name = getVal("fclass_name");
+            String fclass_value = getVal("fclass_value");
+            String fcatelog_name = getVal("fcatelog_name");
+            String fcatelog_value = getVal("fcatelog_value");
+            String farea_name = getVal("farea_name");
+            String farea_value = getVal("farea_value");
+            String fyear_name = getVal("fyear_name");
+            String fyear_value = getVal("fyear_value");
+            String flang_name = getVal("flang_name");
+            String flang_value = getVal("flang_value");
+            String fsort_name = getVal("fsort_name");
+            String fsort_value = getVal("fsort_value");
+            if (fsort_name.isEmpty()) fsort_name = "时间&人气&评分";
+            if (fsort_value.isEmpty()) fsort_value = "time&hits&score";
+
+            // 分类列表
+            List<Class> classes = new ArrayList<>();
+            JSONArray rawClasses = buildClassList();
+            for (int i = 0; i < rawClasses.length(); i++) {
+                JSONObject cls = rawClasses.getJSONObject(i);
+                classes.add(new Class(
+                        cls.optString("type_id", ""),
+                        cls.optString("type_name", "")));
+            }
+
+            // 二级目录过滤
             String twoLevelDir = getVal("二级目录");
             if (!twoLevelDir.isEmpty() && twoLevelDir.contains("|")) {
                 String folders = twoLevelDir.split("\\|")[0].trim();
                 String mode = twoLevelDir.contains("|") ? twoLevelDir.substring(twoLevelDir.indexOf("|") + 1) : "";
                 if (mode.contains("folder")) {
-                    // 从 class 列表中移除被标记为 folder 的分类
-                    JSONArray filtered = new JSONArray();
-                    JSONArray classArr = result.optJSONArray("class");
-                    if (classArr != null) {
-                        for (int i = 0; i < classArr.length(); i++) {
-                            JSONObject cls = classArr.getJSONObject(i);
-                            String typeName = cls.optString("type_name", "");
-                            boolean isFolder = false;
-                            for (String folder : folders.split(",")) {
-                                if (typeName.contains(folder.trim())) { isFolder = true; break; }
-                            }
-                            if (!isFolder) filtered.put(cls);
+                    List<Class> filtered = new ArrayList<>();
+                    for (Class c : classes) {
+                        boolean isFolder = false;
+                        for (String folder : folders.split(",")) {
+                            if (c.getTypeName().contains(folder.trim())) { isFolder = true; break; }
                         }
+                        if (!isFolder) filtered.add(c);
                     }
-                    result.put("class", filtered);
+                    classes = filtered;
                 }
             }
 
+            // 筛选处理（filterdata 远程/EXT/内置）
+            JSONObject filters = null;
             if (filter) {
-                JSONObject filters = extractFilters();
-                if (filters != null && filters.length() > 0) result.put("filters", filters);
+                String filterdata = getVal("filterdata");
+
+                if (filterdata.startsWith("clan://") || filterdata.startsWith("http") || filterdata.startsWith("./")) {
+                    // 远程加载筛选 JSON
+                    try {
+                        String resp = fetchUrl(filterdata, null).trim();
+                        if (resp.startsWith("{") && resp.endsWith("}")) {
+                            filters = new JSONObject(resp);
+                        }
+                    } catch (Exception e) {
+                        SpiderDebug.log("filterdata 远程加载失败: " + e.getMessage());
+                    }
+                } else if ("EXT".equalsIgnoreCase(filterdata)) {
+                    // 动态构建筛选（借鉴 XYQHiker buildFilter）
+                    LinkedHashMap<String, List<Filter>> filterMap = buildFilter(
+                            classValuesCfg, getVal("class_url"),
+                            fclass_name, fclass_value,
+                            fcatelog_name, fcatelog_value,
+                            farea_name, farea_value,
+                            fyear_name, fyear_value,
+                            flang_name, flang_value,
+                            fsort_name, fsort_value);
+                    if (filterMap != null && !filterMap.isEmpty()) {
+                        filters = new JSONObject(new com.google.gson.Gson().toJson(filterMap));
+                    }
+                } else if (!filterdata.isEmpty()) {
+                    // 内置 filter JSON 对象（兼容旧写法）
+                    Object raw = rule.opt("filter");
+                    if (raw instanceof JSONObject) {
+                        filters = (JSONObject) raw;
+                    }
+                } else {
+                    // 无 filterdata 但配置了动态筛选字段时，也构建 EXT 筛选
+                    String classUrlTpl = getVal("class_url");
+                    boolean hasPlaceholders = classUrlTpl.contains("{class}") || classUrlTpl.contains("{area}")
+                            || classUrlTpl.contains("{year}") || classUrlTpl.contains("{lang}")
+                            || classUrlTpl.contains("{by}") || classUrlTpl.contains("{cateId}");
+                    if (hasPlaceholders) {
+                        LinkedHashMap<String, List<Filter>> filterMap = buildFilter(
+                                classValuesCfg, classUrlTpl,
+                                fclass_name, fclass_value,
+                                fcatelog_name, fcatelog_value,
+                                farea_name, farea_value,
+                                fyear_name, fyear_value,
+                                flang_name, flang_value,
+                                fsort_name, fsort_value);
+                        if (filterMap != null && !filterMap.isEmpty()) {
+                            filters = new JSONObject(new com.google.gson.Gson().toJson(filterMap));
+                        }
+                    } else {
+                        // 降级：尝试从 rule 中取 filter
+                        Object raw = rule.opt("filter");
+                        if (raw instanceof JSONObject) {
+                            filters = (JSONObject) raw;
+                        }
+                    }
+                }
             }
 
-            if (hotRecommend) {
-                JSONArray videos = fetchHotRecommend();
-                if (videos != null && videos.length() > 0) result.put("list", videos);
+            // 构建结果
+            if (filter && filters != null) {
+                return Result.string(classes, filters).toString();
             }
-            return result.toString();
+            // 热门推荐：参考 XYQHiker 将 hot 列表挂入 result.list 后返回
+            if (hotRecommend) {
+                try {
+                    JSONArray hot = fetchHotRecommend();
+                    if (hot.length() > 0) {
+                        JSONObject out = Result.get().classes(classes).result();
+                        out.put("list", hot);
+                        return out.toString();
+                    }
+                } catch (Exception ignored) {}
+            }
+            return Result.get().classes(classes).string();
         } catch (Exception e) {
             SpiderDebug.log(e);
             return "";
@@ -857,6 +979,87 @@ public class XBPQ extends Spider {
         return JsonParser.safeParseObject(String.valueOf(raw));
     }
 
+    /**
+     * 动态筛选构建（借鉴 XYQHiker.buildFilter）。
+     * 遍历每个分类，根据 class_url 模板中的占位符（{class}/{area}/{year}/{lang}/{by}）
+     * 生成对应的筛选组。name=="*" 时用 id 作为显示名；含 "||" 时按索引分割。
+     */
+    private LinkedHashMap<String, List<Filter>> buildFilter(String categoryValues, String urlTemplate,
+            String fclassId, String fclassName,
+            String fcatelogId, String fcatelogName,
+            String fareaId, String fareaName,
+            String fyearId, String fyearName,
+            String flangId, String flangName,
+            String fsortId, String fsortName) {
+        try {
+            LinkedHashMap<String, List<Filter>> result = new LinkedHashMap<>();
+            String[] rawCategories = categoryValues.split("&");
+            for (int i = 0; i < rawCategories.length; i++) {
+                String catValue = rawCategories[i].trim().replaceAll("＆＆", "&");
+                if (catValue.isEmpty()) continue;
+                List<Filter> filters = new ArrayList<>();
+
+                // class（子分类）
+                if (!fclassId.isEmpty() && !fclassName.isEmpty() && urlTemplate.contains("{class}")) {
+                    String displayName = fclassName.equals("*") ? fclassId : fclassName;
+                    filters.add(buildFilterEntry("class", "类型", fclassId, displayName));
+                }
+                // area（地区）
+                if (!fareaId.isEmpty() && !fareaName.isEmpty() && urlTemplate.contains("{area}")) {
+                    String displayName = fareaName.equals("*") ? fareaId : fareaName;
+                    filters.add(buildFilterEntry("area", "地区", fareaId, displayName));
+                }
+                // year（年份）
+                if (!fyearId.isEmpty() && !fyearName.isEmpty() && urlTemplate.contains("{year}")) {
+                    String displayName = fyearName.equals("*") ? fyearId : fyearName;
+                    filters.add(buildFilterEntry("year", "年份", fyearId, displayName));
+                }
+                // lang（语言）
+                if (!flangId.isEmpty() && !flangName.isEmpty() && urlTemplate.contains("{lang}")) {
+                    String displayName = flangName.equals("*") ? flangId : flangName;
+                    filters.add(buildFilterEntry("lang", "语言", flangId, displayName));
+                }
+                // by（排序）
+                if (!fsortId.isEmpty() && !fsortName.isEmpty() && urlTemplate.contains("{by}")) {
+                    String displayName = fsortName.equals("*") ? fsortId : fsortName;
+                    filters.add(buildFilterEntry("by", "排序", fsortId, displayName));
+                }
+                // cateId（分类本身）
+                if (!urlTemplate.contains("{cateId}") || !catValue.isEmpty()) {
+                    // 当 URL 中有 {cateId} 时加入分类筛选
+                    filters.add(buildFilterEntry("cateId", "分类", catValue, catValue));
+                }
+
+                result.put(catValue, filters);
+            }
+            return result;
+        } catch (Exception e) {
+            SpiderDebug.log("buildFilter 出错: " + e.getMessage());
+            return null;
+        }
+    }
+
+    /** 构建单个 Filter 条目 */
+    private Filter buildFilterEntry(String key, String nameLabel, String valueVal, String nameVal) {
+        try {
+            List<Filter.Value> values = new ArrayList<>();
+            values.add(new Filter.Value("全部", ""));
+            if (!valueVal.contains("&") && !valueVal.equals("空")) {
+                values.add(new Filter.Value(nameVal, valueVal.replaceAll("＆＆", "&")));
+            } else if (valueVal.contains("&") && !valueVal.equals("空")) {
+                String[] nameParts = nameVal.split("&");
+                String[] valueParts = valueVal.split("&");
+                for (int i = 0; i < nameParts.length && i < valueParts.length; i++) {
+                    values.add(new Filter.Value(nameParts[i], valueParts[i].replaceAll("＆＆", "&")));
+                }
+            }
+            return new Filter(key, nameLabel, values);
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+            return null;
+        }
+    }
+
     /** 热门推荐：抓取主页并用列表规则提取 */
     private JSONArray fetchHotRecommend() throws Exception {
         String homeUrl = getHomeUrl();
@@ -883,10 +1086,49 @@ public class XBPQ extends Spider {
             String body = fetchUrl(url, buildHeaders(null));
             if (body.isEmpty()) return "";
 
-            JSONArray videos = ExtractorFactory
-                    .createVideoListExtractor(CssRule.isCssRule(getVal("list_array")))
-                    .extract(body, rule);
+            JSONArray videos;
+            String catMode = getVal("cat_mode");
+            // cat_mode=0：JSON 模式（借鉴 XYQBiu categoryContent 第237-280行）
+            if ("0".equals(catMode)) {
+                videos = parseCatJsonMode(body, url);
+            } else {
+                videos = ExtractorFactory
+                        .createVideoListExtractor(CssRule.isCssRule(getVal("list_array")))
+                        .extract(body, rule);
+            }
             if (videos == null) videos = new JSONArray();
+
+            // cat_prefix / cat_suffix：对 vod_id 中的链接加前缀后缀（借鉴 XYQBiu 第254/308行）
+            String catPrefix = getVal("cat_prefix");
+            String catSuffix = getVal("cat_suffix");
+            if (!catPrefix.isEmpty() || !catSuffix.isEmpty()) {
+                for (int i = 0; i < videos.length(); i++) {
+                    JSONObject v = videos.getJSONObject(i);
+                    String rawId = v.optString("vod_id", "");
+                    // vod_id 格式通常为 "name$$$pic$link"，拆分处理链接部分
+                    int lastSep = rawId.lastIndexOf("$$$");
+                    if (lastSep >= 0) {
+                        String before = rawId.substring(0, lastSep + 3);
+                        String link = rawId.substring(lastSep + 3);
+                        link = catPrefix + link + catSuffix;
+                        v.put("vod_id", before + link);
+                    }
+                }
+            }
+
+            // cat_subtitle：副标题回填到 vod_remarks
+            String catSubtitle = getVal("cat_subtitle");
+            if (!catSubtitle.isEmpty()) {
+                for (int i = 0; i < videos.length(); i++) {
+                    JSONObject v = videos.getJSONObject(i);
+                    // cat_subtitle 是主列表截取规则中的 subtitle 字段名（非 vod_remarks），
+                    // 若 v 中已含该字段则回填到 vod_remarks
+                    if (v.has(catSubtitle)) {
+                        v.put("vod_remarks", v.optString(catSubtitle, ""));
+                    }
+                }
+            }
+
             videos = applyListPostProcess(videos);
 
             JSONObject result = new JSONObject();
@@ -899,6 +1141,71 @@ public class XBPQ extends Spider {
             SpiderDebug.log(e);
             return "";
         }
+    }
+
+    /**
+     * cat_mode=0 JSON 分类模式（借鉴 XYQBiu 第237-280行）。
+     * 从 JSON 响应中提取 vod 列表，支持 catjsonlist 多级路径（a.b / a.b.c）。
+     * cat_prefix/cat_suffix 加在 id 上；cat_subtitle 填入 vod_remarks。
+     */
+    private JSONArray parseCatJsonMode(String body, String webUrl) throws Exception {
+        JSONObject data = new JSONObject(body);
+        JSONArray vodArray = null;
+        String listPath = getVal("catjsonlist");
+        if (listPath.isEmpty()) listPath = "data";
+        String[] keylen = listPath.split("\\.");
+        if (keylen.length == 1) {
+            vodArray = data.optJSONArray(keylen[0]);
+        } else if (keylen.length == 2) {
+            JSONObject obj = data.optJSONObject(keylen[0]);
+            if (obj != null) vodArray = obj.optJSONArray(keylen[1]);
+        } else if (keylen.length == 3) {
+            JSONObject obj1 = data.optJSONObject(keylen[0]);
+            if (obj1 != null) {
+                JSONObject obj2 = obj1.optJSONObject(keylen[1]);
+                if (obj2 != null) vodArray = obj2.optJSONArray(keylen[2]);
+            }
+        }
+        if (vodArray == null) return new JSONArray();
+
+        String nameKey = getVal("catjsonname");
+        String idKey = getVal("catjsonid");
+        String picKey = getVal("catjsonpic");
+        String stitleKey = getVal("catjsonstitle");
+        String prefix = getVal("cat_prefix");
+        String suffix = getVal("cat_suffix");
+        boolean picNeedProxy = "1".equals(getVal("PicNeedProxy"));
+
+        JSONArray videos = new JSONArray();
+        for (int j = 0; j < vodArray.length(); j++) {
+            try {
+                JSONObject vod = vodArray.getJSONObject(j);
+                String name = vod.optString(nameKey).trim();
+                String id = vod.optString(idKey).trim();
+                id = prefix + id + suffix;
+                String pic = "";
+                if (!picKey.isEmpty()) {
+                    try {
+                        pic = vod.optString(picKey).trim();
+                        pic = absUrl(pic);
+                        if (picNeedProxy) pic = fixCover(pic, webUrl);
+                    } catch (Exception ignored) {}
+                }
+                String mark = "";
+                if (!stitleKey.isEmpty()) {
+                    try { mark = vod.optString(stitleKey).trim(); } catch (Exception ignored) {}
+                }
+                JSONObject v = new JSONObject();
+                v.put("vod_id", name + "$$$" + pic + "$$$" + id);
+                v.put("vod_name", name);
+                v.put("vod_pic", pic);
+                v.put("vod_remarks", mark);
+                videos.put(v);
+            } catch (Exception e) {
+                SpiderDebug.log("cat_mode JSON 解析失败: " + e.getMessage());
+            }
+        }
+        return videos;
     }
 
     /**
@@ -1078,6 +1385,21 @@ public class XBPQ extends Spider {
             if (ids == null || ids.isEmpty()) return "";
             String vid = ids.get(0);
             JSONObject vinfo = decodeVinfo(vid);
+
+            // force_play 直接播放模式（借鉴 XYQBiu / XYQHiker）：跳过详情抓取，直接用 vod_id 中的链接播放
+            String forcePlayCfg = getVal("force_play");
+            if ("1".equals(forcePlayCfg) || "2".equals(forcePlayCfg)) {
+                String rawId = vinfo.optString("vod_id", vid);
+                // vod_id 格式 "name$$$pic$link"，提取最后一部分作为播放链接
+                int lastSep = rawId.lastIndexOf("$$$");
+                String playUrl = lastSep >= 0 ? rawId.substring(lastSep + 3) : rawId;
+                playUrl = getVal("play_prefix") + playUrl + getVal("play_suffix");
+                VodDetail detail = new VodDetail(new VodItem(vinfo));
+                PlaySource src = new PlaySource("直接播放");
+                src.addEpisode(playUrl);
+                detail.setPlaySources(java.util.Collections.singletonList(src));
+                return detail.toJSON();
+            }
 
             String detailUrl = buildDetailUrl(vinfo, vid);
             String body = fetchUrl(detailUrl, buildHeaders(null));
@@ -1351,7 +1673,7 @@ public class XBPQ extends Spider {
         JSONArray lines = ExtractorFactory.createPlayListExtractor(cssMode).extract(body, rule, 0);
         if (lines == null) lines = new JSONArray();
 
-        // 剧集过滤（复用已支持的 episode_filter / 剧集过滤 键，借鉴各爬虫对按钮/广告集的剔除）
+        // 剧集过滤词（支持正则，# 分隔）
         String epFilter = getVal("episode_filter");
         List<String> epFilters = new ArrayList<>();
         if (!epFilter.isEmpty()) {
@@ -1360,22 +1682,65 @@ public class XBPQ extends Spider {
             }
         }
 
+        // 选集链接前缀/后缀（epiurl_prefix/epiurl_suffix）
+        String epiPrefix = getVal("epiurl_prefix");
+        String epiSuffix = getVal("epiurl_suffix");
+
+        // sort 自定义排序：线路名规则含 [排序:xxx] 时按顺序重排
+        // 格式示例：[排序:第一站,第二站,第三站]
         for (int i = 0; i < lines.length(); i++) {
             JSONObject line = lines.getJSONObject(i);
-            PlaySource source = new PlaySource(line.optString("name", "线路" + (i + 1)));
+            String lineName = line.optString("name", "线路" + (i + 1));
             JSONArray episodes = line.optJSONArray("episodes");
             if (episodes == null) continue;
+
+            // 应用 epiurl_prefix/epiurl_suffix
+            List<String> epList = new ArrayList<>();
             for (int j = 0; j < episodes.length(); j++) {
                 String ep = episodes.getString(j);
-                // 剧集过滤：标题或链接命中过滤词则跳过
+                // 过滤
                 boolean blocked = false;
                 for (String w : epFilters) {
                     if (ep.contains(w)) { blocked = true; break; }
                 }
                 if (blocked) continue;
-                source.addEpisode(ep);
+                // 应用前缀后缀
+                if (!epiPrefix.isEmpty()) ep = epiPrefix + ep;
+                if (!epiSuffix.isEmpty()) ep = ep + epiSuffix;
+                epList.add(ep);
             }
-            sources.add(source);
+            if (epList.isEmpty()) continue;
+            sources.add(new PlaySource(lineName, epList));
+        }
+
+        // 支持线路 sort 排序（借鉴 XYQHiker 的 [排序:] 语法）
+        String fromArrayRule = getVal("from_array");
+        if (fromArrayRule.contains("[排序:") && sources.size() > 1) {
+            String sortStr = fromArrayRule.split("\\[排序:")[1].split("\\]")[0];
+            List<String> sortOrder = new ArrayList<>();
+            for (String w : sortStr.split(",")) {
+                if (!w.trim().isEmpty()) sortOrder.add(w.trim());
+            }
+            if (!sortOrder.isEmpty()) {
+                List<PlaySource> sorted = new ArrayList<>();
+                for (String keyword : sortOrder) {
+                    for (PlaySource src : sources) {
+                        if (src.getName().contains(keyword)) {
+                            sorted.add(src);
+                            break;
+                        }
+                    }
+                }
+                // 未在排序列表中的线路追加到末尾
+                for (PlaySource src : sources) {
+                    boolean found = false;
+                    for (PlaySource s : sorted) {
+                        if (s.getName().equals(src.getName())) { found = true; break; }
+                    }
+                    if (!found) sorted.add(src);
+                }
+                sources = sorted;
+            }
         }
 
         if (mergeLines && sources.size() > 1) {
@@ -1387,14 +1752,14 @@ public class XBPQ extends Spider {
             sources.add(merged);
         }
 
-        // 空线路兜底（借鉴 DJhub 的 "暂无播放地址$0" 思想）：提取不到任何集时，
-        // 若规则配置了 empty_play_url（中文 空播放兜底），则补一条占位线路，
-        // 避免播放页空白。默认不配置则保持原行为（空列表）。
+        // 空线路兜底
         if (sources.isEmpty()) {
             String emptyPlay = getVal("empty_play_url");
             if (!emptyPlay.isEmpty()) {
                 PlaySource src = new PlaySource(getVal("empty_play_from").isEmpty()
                         ? "暂无播放" : getVal("empty_play_from"));
+                if (!epiPrefix.isEmpty()) emptyPlay = epiPrefix + emptyPlay;
+                if (!epiSuffix.isEmpty()) emptyPlay = emptyPlay + epiSuffix;
                 src.addEpisode(emptyPlay);
                 sources.add(src);
             }
@@ -1417,6 +1782,12 @@ public class XBPQ extends Spider {
             String template = getVal("search_url");
             if (template.isEmpty() || keyword == null || keyword.isEmpty()) return "";
 
+            // sea_firstpage：搜索起始页码偏移（借鉴 XYQHiker 第2722-2732行）
+            String seaFirstPage = getVal("sea_firstpage");
+            int firstPageOffset = parseIntSafe(seaFirstPage, 1);
+            int pgNum = parseIntSafe(pg, 1);
+            String pageStr = String.valueOf(firstPageOffset + pgNum - 1);
+
             // POST 模式：search_url 含 ;post 后缀
             boolean isPost = template.contains(";post");
             String baseUrl;
@@ -1427,10 +1798,31 @@ public class XBPQ extends Spider {
                 String rest = template.substring(idx + ";post".length());
                 if (rest.startsWith(";")) rest = rest.substring(1);
                 postBody = rest.replace("{wd}", URLEncoder.encode(keyword, "UTF-8"))
-                              .replace("{pg}", pg);
+                              .replace("{pg}", pageStr);
             } else {
                 baseUrl = template;
             }
+            baseUrl = expandVariables(baseUrl);
+
+            // 搜索链接前后缀（借鉴 XYQHiker 第2867-2868行）
+            String searchPrefix = getVal("search_prefix");
+            String searchSuffix = getVal("search_suffix");
+
+            // 时间戳占位符替换（借鉴 XYQHiker 第2764-2767行）
+            String unixTs = String.valueOf(System.currentTimeMillis() / 1000L);
+            String milliTs = String.valueOf(System.currentTimeMillis());
+            baseUrl = baseUrl.replace("时间戳", unixTs).replace("时间标", milliTs);
+
+            // md5 加密占位符（借鉴 XYQHiker 第2769-2775行）：md5(内容) → MD5哈希
+            int md5Idx;
+            while ((md5Idx = baseUrl.indexOf("md5(")) >= 0) {
+                int endParen = baseUrl.indexOf(")", md5Idx);
+                if (endParen < 0) break;
+                String md5Content = baseUrl.substring(md5Idx + 4, endParen);
+                String md5Hash = computeMd5(md5Content);
+                baseUrl = baseUrl.substring(0, md5Idx) + md5Hash + baseUrl.substring(endParen + 1);
+            }
+
             baseUrl = absUrl(baseUrl);
 
             String body;
@@ -1441,7 +1833,8 @@ public class XBPQ extends Spider {
                 String url = baseUrl
                         .replace("${wd}", URLEncoder.encode(keyword, "UTF-8"))
                         .replace("{wd}", URLEncoder.encode(keyword, "UTF-8"))
-                        .replace("{pg}", pg);
+                        .replace("{pg}", pageStr);
+                url = searchPrefix + url + searchSuffix;
                 body = fetchUrl(url, buildHeaders("search_header"));
             }
             if (body.isEmpty()) return "";
@@ -1480,6 +1873,17 @@ public class XBPQ extends Spider {
         } catch (Exception e) {
             SpiderDebug.log(e);
             return "";
+        }
+    }
+
+    /** 计算 MD5 哈希（借鉴 XYQHiker ParseUtils.md5Hex） */
+    private static String computeMd5(String input) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("MD5");
+            byte[] digest = md.digest(input.getBytes("UTF-8"));
+            return String.format("%032x", new BigInteger(1, digest));
+        } catch (Exception e) {
+            return input;
         }
     }
 
@@ -1538,7 +1942,21 @@ public class XBPQ extends Spider {
             try {
                 Map<String, String> h = new HashMap<>();
                 if (headers != null) h.putAll(headers);
-                h.put("Content-Type", "application/x-www-form-urlencoded");
+                // 修复：仅当调用方未显式指定 Content-Type 时补默认表单类型，
+                // 避免 search_header 中配置的 JSON Content-Type 被覆盖
+                //（与 HttpRequest.toPostRequest 的"请求头优先"策略保持一致）
+                boolean hasContentType = false;
+                if (headers != null) {
+                    for (String k : headers.keySet()) {
+                        if (k != null && k.equalsIgnoreCase("Content-Type")) {
+                            hasContentType = true;
+                            break;
+                        }
+                    }
+                }
+                if (!hasContentType) {
+                    h.put("Content-Type", "application/x-www-form-urlencoded");
+                }
                 String resp = httpClient().string(url, h, body);
                 return resp != null ? resp : "";
             } catch (Exception e) {
@@ -1597,25 +2015,42 @@ public class XBPQ extends Spider {
             fetchRule();
             if (rule == null) return "";
             if (url == null) url = "";
+
+            // P2P 链接（magnet/ed2k）直接交给播放器，不走 HTTP
+            if (isP2PUrl(url)) {
+                return appendDanmu(directResult(url));
+            }
+
             JSONObject result;
+            String forcePlay = getVal("force_play");
+            boolean enforcePlay = "1".equals(forcePlay) || "2".equals(forcePlay);
+
+            if (enforcePlay) {
+                // 强制直接播放模式：拼接前缀后缀后直接输出
+                String finalUrl = getVal("play_prefix") + url + getVal("play_suffix");
+                if (isVip(finalUrl, vipFlags)) {
+                    result = vipResult(finalUrl);
+                } else if (isVideoUrl(finalUrl)) {
+                    result = directResult(finalUrl);
+                } else {
+                    result = sniffResult(finalUrl);
+                }
+                return appendDanmu(result);
+            }
 
             // 1. 直链视频 → 直接播放
             if (isVideoUrl(url)) {
                 result = directResult(url);
             } else {
-                String forcePlay = getVal("force_play");
-                if ("1".equals(forcePlay)) {
-                    // 2. 强制直接播放模式：链接直接交给播放器（不再重复判断isVideoUrl）
-                    result = directResult(url);
-                } else if (!getVal("jump_url").isEmpty()) {
-                    // 3. 跳转播放：抓取播放页并按规则提取真实地址
+                if (!getVal("jump_url").isEmpty()) {
+                    // 2. 跳转播放：抓取播放页并按规则提取真实地址
                     result = tryJumpPlay(url);
                     if (result == null) result = sniffResult(url);
                 } else if ("1".equals(getVal("manualVideoCheck"))) {
-                    // 4. 免嗅探：直接交给播放器
+                    // 3. 免嗅探：直接交给播放器
                     result = directResult(url);
                 } else {
-                    // 5. 嗅探兜底
+                    // 4. 嗅探兜底
                     result = sniffResult(url);
                 }
             }
@@ -1624,6 +2059,38 @@ public class XBPQ extends Spider {
             SpiderDebug.log(e);
             return "";
         }
+    }
+
+    /** 返回 VIP 解析结果（parse:1 jx:1） */
+    private JSONObject vipResult(String url) throws Exception {
+        JSONObject result = new JSONObject();
+        result.put("parse", 1);
+        result.put("jx", "1");
+        result.put("url", url);
+        return result;
+    }
+
+    /**
+     * 判断是否为需要 VIP 解析的视频源。
+     * <p>
+     * 修复说明：原实现完全忽略 vipFlags 参数，仅匹配 4 个硬编码域名。
+     * 现优先消费框架传入的 vipFlags（站点配置的 vip 标志列表，如
+     * ["iqiyi","优酷","m3u8"]），URL 命中任一关键词即走解析；
+     * 未配置/未命中时回退内置域名表（vip.ffzy/vip.lz/hd.lz/suonizy）。
+     */
+    private boolean isVip(String url, List<String> vipFlags) {
+        if (url == null) return false;
+        if (vipFlags != null && !vipFlags.isEmpty()) {
+            for (String flag : vipFlags) {
+                if (flag != null && !flag.trim().isEmpty() && url.contains(flag.trim())) {
+                    return true;
+                }
+            }
+            // vipFlags 配置了但未命中，仍回退到内置域名检查（避免漏判）
+        }
+        String lower = url.toLowerCase();
+        return lower.contains("vip.ffzy") || lower.contains("vip.lz")
+                || lower.contains("hd.lz") || lower.contains("suonizy");
     }
 
     /** 直接播放结果（parse:0），附加播放请求头 */
@@ -1677,16 +2144,25 @@ public class XBPQ extends Spider {
             }
             // Maccms 模板：扫描 var player_aaaa={...} 解析（借鉴 XYQBiu.Anal_MacPlayer）
             // encrypt=1 → URLDecoder.decode  encrypt=2 → Base64 + URLDecoder
+            // Anal_MacPlayer=2 时优先使用正则解析脚本块（借鉴 XYQHiker 完整流程）
             if (target.isEmpty() || !target.contains("http")) {
                 MaccmsPlayer mp = extractMaccmsPlayer(body);
                 if (mp != null && !mp.url.isEmpty()) {
                     target = mp.url;
+                    // link_next：解析到的 url 是 next 地址，继续跳转一次
+                    if (mp.linkNext != null && !mp.linkNext.isEmpty()) {
+                        target = mp.linkNext;
+                    }
                 }
             }
             if (target.isEmpty()) {
                 target = JsParser.matchVideoUrl(body);
             }
             if (target.isEmpty()) return null;
+            // 处理 VIP 源
+            if (isVip(target, null)) {
+                return vipResult(target);
+            }
             return isVideoUrl(target) ? directResult(target) : sniffResult(target);
         } catch (Exception e) {
             SpiderDebug.log("跳转播放失败: " + e.getMessage());
@@ -1694,32 +2170,48 @@ public class XBPQ extends Spider {
         }
     }
 
+    /** Maccms player 变量正则（regexMode 用，预编译避免每次播放重编译） */
+    private static final Pattern P_MACCMS_PLAYER = Pattern.compile(
+            "var\\s+player_\\w+\\s*=\\s*(\\{[^;]+?});", Pattern.DOTALL);
+
     /**
-     * Maccms 播放脚本解析（借鉴 XYQBiu.Anal_MacPlayer）：
+     * Maccms 播放脚本解析（借鉴 XYQBiu.Anal_MacPlayer / XYQHiker）：
      * <p>扫描所有 &lt;script&gt; 中 {@code var player_XXXX = {...}} 的 JSON 配置，
      * 解码 url 字段；支持 encrypt 字段：
      * <ul>
      *   <li>{@code encrypt:1} — URLDecoder.decode</li>
      *   <li>{@code encrypt:2} — Base64.decode + URLDecoder.decode</li>
      * </ul>
+     * 当 Anal_MacPlayer=2 时，使用正则提取脚本块而非 indexOf 遍历（更快更可靠）。
      * 解析失败或 url 为空返回 null。
      */
     private MaccmsPlayer extractMaccmsPlayer(String body) {
         if (body == null || body.isEmpty()) return null;
+        boolean regexMode = "2".equals(getVal("Anal_MacPlayer"));
         try {
-            int pos = 0;
-            while (pos < body.length()) {
-                int p = body.indexOf("var player_", pos);
-                if (p < 0) return null;
-                int braceStart = body.indexOf('{', p);
-                if (braceStart < 0) return null;
-                // 配对花括号，处理嵌套对象（如 "config":{...} 形式）
-                int braceEnd = findMatchingBrace(body, braceStart);
-                if (braceEnd < 0) return null;
-                String jsonText = body.substring(braceStart, braceEnd + 1);
-                MaccmsPlayer mp = parseMaccmsPlayerJson(jsonText);
-                if (mp != null && !mp.url.isEmpty()) return mp;
-                pos = braceEnd + 1;
+            if (regexMode) {
+                // Regex-based extraction (faster, handles minified JS better)
+                Matcher m = P_MACCMS_PLAYER.matcher(body);
+                while (m.find()) {
+                    MaccmsPlayer mp = parseMaccmsPlayerJson(m.group(1));
+                    if (mp != null && !mp.url.isEmpty()) return mp;
+                }
+            } else {
+                // Original indexOf-based traversal
+                int pos = 0;
+                while (pos < body.length()) {
+                    int pi = body.indexOf("var player_", pos);
+                    if (pi < 0) return null;
+                    int braceStart = body.indexOf('{', pi);
+                    if (braceStart < 0) return null;
+                    // 配对花括号，处理嵌套对象（如 "config":{...} 形式）
+                    int braceEnd = findMatchingBrace(body, braceStart);
+                    if (braceEnd < 0) return null;
+                    String jsonText = body.substring(braceStart, braceEnd + 1);
+                    MaccmsPlayer mp = parseMaccmsPlayerJson(jsonText);
+                    if (mp != null && !mp.url.isEmpty()) return mp;
+                    pos = braceEnd + 1;
+                }
             }
         } catch (Exception e) {
             // ignore
@@ -1754,15 +2246,25 @@ public class XBPQ extends Spider {
             MaccmsPlayer mp = new MaccmsPlayer();
             if (obj.has("url")) mp.url = obj.optString("url", "").trim();
             if (obj.has("from")) mp.from = obj.optString("from", "").trim();
+            if (obj.has("link_next")) mp.linkNext = obj.optString("link_next", "").trim();
             if (obj.has("encrypt")) {
                 int encrypt = obj.optInt("encrypt", 0);
                 if (encrypt == 1) {
                     try { mp.url = java.net.URLDecoder.decode(mp.url, "UTF-8"); } catch (Exception ignored) {}
+                    if (!mp.linkNext.isEmpty()) {
+                        try { mp.linkNext = java.net.URLDecoder.decode(mp.linkNext, "UTF-8"); } catch (Exception ignored) {}
+                    }
                 } else if (encrypt == 2) {
                     try {
                         mp.url = new String(android.util.Base64.decode(mp.url, android.util.Base64.DEFAULT), "UTF-8");
                         mp.url = java.net.URLDecoder.decode(mp.url, "UTF-8");
                     } catch (Exception ignored) {}
+                    if (!mp.linkNext.isEmpty()) {
+                        try {
+                            mp.linkNext = new String(android.util.Base64.decode(mp.linkNext, android.util.Base64.DEFAULT), "UTF-8");
+                            mp.linkNext = java.net.URLDecoder.decode(mp.linkNext, "UTF-8");
+                        } catch (Exception ignored) {}
+                    }
                 }
             }
             return mp.url.isEmpty() ? null : mp;
@@ -1775,6 +2277,7 @@ public class XBPQ extends Spider {
     private static class MaccmsPlayer {
         String url = "";
         String from = "";
+        String linkNext = "";
     }
 
     /** 处理可能含百分号编码的 URL */
@@ -1802,9 +2305,6 @@ public class XBPQ extends Spider {
         }
         return "";
     }
-
-    /** 正则规则最大长度（防御性上限，过长规则视为非法丢弃） */
-    private static final int REGEX_RULE_MAX_LEN = 4096;
 
     /**
      * 通用规则提取：css:/css:// 选择器 → && 前后缀截取 → 正则 group(1)
@@ -1912,12 +2412,29 @@ public class XBPQ extends Spider {
         return rule != null && isVideoUrl(url);
     }
 
+    /** 判断 URL 是否为 P2P/非 HTTP 协议链接（磁力/ed2k/迅雷/FTP） */
+    private static boolean isP2PUrl(String url) {
+        if (url == null || url.trim().isEmpty()) return false;
+        String lower = url.trim().toLowerCase();
+        return lower.startsWith("magnet:") || lower.startsWith("ed2k://")
+                || lower.startsWith("thunder://") || lower.startsWith("ftp://")
+                || lower.endsWith(".torrent") || lower.contains(".torrent?");
+    }
+
     /**
      * 判断是否为可直连播放的视频地址：优先 video_format（嗅探词，# 分隔），
-     * 未配置时按常见扩展名判断；video_format 配置后仅匹配命中才返回 true
+     * 未配置时按常见扩展名判断；video_format 配置后仅匹配命中才返回 true。
+     * video_filter（排除词，# 分隔）命中则强制返回 false（借鉴 XYQHiker）。
      */
     private boolean isVideoUrl(String url) {
         if (url == null || url.isEmpty()) return false;
+        // video_filter：排除词（命中则非视频）
+        String filterWords = getVal("video_filter");
+        if (!filterWords.isEmpty()) {
+            for (String word : filterWords.split("#")) {
+                if (word != null && !word.trim().isEmpty() && url.contains(word.trim())) return false;
+            }
+        }
         String sniffWords = getVal("video_format");
         if (!sniffWords.isEmpty()) {
             for (String word : sniffWords.split("#")) {
