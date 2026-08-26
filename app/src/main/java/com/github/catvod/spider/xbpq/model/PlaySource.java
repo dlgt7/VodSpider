@@ -17,6 +17,11 @@ public class PlaySource {
         this.episodes = new ArrayList<>();
     }
 
+    public PlaySource(String name, List<String> episodes) {
+        this.name = name;
+        this.episodes = new ArrayList<>(episodes);
+    }
+
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
     public List<String> getEpisodes() { return episodes; }
