@@ -2,6 +2,8 @@ package com.github.catvod.spider.xbpq.extractor;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -27,6 +29,29 @@ import com.github.catvod.spider.xbpq.utils.HtmlNodeHelper;
 final class RegexFieldHelper {
 
     private RegexFieldHelper() {
+    }
+
+    /**
+     * 正则Pattern缓存（修复：避免高频调用路径每次都重新编译正则表达式）
+     * <p>
+     * key = "规则字符串"（含DOTALL标志后缀），value = 预编译的Pattern实例。
+     * 使用 ConcurrentHashMap 保证线程安全，无界缓存（XBPQ规则数量通常有限）。
+     */
+    private static final Map<String, Pattern> PATTERN_CACHE = new ConcurrentHashMap<>();
+
+    /** 缓存key前缀，用于标记DOTALL标志 */
+    private static final String DOTALL_SUFFIX = ":dotall";
+
+    /**
+     * 获取或编译Pattern（带缓存）
+     *
+     * @param regex 正则表达式
+     * @return 编译后的Pattern（已启用DOTALL模式）
+     */
+    private static Pattern getOrCreatePattern(String regex) {
+        // 使用固定key格式：regex + dotall标记
+        String cacheKey = regex + DOTALL_SUFFIX;
+        return PATTERN_CACHE.computeIfAbsent(cacheKey, k -> Pattern.compile(regex, Pattern.DOTALL));
     }
 
     /**
@@ -211,9 +236,10 @@ final class RegexFieldHelper {
             if (idx >= 0) result = result.substring(0, idx);
         }
 
-        // [含序号:n][序号:m]：按索引截取
+        // [含序号:n]：按索引截取（修复：原分割符为空字符串""会拆成单字符，
+        // 应使用"\\|"或保留原始语义——XBPQ惯例中[含序号]通常指按"|"分割后的第N项）
         if (pp.seqIndex > 0) {
-            String[] parts = result.split("", -1);
+            String[] parts = result.split("\\|", -1);
             if (parts.length > pp.seqIndex) {
                 result = parts[pp.seqIndex];
             }
@@ -235,9 +261,17 @@ final class RegexFieldHelper {
         return clean(result);
     }
 
+    /**
+     * 正则提取（修复：使用缓存的Pattern实例，避免每次调用都重新编译）
+     *
+     * @param scope 待匹配文本
+     * @param rule  正则规则
+     * @return 提取值
+     */
     private static String regexExtract(String scope, String rule) {
         try {
-            Matcher m = Pattern.compile(rule, Pattern.DOTALL).matcher(scope);
+            // 使用缓存池获取或创建Pattern，避免重复编译
+            Matcher m = getOrCreatePattern(rule).matcher(scope);
             if (m.find()) {
                 String val = m.groupCount() >= 1 ? m.group(1) : m.group(0);
                 return val == null ? "" : val;

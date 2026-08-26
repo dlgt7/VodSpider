@@ -42,6 +42,8 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
 
                 int lineIndex = 0;
                 for (Element line : lines) {
+                    // 修复：与 RegexPlayListExtractor 保持一致的编号逻辑
+                    // （先++再命名，确保编号从1开始连续）
                     lineIndex++;
                     String lineName = CssRule.extractByCss(line.outerHtml(), lineTitleRule, 0);
                     if (lineName.isEmpty()) lineName = "线路" + lineIndex;
