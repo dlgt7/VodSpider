@@ -214,6 +214,7 @@ public class XBPQ extends Spider {
 
     /** 读规则值（"空"/"&&"占位视为未配置；rule 为 null 时安全返回默认值） */
     private String getVal(String key) {
+        if (rule == null) return "";
         return stripBackticks(expandVariables(RuleConfig.getRuleVal(rule, key)));
     }
 
