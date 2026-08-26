@@ -824,7 +824,7 @@ public class XBPQ extends Spider {
                 try {
                     JSONArray hot = fetchHotRecommend();
                     if (hot.length() > 0) {
-                        JSONObject out = Result.get().classes(classes).result();
+                        JSONObject out = new JSONObject(Result.get().classes(classes).string());
                         out.put("list", hot);
                         return out.toString();
                     }
