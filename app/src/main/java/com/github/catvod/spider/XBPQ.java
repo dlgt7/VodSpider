@@ -165,6 +165,7 @@ public class XBPQ extends Spider {
                     return;
                 }
                 rule = RuleConfig.convertChineseKeys(JsonParser.parseObject(content));
+                SpiderDebug.log("[XBPQ] 规则加载成功, homeUrl=[" + RuleConfig.getRuleVal(rule, "homeUrl") + "] class_url=[" + RuleConfig.getRuleVal(rule, "class_url") + "]");
             } catch (Exception e) {
                 SpiderDebug.log("规则解析失败: " + e.getMessage());
                 // 不设置 rule，保持 null，允许后续重试
@@ -227,7 +228,9 @@ public class XBPQ extends Spider {
         if (!dynamicDomain.isEmpty()) return expandVariables(dynamicDomain);
         String homeUrlC = getVal("home_url_c");
         if (!homeUrlC.isEmpty()) return expandVariables(homeUrlC);
-        return getVal("homeUrl");
+        String homeUrl = getVal("homeUrl");
+        SpiderDebug.log("[XBPQ] getHomeUrl=[" + homeUrl + "]");
+        return homeUrl;
     }
 
     /**
@@ -740,6 +743,7 @@ public class XBPQ extends Spider {
             // 分类列表
             List<Class> classes = new ArrayList<>();
             JSONArray rawClasses = buildClassList();
+            SpiderDebug.log("[XBPQ] homeContent rawClasses.length=" + rawClasses.length() + " class_url=[" + getVal("class_url") + "]");
             for (int i = 0; i < rawClasses.length(); i++) {
                 JSONObject cls = rawClasses.getJSONObject(i);
                 classes.add(new Class(
