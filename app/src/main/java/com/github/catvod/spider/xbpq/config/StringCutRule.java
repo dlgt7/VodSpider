@@ -213,14 +213,22 @@ public class StringCutRule {
         text = text.replaceAll("&amp;", "&");
 
         // 4. 解码数字实体 &#NNN; 和 &#xHHH;
-        text = text.replaceAll("&#(\\d+);", m -> {
-            try { return String.valueOf((char) Integer.parseInt(m.group(1))); }
-            catch (Exception e) { return m.group(0); }
-        });
-        text = text.replaceAll("&#x([0-9a-fA-F]+);", m -> {
-            try { return String.valueOf((char) Integer.parseInt(m.group(1), 16)); }
-            catch (Exception e) { return m.group(0); }
-        });
+        Matcher m1 = Pattern.compile("&#(\\d+);").matcher(text);
+        StringBuffer sb1 = new StringBuffer();
+        while (m1.find()) {
+            try { m1.appendReplacement(sb1, String.valueOf((char) Integer.parseInt(m1.group(1)))); }
+            catch (Exception ignored) { m1.appendReplacement(sb1, m1.group(0)); }
+        }
+        m1.appendTail(sb1);
+        text = sb1.toString();
+        Matcher m2 = Pattern.compile("&#x([0-9a-fA-F]+);").matcher(text);
+        StringBuffer sb2 = new StringBuffer();
+        while (m2.find()) {
+            try { m2.appendReplacement(sb2, String.valueOf((char) Integer.parseInt(m2.group(1), 16))); }
+            catch (Exception ignored) { m2.appendReplacement(sb2, m2.group(0)); }
+        }
+        m2.appendTail(sb2);
+        text = sb2.toString();
 
         // 5. 压缩连续空白为单个空格
         text = text.replaceAll("\\s+", " ");
