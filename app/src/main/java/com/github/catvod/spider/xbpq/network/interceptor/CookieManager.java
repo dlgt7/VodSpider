@@ -2,9 +2,9 @@ package com.github.catvod.spider.xbpq.network.interceptor;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import okhttp3.Cookie;
 import okhttp3.CookieJar;
@@ -19,16 +19,26 @@ import com.github.catvod.spider.xbpq.network.HttpResponse;
  * Cookie管理拦截器
  * <p>
  * 自动管理Cookie，支持持久化和自动附加。
+ * <p>
+ * 修复说明：原 cookieStore 为 HashMap，TVBox 框架多线程并发调用爬虫方法时
+ * computeIfAbsent/put 存在数据竞争（Java 8 下并发 computeIfAbsent 可能死循环），
+ * 现改为 ConcurrentHashMap（外层）+ ConcurrentHashMap（内层）。
+ * 同时增加过期 Cookie 过滤，避免过期项常驻内存并随请求回传。
  *
  * @author CatVodSpider Team
- * @version 2.0
+ * @version 2.1
  */
 public class CookieManager implements HttpClient.HttpInterceptor, CookieJar {
 
     private final Map<String, Map<String, Cookie>> cookieStore;
 
     public CookieManager() {
-        this.cookieStore = new HashMap<>();
+        this.cookieStore = new ConcurrentHashMap<>();
+    }
+
+    /** Cookie 是否已过期 */
+    private static boolean isExpired(Cookie cookie) {
+        return cookie != null && cookie.expiresAt() <= System.currentTimeMillis();
     }
 
     @Override
@@ -86,7 +96,7 @@ public class CookieManager implements HttpClient.HttpInterceptor, CookieJar {
 
             Cookie cookieObj = builder.build();
             cookieStore
-                    .computeIfAbsent(domain, k -> new HashMap<>())
+                    .computeIfAbsent(domain, k -> new ConcurrentHashMap<>())
                     .put(cookieObj.name(), cookieObj);
 
             SpiderDebug.log("Cookie saved: " + cookieObj.name() + " for " + domain);
@@ -109,6 +119,7 @@ public class CookieManager implements HttpClient.HttpInterceptor, CookieJar {
 
             StringBuilder cookieHeader = new StringBuilder();
             for (Cookie cookie : domainCookies.values()) {
+                if (isExpired(cookie)) continue;
                 if (cookieHeader.length() > 0) {
                     cookieHeader.append("; ");
                 }
@@ -130,9 +141,11 @@ public class CookieManager implements HttpClient.HttpInterceptor, CookieJar {
     public void saveFromResponse(HttpUrl url, List<Cookie> cookies) {
         if (cookies == null || cookies.isEmpty()) return;
         String domain = url.host();
-        cookieStore.computeIfAbsent(domain, k -> new HashMap<>()).clear();
+        Map<String, Cookie> domainStore = cookieStore.computeIfAbsent(domain, k -> new ConcurrentHashMap<>());
+        domainStore.clear();
         for (Cookie cookie : cookies) {
-            cookieStore.get(domain).put(cookie.name(), cookie);
+            if (isExpired(cookie)) continue;
+            domainStore.put(cookie.name(), cookie);
         }
     }
 
@@ -141,6 +154,10 @@ public class CookieManager implements HttpClient.HttpInterceptor, CookieJar {
         String domain = url.host();
         Map<String, Cookie> cookies = cookieStore.get(domain);
         if (cookies == null || cookies.isEmpty()) return Collections.emptyList();
-        return new ArrayList<>(cookies.values());
+        List<Cookie> result = new ArrayList<>(cookies.size());
+        for (Cookie cookie : cookies.values()) {
+            if (!isExpired(cookie)) result.add(cookie);
+        }
+        return result;
     }
 }
