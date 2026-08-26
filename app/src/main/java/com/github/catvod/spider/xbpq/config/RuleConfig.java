@@ -202,14 +202,12 @@ public class RuleConfig {
                 }
             }
 
-            // 执行重命名（非空优先）
+            // 执行重命名：中文名 → 英文名（英文名已有非空值时保留英文，否则用中文名填充）
             for (String[] pair : toRename) {
                 String cnKey = pair[0];
                 String enKey = pair[1];
-                Object val = json.get(cnKey);
-                json.remove(cnKey);
-                if (!json.has(enKey) || isBlank(json.optString(enKey))) {
-                    json.put(enKey, val);
+                if (json.has(cnKey) && !json.has(enKey)) {
+                    json.put(enKey, json.get(cnKey));
                 }
             }
 
