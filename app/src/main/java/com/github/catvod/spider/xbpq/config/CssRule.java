@@ -149,13 +149,16 @@ public class CssRule {
     }
 
     /**
-     * 去掉CSS协议前缀
+     * 去掉CSS协议前缀（含 p: 简写前缀）
+     * <p>注意：此方法仅剥离前缀，不做语法转换；完整转换请使用 {@link #parseCssShortSyntax(String)}。
      */
     public static String stripPrefix(String rule) {
         if (rule.startsWith(CSS_PREFIX_FULL)) {
             return rule.substring(CSS_PREFIX_FULL.length());
         } else if (rule.startsWith(CSS_PREFIX)) {
             return rule.substring(CSS_PREFIX.length());
+        } else if (rule.startsWith(P_PREFIX)) {
+            return rule.substring(P_PREFIX.length());
         }
         return rule;
     }
@@ -176,10 +179,15 @@ public class CssRule {
      * 解析精简语法（支持嵌套 +(+p:xxx+) 拼接）：
      * <ul>
      *   <li>p:a->href => a[href]</li>
+     *   <li>p:a->text => a:text</li>
      *   <li>p:.class->text => .class:text</li>
      *   <li>p:div[class*="x"]->text => div[class*="x"]:text</li>
+     *   <li>p:ul>li>a => ul>li>a（纯选择器，无提取模式）</li>
+     *   <li>p:.hl-tabs-btn => .hl-tabs-btn（纯选择器）</li>
      *   <li>+(+p:a->href+) => a[href]（剥去 +( 和 +) 包装）</li>
      *   <li>css:div->text => div:text（保留原 css: 前缀处理逻辑）</li>
+     *   <li>.class->@text => .class:text（属性形式）</li>
+     *   <li>.class->@href => .class[href]（属性提取形式）</li>
      * </ul>
      */
     public static String parseCssShortSyntax(String expr) {
@@ -218,6 +226,19 @@ public class CssRule {
             selector = left.substring(4).trim();
         } else if (left.startsWith(P_PREFIX)) {
             selector = left.substring(2).trim();
+        }
+
+        // 处理 @text/@html/@href/@src 等属性提取标记（.class->@href 形式）
+        if (right.startsWith("@")) {
+            String attrMarker = right.substring(1).trim();
+            if ("text".equals(attrMarker) || "ownText".equals(attrMarker) || "html".equals(attrMarker)) {
+                return selector.isEmpty() ? ":" + attrMarker : selector + ":" + attrMarker;
+            } else if ("href".equals(attrMarker) || "src".equals(attrMarker) || "alt".equals(attrMarker)) {
+                return selector.isEmpty() ? "[" + attrMarker + "]" : selector + "[" + attrMarker + "]";
+            } else {
+                // 通用属性提取
+                return selector.isEmpty() ? "[" + attrMarker + "]" : selector + "[" + attrMarker + "]";
+            }
         }
 
         if (right.contains("(") && right.contains(")")) {

@@ -150,6 +150,10 @@ public class RuleConfig {
         CHINESE_KEY_MAP.put("超时", "timeout");
         CHINESE_KEY_MAP.put("重试", "retry");
         CHINESE_KEY_MAP.put("重试次数", "retry");
+        CHINESE_KEY_MAP.put("maccms自动", "auto_maccms");
+        CHINESE_KEY_MAP.put("Maccms自动", "auto_maccms");
+        CHINESE_KEY_MAP.put("苹果cms自动", "auto_maccms");
+        CHINESE_KEY_MAP.put("自动Maccms", "auto_maccms");
 
         // ===== 动态域名/变量链 =====
         CHINESE_KEY_MAP.put("域名-c", "dynamic_domain");
