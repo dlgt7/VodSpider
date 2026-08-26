@@ -21,8 +21,8 @@ public class JsonParser {
     );
 
     /**
-     * 去除 JSON 字符串中的注释（// 行注释 和 /* */ 块注释）。
-     * 注意：不删除字符串字面量内部的 // 或 /*。
+     * Remove comments (// line and /* */ block) from JSON string.
+     * Note: does not remove // or /* inside string literals.
      */
     public static String stripComments(String json) {
         if (json == null || json.isEmpty()) return json;
