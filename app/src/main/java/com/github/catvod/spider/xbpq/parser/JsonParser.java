@@ -21,6 +21,59 @@ public class JsonParser {
     );
 
     /**
+     * 去除 JSON 字符串中的注释（// 行注释 和 /* */ 块注释）。
+     * 注意：不删除字符串字面量内部的 // 或 /*。
+     */
+    public static String stripComments(String json) {
+        if (json == null || json.isEmpty()) return json;
+        StringBuilder sb = new StringBuilder();
+        boolean inString = false;
+        char quoteChar = 0;
+        boolean esc = false;
+        int i = 0;
+        while (i < json.length()) {
+            char c = json.charAt(i);
+            if (esc) {
+                esc = false;
+                if (inString) sb.append(c);
+                i++;
+                continue;
+            }
+            if (c == '\\') {
+                esc = true;
+                if (inString) sb.append(c);
+                i++;
+                continue;
+            }
+            if (!inString) {
+                if (c == '"' || c == '\'') {
+                    inString = true;
+                    quoteChar = c;
+                    sb.append(c);
+                } else if (c == '/' && i + 1 < json.length()) {
+                    if (json.charAt(i + 1) == '/') {
+                        // 行注释：跳过至行尾
+                        while (i < json.length() && json.charAt(i) != '\n') i++;
+                        continue;
+                    } else if (json.charAt(i + 1) == '*') {
+                        // 块注释：跳过至 */
+                        i += 2;
+                        while (i + 1 < json.length() && !(json.charAt(i) == '*' && json.charAt(i + 1) == '/')) i++;
+                        i += 2;
+                        continue;
+                    }
+                }
+                sb.append(c);
+            } else {
+                sb.append(c);
+                if (c == quoteChar) inString = false;
+            }
+            i++;
+        }
+        return sb.toString();
+    }
+
+    /**
      * 去除JSONP包装
      *
      * @param jsonp JSONP格式字符串
@@ -74,7 +127,7 @@ public class JsonParser {
      */
     public static JSONArray parseArray(String json) throws JSONException {
         if (json == null || json.isEmpty()) return new JSONArray();
-        String cleaned = stripJsonp(json.trim());
+        String cleaned = stripJsonp(stripComments(json.trim()));
         if (cleaned.startsWith("[")) {
             return new JSONArray(cleaned);
         }
