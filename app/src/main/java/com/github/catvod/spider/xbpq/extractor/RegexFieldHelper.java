@@ -63,7 +63,7 @@ public final class RegexFieldHelper {
      * @param rule  字段规则
      * @return 提取值，失败返回空串
      */
-    static String extract(String scope, String rule) {
+    public static String extract(String scope, String rule) {
         if (scope == null || scope.isEmpty() || rule == null || rule.isEmpty()) return "";
         // 防御性上限：超长规则直接返回空，防止恶意/损坏规则导致 ReDoS 或 OOM
         if (rule.length() > REGEX_RULE_MAX_LEN) return "";
