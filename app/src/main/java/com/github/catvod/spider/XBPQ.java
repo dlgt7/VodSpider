@@ -9,6 +9,7 @@ import com.github.catvod.spider.xbpq.config.CssRule;
 import com.github.catvod.spider.xbpq.config.RuleConfig;
 import com.github.catvod.spider.xbpq.config.StringCutRule;
 import com.github.catvod.spider.xbpq.extractor.ExtractorFactory;
+import com.github.catvod.spider.xbpq.extractor.RegexFieldHelper;
 import com.github.catvod.spider.xbpq.model.PlaySource;
 import com.github.catvod.spider.xbpq.model.VodDetail;
 import com.github.catvod.spider.xbpq.model.VodItem;
@@ -67,10 +68,10 @@ public class XBPQ extends Spider {
     private static final Pattern P_PAGE_TOTAL = Pattern.compile("共(\\d+)页");
     private static final Pattern P_TOTAL_COUNT = Pattern.compile("共(\\d+)条");
     private static final Pattern P_PAGE_CURRENT = Pattern.compile("(\\d+)/(\\d+)页");
-    
+
     /** 分类页单页条数（limit 与翻页兜底共用） */
     private static final int PAGE_LIMIT = 20;
-    
+
     /** 从 homeUrl 提取协议+主机 */
     private static final Pattern P_HOST = Pattern.compile("(https?://[^/]+)");
     
@@ -126,9 +127,6 @@ public class XBPQ extends Spider {
     private boolean reverse;
     private boolean mergeLines;
     private boolean hotRecommend;
-    /** homeUrl 的协议+主机，首次解析后缓存（避免 absUrl 每次重建 Matcher） */
-    @SuppressWarnings("unused")
-    private String homeHostCache;
 
     // ==================== 初始化 ====================
 
@@ -144,7 +142,8 @@ public class XBPQ extends Spider {
         if (ext == null) return;
         if (rule != null && rule.length() > 0) return;
         try {
-            String content = ext.startsWith("http") ? fetchUrl(ext, null) : ext;
+            // 防御：ext 可能为 null/空 字符串拼接成空内容导致 NPE
+            String content = (ext != null && ext.startsWith("http")) ? fetchUrl(ext, null) : (ext != null ? ext : "");
             if (content.isEmpty()) {
                 SpiderDebug.log("规则内容为空: " + ext);
                 return;
@@ -155,9 +154,45 @@ public class XBPQ extends Spider {
             // 不设置 rule，保持 null，允许后续重试
             return;
         }
+        // Maccms 自动猜测（借鉴 XBiu.guess_rule_* 思想）：
+        // 当规则内容标记 auto_maccms=1 且关键字段缺失时，注入 Maccms 默认规则
+        // 使极简规则可正常工作
+        if (rule != null && "1".equals(RuleConfig.getRuleVal(rule, "auto_maccms"))) {
+            applyMaccmsDefaults(rule);
+        }
         reverse = "1".equals(RuleConfig.getRuleVal(rule, "reverse"));
         mergeLines = "1".equals(RuleConfig.getRuleVal(rule, "merge_lines"));
         hotRecommend = "1".equals(RuleConfig.getRuleVal(rule, "hot_recommend"));
+    }
+
+    /**
+     * Maccms 模板系统默认规则注入（借鉴 XBiu 自动猜测思路）。
+     * <p>仅在对应字段为空时填入默认值：
+     * <ul>
+     *   <li>homeUrl 不为空时生效</li>
+     *   <li>search_url 默认：{@code <homeUrl>index.php/ajax/suggest?mid=1&wd={wd}}（如 Maccms 10）</li>
+     *   <li>class_url 默认：{@code <homeUrl>index.php/vod/show/id/{cateId}/page/{catePg}}</li>
+     *   <li>detail_url 默认：{@code <homeUrl>index.php/vod/detail/id/{vid}.html}</li>
+     * </ul>
+     * 不覆盖用户已显式配置的字段。
+     */
+    private void applyMaccmsDefaults(JSONObject r) {
+        try {
+            String home = RuleConfig.getRuleVal(r, "homeUrl");
+            if (home == null || home.isEmpty()) return;
+            if (!home.endsWith("/")) home = home + "/";
+            if (RuleConfig.getRuleVal(r, "search_url").isEmpty()) {
+                r.put("search_url", home + "index.php/ajax/suggest?mid=1&wd={wd}");
+                r.put("search_mode", "0");
+            }
+            if (RuleConfig.getRuleVal(r, "class_url").isEmpty()) {
+                r.put("class_url", home + "index.php/vod/show/id/{cateId}/page/{catePg}");
+            }
+            if (RuleConfig.getRuleVal(r, "detail_url").isEmpty()) {
+                r.put("detail_url", home + "index.php/vod/detail/id/{vid}.html");
+            }
+        } catch (Exception ignored) {
+        }
     }
 
     /** 读规则值（"空"/"&&"占位视为未配置；rule 为 null 时安全返回默认值） */
@@ -358,6 +393,13 @@ public class XBPQ extends Spider {
 
     private String getRedirectUrl(String url) {
         try {
+            if (url == null || url.isEmpty()) return url;
+            // 防御：[工具:重定向] 的参数来自规则配置/外部输入，可能指向内网地址
+            // 统一走 SSRF 防护（allow_internal=1 可放行）
+            if (isSsrfBlocked(url)) {
+                SpiderDebug.log("SSRF 拦截: " + url);
+                return url;
+            }
             // 复用不跟随重定向的客户端实例，避免每次请求都创建新连接池
             okhttp3.Request req = new okhttp3.Request.Builder().url(url).get().build();
             okhttp3.Response resp = getNoRedirectClient().newCall(req).execute();
@@ -664,7 +706,7 @@ public class XBPQ extends Spider {
 
             if (hotRecommend) {
                 JSONArray videos = fetchHotRecommend();
-                if (videos.length() > 0) result.put("list", videos);
+                if (videos != null && videos.length() > 0) result.put("list", videos);
             }
             return result.toString();
         } catch (Exception e) {
@@ -753,13 +795,14 @@ public class XBPQ extends Spider {
         }
 
         // 2) class_url 使用 {class}：分类名直接作为 type_id
+        //    增强：兼容 & / , / | 多种分隔符（借鉴 Maccms 极简风格 + XBiubiu 的宽松解析）
         if (classUrl.contains("{class}") && !fenlei.isEmpty()) {
-            for (String name : fenlei.split("&")) {
+            for (String name : fenlei.split("[&,\\u007c]")) {
                 name = name.trim();
                 if (name.isEmpty()) continue;
                 addClass(classes, name, name);
             }
-            return classes;
+            if (classes.length() > 0) return classes;
         }
 
         // 3) 分类名称 + 分类值（并行 & 分隔）
@@ -823,6 +866,7 @@ public class XBPQ extends Spider {
         JSONArray videos = ExtractorFactory
                 .createVideoListExtractor(CssRule.isCssRule(getVal("list_array")))
                 .extract(body, rule);
+        if (videos == null) return new JSONArray();
         return applyListPostProcess(videos);
     }
 
@@ -842,6 +886,7 @@ public class XBPQ extends Spider {
             JSONArray videos = ExtractorFactory
                     .createVideoListExtractor(CssRule.isCssRule(getVal("list_array")))
                     .extract(body, rule);
+            if (videos == null) videos = new JSONArray();
             videos = applyListPostProcess(videos);
 
             JSONObject result = new JSONObject();
@@ -933,6 +978,8 @@ public class XBPQ extends Spider {
                 val = URLEncoder.encode(val, "UTF-8");
             } catch (Exception ignored) {
             }
+            // val 可能为 null（极端情况下），appendReplacement 要求非 null
+            if (val == null) val = "";
             m.appendReplacement(sb, Matcher.quoteReplacement(val));
         }
         m.appendTail(sb);
@@ -1040,6 +1087,7 @@ public class XBPQ extends Spider {
             boolean cssMode = RuleConfig.isCssModeEnabled(this.rule);
             JSONObject vod = ExtractorFactory.createDetailExtractor(cssMode)
                     .extract(body, rule, vinfo);
+            if (vod == null) vod = new JSONObject();
             // 详情字段后处理：JS 转义解码 + 标题清洗 + 图片净化
             // （借鉴 Ccys.unescape / Hgdj.cleanName / nongm.fixPic）
             vod = postProcessDetail(vod);
@@ -1157,6 +1205,7 @@ public class XBPQ extends Spider {
         // 清洗 HTML 标签为纯文本，便于按分隔符切分（保留中文冒号/空格）
         // 集成 StringCutRule.cleanHtml()：统一处理 script/style移除 + 标签清理 + 实体解码 + 空白压缩
         String text = StringCutRule.cleanHtml(body);
+        if (text == null) return vod;
 
         String[] labels = cfg.split("\\|");
         for (String raw : labels) {
@@ -1300,6 +1349,7 @@ public class XBPQ extends Spider {
         // url_array/play_array 可能为纯正则，误入 CSS 模式会导致线路切分失败。
         boolean cssMode = CssRule.isCssRule(getVal("from_array"));
         JSONArray lines = ExtractorFactory.createPlayListExtractor(cssMode).extract(body, rule, 0);
+        if (lines == null) lines = new JSONArray();
 
         // 剧集过滤（复用已支持的 episode_filter / 剧集过滤 键，借鉴各爬虫对按钮/广告集的剔除）
         String epFilter = getVal("episode_filter");
@@ -1407,6 +1457,7 @@ public class XBPQ extends Spider {
                 JSONArray videos = ExtractorFactory
                         .createSearchExtractor(CssRule.isCssRule(getVal("search_array")))
                         .extract(body, rule);
+                if (videos == null) videos = new JSONArray();
                 JSONObject result = new JSONObject();
                 result.put("list", videos);
                 return applySearchPostProcess(result.toString(), keyword, quick);
@@ -1415,6 +1466,7 @@ public class XBPQ extends Spider {
                 JSONArray videos = ExtractorFactory
                         .createSearchExtractor(CssRule.isCssRule(getVal("search_array")))
                         .extract(body, rule);
+                if (videos == null) videos = new JSONArray();
                 if (videos.length() > 0) {
                     JSONObject result = new JSONObject();
                     result.put("list", videos);
@@ -1477,8 +1529,9 @@ public class XBPQ extends Spider {
             return "";
         }
 
-        // 修复：增加重试机制，与 fetchUrl 行为保持一致（最多3次）
-        int maxRetries = 3;
+        // 统一重试 + 超时策略：与 fetchUrl 走同一份 resolveRetry / resolveTimeout 配置
+        int maxRetries = resolveRetry();
+        final int timeout = resolveTimeout(null);
         Exception lastError = null;
 
         for (int attempt = 0; attempt < maxRetries; attempt++) {
@@ -1543,6 +1596,7 @@ public class XBPQ extends Spider {
         try {
             fetchRule();
             if (rule == null) return "";
+            if (url == null) url = "";
             JSONObject result;
 
             // 1. 直链视频 → 直接播放
@@ -1605,6 +1659,7 @@ public class XBPQ extends Spider {
     /** 跳转播放：抓取集数链接页面，按 jump_url 规则（css/&&/正则）提取真实地址 */
     private JSONObject tryJumpPlay(String url) {
         try {
+            // 跳转 URL 来自外部集数链接（不可信），必须经 fetchUrl 走 SSRF 防护
             String body = fetchUrl(url, buildHeaders("play_header"));
             if (body.isEmpty()) return null;
 
@@ -1620,6 +1675,14 @@ public class XBPQ extends Spider {
                     return processDecodedVideoUrl(target);
                 }
             }
+            // Maccms 模板：扫描 var player_aaaa={...} 解析（借鉴 XYQBiu.Anal_MacPlayer）
+            // encrypt=1 → URLDecoder.decode  encrypt=2 → Base64 + URLDecoder
+            if (target.isEmpty() || !target.contains("http")) {
+                MaccmsPlayer mp = extractMaccmsPlayer(body);
+                if (mp != null && !mp.url.isEmpty()) {
+                    target = mp.url;
+                }
+            }
             if (target.isEmpty()) {
                 target = JsParser.matchVideoUrl(body);
             }
@@ -1629,6 +1692,89 @@ public class XBPQ extends Spider {
             SpiderDebug.log("跳转播放失败: " + e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * Maccms 播放脚本解析（借鉴 XYQBiu.Anal_MacPlayer）：
+     * <p>扫描所有 &lt;script&gt; 中 {@code var player_XXXX = {...}} 的 JSON 配置，
+     * 解码 url 字段；支持 encrypt 字段：
+     * <ul>
+     *   <li>{@code encrypt:1} — URLDecoder.decode</li>
+     *   <li>{@code encrypt:2} — Base64.decode + URLDecoder.decode</li>
+     * </ul>
+     * 解析失败或 url 为空返回 null。
+     */
+    private MaccmsPlayer extractMaccmsPlayer(String body) {
+        if (body == null || body.isEmpty()) return null;
+        try {
+            int pos = 0;
+            while (pos < body.length()) {
+                int p = body.indexOf("var player_", pos);
+                if (p < 0) return null;
+                int braceStart = body.indexOf('{', p);
+                if (braceStart < 0) return null;
+                // 配对花括号，处理嵌套对象（如 "config":{...} 形式）
+                int braceEnd = findMatchingBrace(body, braceStart);
+                if (braceEnd < 0) return null;
+                String jsonText = body.substring(braceStart, braceEnd + 1);
+                MaccmsPlayer mp = parseMaccmsPlayerJson(jsonText);
+                if (mp != null && !mp.url.isEmpty()) return mp;
+                pos = braceEnd + 1;
+            }
+        } catch (Exception e) {
+            // ignore
+        }
+        return null;
+    }
+
+    /** 找到与 startPos 处 '{' 配对的 '}'，忽略字符串内的花括号。 */
+    private int findMatchingBrace(String text, int startPos) {
+        if (startPos < 0 || startPos >= text.length() || text.charAt(startPos) != '{') return -1;
+        int depth = 0;
+        boolean inStr = false;
+        boolean esc = false;
+        for (int i = startPos; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (esc) { esc = false; continue; }
+            if (c == '\\') { esc = true; continue; }
+            if (c == '"') { inStr = !inStr; continue; }
+            if (inStr) continue;
+            if (c == '{') depth++;
+            else if (c == '}') {
+                depth--;
+                if (depth == 0) return i;
+            }
+        }
+        return -1;
+    }
+
+    private MaccmsPlayer parseMaccmsPlayerJson(String jsonText) {
+        try {
+            JSONObject obj = new JSONObject(jsonText);
+            MaccmsPlayer mp = new MaccmsPlayer();
+            if (obj.has("url")) mp.url = obj.optString("url", "").trim();
+            if (obj.has("from")) mp.from = obj.optString("from", "").trim();
+            if (obj.has("encrypt")) {
+                int encrypt = obj.optInt("encrypt", 0);
+                if (encrypt == 1) {
+                    try { mp.url = java.net.URLDecoder.decode(mp.url, "UTF-8"); } catch (Exception ignored) {}
+                } else if (encrypt == 2) {
+                    try {
+                        mp.url = new String(android.util.Base64.decode(mp.url, android.util.Base64.DEFAULT), "UTF-8");
+                        mp.url = java.net.URLDecoder.decode(mp.url, "UTF-8");
+                    } catch (Exception ignored) {}
+                }
+            }
+            return mp.url.isEmpty() ? null : mp;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Maccms var player_aaaa 解析结果载体 */
+    private static class MaccmsPlayer {
+        String url = "";
+        String from = "";
     }
 
     /** 处理可能含百分号编码的 URL */
@@ -1657,6 +1803,9 @@ public class XBPQ extends Spider {
         return "";
     }
 
+    /** 正则规则最大长度（防御性上限，过长规则视为非法丢弃） */
+    private static final int REGEX_RULE_MAX_LEN = 4096;
+
     /**
      * 通用规则提取：css:/css:// 选择器 → && 前后缀截取 → 正则 group(1)
      * <p>
@@ -1668,42 +1817,25 @@ public class XBPQ extends Spider {
      * </ul>
      */
     private String extractByRule(String content, String ruleStr) {
-        if (content == null || content.isEmpty() || ruleStr == null || ruleStr.isEmpty()) return "";
-        try {
-            if (CssRule.isCssRule(ruleStr)) {
-                return CssRule.extractByCss(content, ruleStr, 0);
-            }
-            if (ruleStr.contains("&&")) {
-                // 集成 parseCutRule：预解析规则结构（当前使用简化路径，未来可扩展偏移/回溯支持）
-                String[] parsed = StringCutRule.parseCutRule(ruleStr);
-                if (parsed.length >= 2) {
-                    // 规则结构有效，使用标准二次截取
-                    String cut = StringCutRule.applySecondCut(content, ruleStr);
-                    return cut == null ? "" : cut.trim();
-                }
-                // 规则结构无效时走正则回退
-                return "";
-            }
-            // 正则提取路径：ruleStr 作为正则表达式编译匹配
-            Matcher m = Pattern.compile(ruleStr, Pattern.DOTALL).matcher(content);
-            if (m.find()) {
-                return m.groupCount() >= 1 ? m.group(1) : m.group(0);
-            }
-        } catch (Exception e) {
-            // 非法正则按纯文本包含判断
-            // 集成 escapeRegex：若需将用户输入作为字面量嵌入正则，可使用 StringCutRule.escapeRegex(ruleStr)
-            // 当前场景为纯文本回退，直接做 contains 判断即可
-            if (content.contains(ruleStr)) return ruleStr;
-            // 二次尝试：转义后的正则字面量匹配
-            try {
-                String escaped = StringCutRule.escapeRegex(ruleStr);
-                java.util.regex.Pattern p = java.util.regex.Pattern.compile(escaped, Pattern.DOTALL);
-                java.util.regex.Matcher em = p.matcher(content);
-                if (em.find()) return em.group(0);
-            } catch (Exception ignored) {}
-            return "";
-        }
-        return "";
+        // 统一走 RegexFieldHelper：支持 CSS/p: 简写、|| 备用、&& 多级截取、[替换]/[不含]/[序号] 后处理器、正则 group(1)
+        return RegexFieldHelper.extract(content, ruleStr);
+    }
+
+    /**
+     * 通用字段提取方法（统一 p: 简写 / && 截取 / 正则 / 后处理器 / || 备用规则）
+     * <p>
+     * 支持完整的字段规则体系：
+     * <ul>
+     *   <li>|| 备用规则：逐条尝试取首个非空结果</li>
+     *   <li>p:xxx->attr / css:/css:// 前缀 → CSS 选择器提取</li>
+     *   <li>[替换:a>>b] / [不含:xxx] / [序号:n] / 分割(xxx)：后处理器</li>
+     *   <li>&amp;&amp; 前后缀截取：二次截取（含多级）</li>
+     *   <li>正则 group(1) 优先提取</li>
+     * </ul>
+     * 供 detailContent 等场景下直接提取单个字段时使用。
+     */
+    protected String extractField(String scope, String rule) {
+        return RegexFieldHelper.extract(scope, rule);
     }
 
     /** 弹幕注入：danmuUrl 配置存在时附加 danmaku 代理参数 */
@@ -1741,12 +1873,20 @@ public class XBPQ extends Spider {
             decodedUrl = danmuUrl;
         }
         // proxy 入口由播放器/外部传入 URL，属不可信输入，强制 SSRF 防护（不受 allow_internal 影响）
+        // 这里直接拦截内网地址，与后续 fetchUrl 的 isSsrfBlocked(读 allow_internal) 行为独立
+        // 双重防护：即使 allow_internal=1 允许内网，proxy 入口仍禁止（防 SSRF 滥用）
         if (httpClient().isInternalUrl(decodedUrl)) {
             SpiderDebug.log("proxy SSRF 拦截: " + decodedUrl);
             return new Object[]{403, "text/plain; charset=utf-8",
                     new java.io.ByteArrayInputStream("forbidden".getBytes("UTF-8"))};
         }
-        byte[] data = fetchUrl(decodedUrl, buildHeaders(null)).getBytes("UTF-8");
+        // 防御：fetchUrl 返回空时（请求失败/重试耗尽）也应返回 502 错误流，避免返回空字符串
+        String respBody = fetchUrl(decodedUrl, buildHeaders(null));
+        if (respBody.isEmpty()) {
+            return new Object[]{502, "text/plain; charset=utf-8",
+                    new java.io.ByteArrayInputStream("upstream empty".getBytes("UTF-8"))};
+        }
+        byte[] data = respBody.getBytes("UTF-8");
         return new Object[]{200, "application/octet-stream", new java.io.ByteArrayInputStream(data)};
     }
 
