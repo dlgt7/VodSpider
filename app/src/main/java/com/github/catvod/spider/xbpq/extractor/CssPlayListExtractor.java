@@ -58,7 +58,7 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
                 }
 
                 // 如果多线模式未提取到任何集数，尝试多容器分组模式
-                if (playList.isEmpty()) {
+                if (playList.length() == 0) {
                     extractMultiContainerLines(doc, config, playList);
                 }
             } else {
