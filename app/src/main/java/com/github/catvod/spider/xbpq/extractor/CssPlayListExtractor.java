@@ -37,16 +37,15 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
 
             if (!lineArrayRule.isEmpty()) {
                 // 多线模式：每条线路内部提取集数
+                // stripPrefix 只去除 css:/css:// 前缀，保留 p: 简写原始选择器
+                String rawLineArrayRule = CssRule.stripPrefix(lineArrayRule);
+                Elements lines = doc.select(rawLineArrayRule);
                 String lineTitleRule = config.optString("from_title", "");
-                Elements lines = doc.select(CssRule.stripPrefix(lineArrayRule));
 
                 int lineIndex = 0;
                 for (Element line : lines) {
-                    // 修复：与 RegexPlayListExtractor 保持一致的编号逻辑
-                    // （先++再命名，确保编号从1开始连续）
                     lineIndex++;
-                    String lineName = CssRule.extractByCss(line.outerHtml(), lineTitleRule, 0);
-                    if (lineName.isEmpty()) lineName = "线路" + lineIndex;
+                    String lineName = extractLineName(doc, line, lineIndex, lineTitleRule);
 
                     JSONArray episodes = extractEpisodes(line.outerHtml(), config);
                     if (episodes.length() == 0) continue;
@@ -56,14 +55,38 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
                     source.put("episodes", episodes);
                     playList.put(source);
                 }
+
+                // 如果多线模式未提取到任何集数，尝试多容器分组模式
+                if (playList.isEmpty()) {
+                    extractMultiContainerLines(doc, config, playList);
+                }
             } else {
-                // 单线模式：全文提取集数
-                JSONArray episodes = extractEpisodes(html, config);
-                if (episodes.length() > 0) {
-                    JSONObject source = new JSONObject();
-                    source.put("name", "播放");
-                    source.put("episodes", episodes);
-                    playList.put(source);
+                // 单线模式：全文提取集数，限制只选择第一个可见的播放列表
+                String playArrayRule = config.optString("play_array", "");
+                if (!playArrayRule.isEmpty() && CssRule.isCssRule(playArrayRule)) {
+                    // CSS 模式：只取第一个匹配的容器
+                    Elements firstOnly = doc.select(CssRule.stripPrefix(playArrayRule));
+                    if (!firstOnly.isEmpty()) {
+                        // 找到第一个父容器（ul），只在其内部提取
+                        Element parentUl = firstOnly.first().parent();
+                        if (parentUl != null) {
+                            JSONArray episodes = extractEpisodes(parentUl.outerHtml(), config);
+                            if (episodes.length() > 0) {
+                                JSONObject source = new JSONObject();
+                                source.put("name", "播放");
+                                source.put("episodes", episodes);
+                                playList.put(source);
+                            }
+                        }
+                    }
+                } else {
+                    JSONArray episodes = extractEpisodes(html, config);
+                    if (episodes.length() > 0) {
+                        JSONObject source = new JSONObject();
+                        source.put("name", "播放");
+                        source.put("episodes", episodes);
+                        playList.put(source);
+                    }
                 }
             }
         } catch (Exception e) {
@@ -71,6 +94,40 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
         }
 
         return playList;
+    }
+
+    /**
+     * 在线路容器中尝试多种策略提取线路名：
+     * 1. from_title 规则在当前线路元素内提取
+     * 2. 向上查找包含按钮的父容器，再取首个按钮的文本/alt属性（处理热剧TV网等分离结构）
+     * 3. 默认"线路N"
+     */
+    private String extractLineName(Document doc, Element line, int lineIndex, String lineTitleRule) {
+        // 策略1：用 from_title 规则在线路元素内提取
+        if (!lineTitleRule.isEmpty()) {
+            String name = CssRule.extractByCss(line.outerHtml(), lineTitleRule, 0);
+            if (!name.isEmpty()) return name;
+        }
+
+        // 策略2：向上找包含 .hl-tabs-btn 的父容器，取对应序号的按钮
+        Element parent = line;
+        for (int i = 0; i < 6; i++) {
+            parent = parent.parent();
+            if (parent == null) break;
+            Elements buttons = parent.select("a.hl-tabs-btn, .hl-tabs-btn");
+            if (!buttons.isEmpty()) {
+                int btnIdx = lineIndex - 1;
+                if (btnIdx >= 0 && btnIdx < buttons.size()) {
+                    Element btn = buttons.get(btnIdx);
+                    String name = btn.attr("alt").trim();
+                    if (name.isEmpty()) name = btn.text().trim();
+                    if (!name.isEmpty()) return name;
+                }
+                break;
+            }
+        }
+
+        return "线路" + lineIndex;
     }
 
     /**
@@ -99,5 +156,36 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
                     + "$" + prefix + url + suffix);
         }
         return episodes;
+    }
+
+    /**
+     * 多容器分组提取：支持 from_array 指向父容器（如 .hl-tabs-box），
+     * 每个容器内用 play_array 提取集数，线路名从同级 or 上级获取。
+     * 用于详情页中线路按钮与播放列表分离的结构。
+     */
+    private void extractMultiContainerLines(Document doc, JSONObject config, JSONArray playList) throws Exception {
+        String lineArrayRule = config.optString("from_array", "");
+        if (lineArrayRule.isEmpty()) return;
+
+        String rawLineArrayRule = CssRule.stripPrefix(lineArrayRule);
+        Elements lineContainers = doc.select(rawLineArrayRule);
+        if (lineContainers.isEmpty()) return;
+
+        String lineTitleRule = config.optString("from_title", "");
+        int lineIndex = 0;
+
+        for (Element container : lineContainers) {
+            lineIndex++;
+            String lineName = extractLineName(doc, container, lineIndex, lineTitleRule);
+
+            String containerHtml = container.outerHtml();
+            JSONArray episodes = extractEpisodes(containerHtml, config);
+            if (episodes.length() == 0) continue;
+
+            JSONObject source = new JSONObject();
+            source.put("name", lineName);
+            source.put("episodes", episodes);
+            playList.put(source);
+        }
     }
 }
