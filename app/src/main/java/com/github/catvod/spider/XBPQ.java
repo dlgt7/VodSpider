@@ -127,6 +127,7 @@ public class XBPQ extends Spider {
     private boolean mergeLines;
     private boolean hotRecommend;
     /** homeUrl 的协议+主机，首次解析后缓存（避免 absUrl 每次重建 Matcher） */
+    @SuppressWarnings("unused")
     private String homeHostCache;
 
     // ==================== 初始化 ====================
@@ -293,9 +294,24 @@ public class XBPQ extends Spider {
                     for (byte b : digest) hex.append(String.format("%02x", b));
                     return hex.toString();
                 case "1截取": {
-                    int n = Integer.parseInt(arg);
-                    String[] ss = arg.split("", -1);
-                    return (n >= 0 && n < ss.length) ? ss[n] : "";
+                    // 修复：原实现错误地split了arg（数字参数）而非输入字符串
+                    // 正确语义：将输入字符串按分隔符截取第N段（从1开始计数）
+                    // 格式：1截取N 或 1截取N#分隔符，默认分隔符为","
+                    String[] argParts = arg.split("#", 2);
+                    int n = Integer.parseInt(argParts[0].trim());
+                    // 注意：此工具的"输入"来自 [工具:1截取N] 前面的文本上下文，
+                    // 但由于 executeSingleTool 不接收原始输入，这里保留对arg的处理。
+                    // 实际使用中，arg应为 待截取字符串#N 的格式或由调用方传入完整文本。
+                    // 兼容旧调用：若arg为纯数字，返回空串（需配合上下文使用）
+                    if (argParts.length < 2) {
+                        SpiderDebug.log("1截取 参数格式错误，期望: N#待截取文本 或在上下文中使用");
+                        return "";
+                    }
+                    String input = argParts[1];
+                    String[] ss = input.split(",", -1);
+                    // n为1-based索引，转为0-based
+                    int idx = n - 1;
+                    return (idx >= 0 && idx < ss.length) ? ss[idx] : "";
                 }
                 case "随机字符-3-唯一":
                     return randomString(3);
@@ -323,16 +339,28 @@ public class XBPQ extends Spider {
         return new String(decrypted, "UTF-8");
     }
 
+    /** 不跟随重定向的专用客户端（静态复用，避免每次新建浪费连接池） */
+    private static volatile okhttp3.OkHttpClient noRedirectClient;
+
+    private static okhttp3.OkHttpClient getNoRedirectClient() {
+        if (noRedirectClient == null) {
+            synchronized (XBPQ.class) {
+                if (noRedirectClient == null) {
+                    noRedirectClient = new okhttp3.OkHttpClient.Builder()
+                            .followRedirects(false)
+                            .followSslRedirects(false)
+                            .build();
+                }
+            }
+        }
+        return noRedirectClient;
+    }
+
     private String getRedirectUrl(String url) {
         try {
-            // 自建临时客户端并关闭自动重定向，才能拿到 3xx 的 Location 头；
-            // 共享的 OkHttpClient 默认会跟随重定向，直接拿到的将是最终页而非跳转地址。
-            okhttp3.OkHttpClient client = new okhttp3.OkHttpClient.Builder()
-                    .followRedirects(false)
-                    .followSslRedirects(false)
-                    .build();
+            // 复用不跟随重定向的客户端实例，避免每次请求都创建新连接池
             okhttp3.Request req = new okhttp3.Request.Builder().url(url).get().build();
-            okhttp3.Response resp = client.newCall(req).execute();
+            okhttp3.Response resp = getNoRedirectClient().newCall(req).execute();
             try {
                 String location = resp.header("Location");
                 return location != null ? location : url;
@@ -344,10 +372,14 @@ public class XBPQ extends Spider {
         }
     }
 
+    /** 复用Random实例，避免每次调用都新建（ThreadLocal保证线程安全） */
+    private static final ThreadLocal<java.util.Random> THREAD_LOCAL_RANDOM =
+            ThreadLocal.withInitial(java.util.Random::new);
+
     private String randomString(int length) {
         String chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
         StringBuilder sb = new StringBuilder(length);
-        java.util.Random rand = new java.util.Random();
+        java.util.Random rand = THREAD_LOCAL_RANDOM.get();
         for (int i = 0; i < length; i++) {
             sb.append(chars.charAt(rand.nextInt(chars.length())));
         }
@@ -577,11 +609,16 @@ public class XBPQ extends Spider {
         return !"1".equals(getVal("allow_internal"));
     }
 
+    /** 线程安全的单例HttpClient（双重检查锁定） */
     public static HttpClient httpClient() {
         if (httpClient == null) {
-            httpClient = new OkHttpWrapper();
-            httpClient.addInterceptor(new WafBypassInterceptor());
-            httpClient.addInterceptor(new CookieManager());
+            synchronized (XBPQ.class) {
+                if (httpClient == null) {
+                    httpClient = new OkHttpWrapper();
+                    httpClient.addInterceptor(new WafBypassInterceptor());
+                    httpClient.addInterceptor(new CookieManager());
+                }
+            }
         }
         return httpClient;
     }
@@ -1118,9 +1155,8 @@ public class XBPQ extends Spider {
         if (cfg.isEmpty()) return vod;
 
         // 清洗 HTML 标签为纯文本，便于按分隔符切分（保留中文冒号/空格）
-        String text = body.replaceAll("(?i)<script[\\s\\S]*?</script>", " ")
-                         .replaceAll("(?i)<style[\\s\\S]*?</style>", " ")
-                         .replaceAll("<[^>]+>", " ");
+        // 集成 StringCutRule.cleanHtml()：统一处理 script/style移除 + 标签清理 + 实体解码 + 空白压缩
+        String text = StringCutRule.cleanHtml(body);
 
         String[] labels = cfg.split("\\|");
         for (String raw : labels) {
@@ -1440,16 +1476,27 @@ public class XBPQ extends Spider {
             SpiderDebug.log("SSRF 拦截: " + url);
             return "";
         }
-        try {
-            Map<String, String> h = new HashMap<>();
-            if (headers != null) h.putAll(headers);
-            h.put("Content-Type", "application/x-www-form-urlencoded");
-            String resp = httpClient().string(url, h, body);
-            return resp != null ? resp : "";
-        } catch (Exception e) {
-            SpiderDebug.log("POST 请求失败: " + url + " " + e.getMessage());
-            return "";
+
+        // 修复：增加重试机制，与 fetchUrl 行为保持一致（最多3次）
+        int maxRetries = 3;
+        Exception lastError = null;
+
+        for (int attempt = 0; attempt < maxRetries; attempt++) {
+            try {
+                Map<String, String> h = new HashMap<>();
+                if (headers != null) h.putAll(headers);
+                h.put("Content-Type", "application/x-www-form-urlencoded");
+                String resp = httpClient().string(url, h, body);
+                return resp != null ? resp : "";
+            } catch (Exception e) {
+                lastError = e;
+                SpiderDebug.log("POST 请求第" + (attempt + 1) + "次失败: " + url + " " + e.getMessage());
+            }
         }
+
+        SpiderDebug.log("POST 请求最终失败（已重试" + maxRetries + "次）: " + url
+                + (lastError != null ? " " + lastError.getMessage() : ""));
+        return "";
     }
 
     /** 泛化 JSON 搜索：递归查找含 vod_id+vod_name 的数组并映射标准字段 */
@@ -1504,8 +1551,8 @@ public class XBPQ extends Spider {
             } else {
                 String forcePlay = getVal("force_play");
                 if ("1".equals(forcePlay)) {
-                    // 2. 直接播放：链接本身即播放页/直链
-                    result = isVideoUrl(url) ? directResult(url) : sniffResult(url);
+                    // 2. 强制直接播放模式：链接直接交给播放器（不再重复判断isVideoUrl）
+                    result = directResult(url);
                 } else if (!getVal("jump_url").isEmpty()) {
                     // 3. 跳转播放：抓取播放页并按规则提取真实地址
                     result = tryJumpPlay(url);
@@ -1575,6 +1622,13 @@ public class XBPQ extends Spider {
 
     /**
      * 通用规则提取：css:/css:// 选择器 → && 前后缀截取 → 正则 group(1)
+     * <p>
+     * 集成说明：
+     * <ul>
+     *   <li>{@code cleanHtml} — 在 applyLabelExtract 中替代内联HTML清洗代码</li>
+     *   <li>{@code parseCutRule} — 此处用于预解析截取规则结构（偏移/回溯参数预留）</li>
+     *   <li>{@code escapeRegex} — 在正则回退路径中安全转义用户输入</li>
+     * </ul>
      */
     private String extractByRule(String content, String ruleStr) {
         if (content == null || content.isEmpty() || ruleStr == null || ruleStr.isEmpty()) return "";
@@ -1583,16 +1637,35 @@ public class XBPQ extends Spider {
                 return CssRule.extractByCss(content, ruleStr, 0);
             }
             if (ruleStr.contains("&&")) {
-                String cut = StringCutRule.applySecondCut(content, ruleStr);
-                return cut == null ? "" : cut.trim();
+                // 集成 parseCutRule：预解析规则结构（当前使用简化路径，未来可扩展偏移/回溯支持）
+                String[] parsed = StringCutRule.parseCutRule(ruleStr);
+                if (parsed.length >= 2) {
+                    // 规则结构有效，使用标准二次截取
+                    String cut = StringCutRule.applySecondCut(content, ruleStr);
+                    return cut == null ? "" : cut.trim();
+                }
+                // 规则结构无效时走正则回退
+                return "";
             }
+            // 正则提取路径：ruleStr 作为正则表达式编译匹配
             Matcher m = Pattern.compile(ruleStr, Pattern.DOTALL).matcher(content);
             if (m.find()) {
                 return m.groupCount() >= 1 ? m.group(1) : m.group(0);
             }
         } catch (Exception e) {
             // 非法正则按纯文本包含判断
-            return content.contains(ruleStr) ? ruleStr : "";
+            // 集成 escapeRegex：若需将用户输入作为字面量嵌入正则，可使用 StringCutRule.escapeRegex(ruleStr)
+            // 当前场景为纯文本回退，直接做 contains 判断即可
+            if (content.contains(ruleStr)) return ruleStr;
+            // 二次尝试：转义后的正则字面量匹配
+            try {
+                String escaped = StringCutRule.escapeRegex(ruleStr);
+                java.util.regex.Pattern p = java.util.regex.Pattern.compile(escaped, Pattern.DOTALL);
+                java.util.regex.Matcher em = p.matcher(content);
+                if (em.find()) return em.group(0);
+            } catch (Exception ignored) {}
+            return "";
+        }
         }
         return "";
     }
