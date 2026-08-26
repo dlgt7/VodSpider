@@ -45,6 +45,7 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
                 int lineIndex = 0;
                 for (Element line : lines) {
                     lineIndex++;
+                    // 提取线路名：支持 from_title CSS 规则、向上查找同级别按钮、默认"线路N"
                     String lineName = extractLineName(doc, line, lineIndex, lineTitleRule);
 
                     JSONArray episodes = extractEpisodes(line.outerHtml(), config);
@@ -99,7 +100,8 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
     /**
      * 在线路容器中尝试多种策略提取线路名：
      * 1. from_title 规则在当前线路元素内提取
-     * 2. 向上查找包含按钮的父容器，再取首个按钮的文本/alt属性（处理热剧TV网等分离结构）
+     * 2. 向上查找包含线路按钮的父容器，按序号取对应按钮文本/alt属性
+     *    （处理热剧TV网等线路按钮与播放列表分离的结构）
      * 3. 默认"线路N"
      */
     private String extractLineName(Document doc, Element line, int lineIndex, String lineTitleRule) {
@@ -109,9 +111,9 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
             if (!name.isEmpty()) return name;
         }
 
-        // 策略2：向上找包含 .hl-tabs-btn 的父容器，取对应序号的按钮
+        // 策略2：向上逐级查找，找到包含 .hl-tabs-btn 的父容器后按序号取按钮
         Element parent = line;
-        for (int i = 0; i < 6; i++) {
+        for (int i = 0; i < 8; i++) {
             parent = parent.parent();
             if (parent == null) break;
             Elements buttons = parent.select("a.hl-tabs-btn, .hl-tabs-btn");
@@ -119,10 +121,12 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
                 int btnIdx = lineIndex - 1;
                 if (btnIdx >= 0 && btnIdx < buttons.size()) {
                     Element btn = buttons.get(btnIdx);
+                    // 优先取 alt 属性（如 alt="线路1"），其次取 text 内容
                     String name = btn.attr("alt").trim();
                     if (name.isEmpty()) name = btn.text().trim();
                     if (!name.isEmpty()) return name;
                 }
+                // 找到按钮容器后不再继续向上
                 break;
             }
         }
