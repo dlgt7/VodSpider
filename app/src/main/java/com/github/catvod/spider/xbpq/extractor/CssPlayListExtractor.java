@@ -27,6 +27,15 @@ import com.github.catvod.spider.xbpq.config.CssRule;
  */
 public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor {
 
+    /**
+     * 将 CSS 规则（含 p: 简写）转换为 Jsoup 可直接使用的选择器字符串。
+     * <p>完整路径：stripPrefix → parseCssShortSyntax，与 extractByCss 内部处理保持一致。
+     */
+    private static String toJsoupSelector(String rawRule) {
+        String stripped = CssRule.stripPrefix(rawRule);
+        return CssRule.parseCssShortSyntax(stripped);
+    }
+
     @Override
     public JSONArray extract(String html, JSONObject config, int sort) throws Exception {
         JSONArray playList = new JSONArray();
@@ -37,8 +46,8 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
 
             if (!lineArrayRule.isEmpty()) {
                 // 多线模式：每条线路内部提取集数
-                // stripPrefix 只去除 css:/css:// 前缀，保留 p: 简写原始选择器
-                String rawLineArrayRule = CssRule.stripPrefix(lineArrayRule);
+                // 完整解析规则（含 p: 简写转换），确保 Jsoup 能正确选择元素
+                String rawLineArrayRule = toJsoupSelector(lineArrayRule);
                 Elements lines = doc.select(rawLineArrayRule);
                 String lineTitleRule = config.optString("from_title", "");
 
@@ -66,7 +75,8 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
                 String playArrayRule = config.optString("play_array", "");
                 if (!playArrayRule.isEmpty() && CssRule.isCssRule(playArrayRule)) {
                     // CSS 模式：只取第一个匹配的容器
-                    Elements firstOnly = doc.select(CssRule.stripPrefix(playArrayRule));
+                    String rawPlayArrayRule = toJsoupSelector(playArrayRule);
+                    Elements firstOnly = doc.select(rawPlayArrayRule);
                     if (!firstOnly.isEmpty()) {
                         // 找到第一个父容器（ul），只在其内部提取
                         Element parentUl = firstOnly.first().parent();
@@ -149,12 +159,13 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
         String suffix = config.optString("play_suffix", "");
 
         Document doc = Jsoup.parse(scope);
-        Elements items = doc.select(CssRule.stripPrefix(arrayRule));
+        String rawArrayRule = toJsoupSelector(arrayRule);
+        Elements items = doc.select(rawArrayRule);
 
         for (Element item : items) {
             String itemHtml = item.outerHtml();
-            String title = CssRule.extractByCss(itemHtml, titleRule, 0);
-            String url = CssRule.extractByCss(itemHtml, urlRule, 0);
+            String title = titleRule.isEmpty() ? "" : CssRule.extractByCss(itemHtml, titleRule, 0);
+            String url = urlRule.isEmpty() ? "" : CssRule.extractByCss(itemHtml, urlRule, 0);
             if (url.isEmpty()) continue;
             episodes.put((title.isEmpty() ? String.valueOf(episodes.length() + 1) : title)
                     + "$" + prefix + url + suffix);
@@ -171,7 +182,7 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
         String lineArrayRule = config.optString("from_array", "");
         if (lineArrayRule.isEmpty()) return;
 
-        String rawLineArrayRule = CssRule.stripPrefix(lineArrayRule);
+        String rawLineArrayRule = toJsoupSelector(lineArrayRule);
         Elements lineContainers = doc.select(rawLineArrayRule);
         if (lineContainers.isEmpty()) return;
 
