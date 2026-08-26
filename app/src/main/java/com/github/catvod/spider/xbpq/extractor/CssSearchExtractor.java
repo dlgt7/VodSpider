@@ -47,17 +47,18 @@ public class CssSearchExtractor implements ExtractorFactory.SearchExtractor {
 
             for (Element container : containers) {
                 String itemHtml = container.outerHtml();
-                // 统一走 RegexFieldHelper，支持 || 备用规则、[替换]/[不含] 后处理器、p: 简写
-                String name = nameRule.isEmpty() ? "" : RegexFieldHelper.extract(itemHtml, nameRule);
-                String id = idRule.isEmpty() ? "" : RegexFieldHelper.extract(itemHtml, idRule);
+                // 性能修复：与 CssVideoListExtractor 一致，CSS 规则直接作用于 container Element，
+                // 避免每字段重复 Jsoup.parse；正则/截取规则仍用 itemHtml 字符串。
+                String name = nameRule.isEmpty() ? "" : RegexFieldHelper.extract(container, itemHtml, nameRule);
+                String id = idRule.isEmpty() ? "" : RegexFieldHelper.extract(container, itemHtml, idRule);
                 if (name.isEmpty() && id.isEmpty()) continue;
 
                 JSONObject video = new JSONObject();
                 if (!name.isEmpty()) video.put("vod_name", name);
                 if (!id.isEmpty()) video.put("vod_id", prefix + id + suffix);
-                String pic = picRule.isEmpty() ? "" : RegexFieldHelper.extract(itemHtml, picRule);
+                String pic = picRule.isEmpty() ? "" : RegexFieldHelper.extract(container, itemHtml, picRule);
                 if (!pic.isEmpty()) video.put("vod_pic", pic);
-                String remarks = remarksRule.isEmpty() ? "" : RegexFieldHelper.extract(itemHtml, remarksRule);
+                String remarks = remarksRule.isEmpty() ? "" : RegexFieldHelper.extract(container, itemHtml, remarksRule);
                 if (!remarks.isEmpty()) video.put("vod_remarks", remarks);
                 videos.put(video);
             }

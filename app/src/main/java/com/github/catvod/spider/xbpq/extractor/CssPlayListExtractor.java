@@ -116,8 +116,9 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
      */
     private String extractLineName(Document doc, Element line, int lineIndex, String lineTitleRule) {
         // 策略1：用 from_title 规则在线路元素内提取
+        // 性能修复：直接传入 line Element，避免重复 Jsoup.parse
         if (!lineTitleRule.isEmpty()) {
-            String name = RegexFieldHelper.extract(line.outerHtml(), lineTitleRule);
+            String name = RegexFieldHelper.extract(line, line.outerHtml(), lineTitleRule);
             if (!name.isEmpty()) return name;
         }
 
@@ -164,11 +165,12 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
         Elements items = doc.select(rawArrayRule);
 
         for (Element item : items) {
-            // 使用 item.outerHtml() 作为提取作用域，确保 url_title/url_url 中的 CSS 规则
-            // 可以正确限定在当前 li 内；RegexFieldHelper 支持 p: 简写、|| 备用、[替换]/[不含] 后处理器
+            // 性能修复：原实现每字段 RegexFieldHelper.extract(itemHtml, ...) 都触发一次
+            // Jsoup.parse（40 集 × 2 字段 = 80 次重复解析）。现直接传入 item Element，
+            // CSS 规则作用于元素子树；正则/截取规则仍用 itemHtml 字符串。
             String itemHtml = item.outerHtml();
-            String title = titleRule.isEmpty() ? "" : RegexFieldHelper.extract(itemHtml, titleRule);
-            String url = urlRule.isEmpty() ? "" : RegexFieldHelper.extract(itemHtml, urlRule);
+            String title = titleRule.isEmpty() ? "" : RegexFieldHelper.extract(item, itemHtml, titleRule);
+            String url = urlRule.isEmpty() ? "" : RegexFieldHelper.extract(item, itemHtml, urlRule);
             if (url.isEmpty()) continue;
             episodes.put((title.isEmpty() ? String.valueOf(episodes.length() + 1) : title)
                     + "$" + prefix + url + suffix);

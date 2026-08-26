@@ -57,6 +57,39 @@ public final class RegexFieldHelper {
     }
 
     /**
+     * 在指定范围内按规则提取单字段值（预解析 Element 版，性能优化）。
+     * <p>
+     * CSS 规则直接作用于已解析的 Element（Document 或列表项元素），
+     * 避免每个字段都触发一次 {@code Jsoup.parse}；
+     * 非 CSS 规则（&& 截取/正则/后处理器）仍作用于 scope 字符串。
+     *
+     * @param el    已解析的 Jsoup Element（Document 或单个列表项元素）
+     * @param scope 与 el 对应的 HTML 片段（供正则/截取类规则使用）
+     * @param rule  字段规则
+     * @return 提取值，失败返回空串
+     */
+    public static String extract(org.jsoup.nodes.Element el, String scope, String rule) {
+        if (el == null) return extract(scope, rule);
+        if (rule == null || rule.isEmpty()) return "";
+        // 防御性上限：与 String 版一致，超长规则视为非法丢弃
+        if (rule.length() > REGEX_RULE_MAX_LEN) return "";
+        String trimmed = rule.trim();
+        // || 备用规则：每条单独分流（混合 CSS/正则规则时可各自走最优路径）
+        String stripped = stripConcatWrap(trimmed);
+        if (stripped.contains("||")) {
+            for (String part : stripped.split("\\|\\|")) {
+                String val = extract(el, scope, part);
+                if (!val.isEmpty()) return val;
+            }
+            return "";
+        }
+        if (CssRule.isCssRule(stripped)) {
+            return CssRule.extractByCss(el, stripped, 0);
+        }
+        return extract(scope, trimmed);
+    }
+
+    /**
      * 在指定范围内按规则提取单字段值
      *
      * @param scope 单个列表项/线路/全集 HTML 片段
@@ -133,12 +166,19 @@ public final class RegexFieldHelper {
         }
 
         // [不含:xxx] 或 [不包含:xxx]
+        // 修复：原实现 xi + 4 < xe ? 5 : 4 的偏移判断依据是位置而非匹配的前缀形式，
+        // "[不含:abc]"（4字符前缀）会错误地 +5 起始，导致提取值丢失首字符。
+        // 现按实际匹配的前缀分别记录其长度。
         int xi = rule.indexOf("[不含:");
-        if (xi < 0) xi = rule.indexOf("[不包含:");
+        int xPrefixLen = 4;
+        if (xi < 0) {
+            xi = rule.indexOf("[不包含:");
+            xPrefixLen = 5;
+        }
         if (xi >= 0) {
             int xe = rule.indexOf("]", xi);
             if (xe > xi) {
-                pp.exclude = rule.substring(xi + (xi + 4 < xe ? 5 : 4), xe);
+                pp.exclude = rule.substring(xi + xPrefixLen, xe);
                 pp.rule = rule.substring(0, xi) + rule.substring(xe + 1);
             }
         }
@@ -313,8 +353,9 @@ public final class RegexFieldHelper {
             // 这是字段规则，不是数组规则，回退到正则匹配
         } else {
             // 尝试作为正则匹配（支持捕获组）
+            // 修复：改用 PATTERN_CACHE 缓存预编译 Pattern（原实现每次调用都 compile）
             try {
-                Matcher m = Pattern.compile(arrayRule, Pattern.DOTALL).matcher(content);
+                Matcher m = getOrCreatePattern(arrayRule).matcher(content);
                 while (m.find()) {
                     // 尝试使用捕获组（group(1) 优先）
                     if (m.groupCount() >= 1) {
