@@ -1609,6 +1609,17 @@ public class XBPQ extends Spider {
             if (body.isEmpty()) return null;
 
             String target = extractByRule(body, getVal("jump_url"));
+            if (!target.isEmpty() && target.contains("http")) {
+                // 已经是 URL（可能含百分号编码），尝试解码
+                return processDecodedVideoUrl(target);
+            }
+            // 提取结果可能是 player_aaaa JSON 或其他结构，尝试从 JSON 中取 url 字段
+            if (target.startsWith("{")) {
+                target = extractUrlFromJson(target);
+                if (!target.isEmpty()) {
+                    return processDecodedVideoUrl(target);
+                }
+            }
             if (target.isEmpty()) {
                 target = JsParser.matchVideoUrl(body);
             }
@@ -1618,6 +1629,32 @@ public class XBPQ extends Spider {
             SpiderDebug.log("跳转播放失败: " + e.getMessage());
             return null;
         }
+    }
+
+    /** 处理可能含百分号编码的 URL */
+    private JSONObject processDecodedVideoUrl(String url) throws Exception {
+        if (url.contains("%")) {
+            // 包含百分号编码，尝试解码
+            String decoded = java.net.URLDecoder.decode(url, "UTF-8");
+            if (decoded.startsWith("http")) {
+                return isVideoUrl(decoded) ? directResult(decoded) : sniffResult(decoded);
+            }
+        }
+        return isVideoUrl(url) ? directResult(url) : sniffResult(url);
+    }
+
+    /** 从 JSON 字符串中提取 url 字段（处理 player_aaaa 等播放器配置） */
+    private String extractUrlFromJson(String jsonText) {
+        try {
+            JSONObject json = new JSONObject(jsonText);
+            if (json.has("url")) {
+                String rawUrl = json.optString("url", "");
+                return rawUrl.trim();
+            }
+        } catch (Exception e) {
+            SpiderDebug.log("JSON 解析失败: " + e.getMessage());
+        }
+        return "";
     }
 
     /**
