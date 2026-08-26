@@ -129,19 +129,37 @@ public class JsonParser {
         return obj.optString(semantic, "");
     }
 
+    /** 递归深度上限（防御异常深层 JSON 导致栈溢出） */
+    private static final int FIND_MAX_DEPTH = 20;
+    /** 访问节点数上限（防御超大 JSON 对象） */
+    private static final int FIND_MAX_NODES = 5000;
+
     /**
-     * 递归查找JSON中的目标对象（用于搜索结果解析）
-     * <p>支持字段别名回退：idKey/nameKey 既可为标准键（vod_id/vod_name），
-     * 也可为语义名（vod_id/vod_name 已内置别名），自动兼容非标字段名。
+     * 在 JSON 树中递归查找同时含 idKey 和 nameKey 的 JSONObject（或包含该对象的 JSONArray）。
+     * <p>支持字段别名回退（HHkk/Gold 思路）。</p>
+     * <p>为防止外部响应极大/极深，本方法内部使用 20 层深度 + 5000 节点上限；
+     * 业务侧若需要自定义阈值请使用 {@link #findTarget(Object, String, String, int, int)}。</p>
      *
-     * @param obj      JSON对象或数组
-     * @param idKey    视频ID字段名（或语义名）
-     * @param nameKey  视频名称字段名（或语义名）
+     * @param obj 入口对象（JSONObject/JSONArray/其他）
+     * @param idKey   必含的 id 字段名
+     * @param nameKey 必含的 name 字段名
      * @return 包含id和name字段的对象，未找到返回null
      */
     public static Object findTarget(Object obj, String idKey, String nameKey) {
+        return findTarget(obj, idKey, nameKey, 0, 0);
+    }
+
+    /**
+     * 带深度/节点数限制的递归查找，避免外部响应巨大/嵌套过深导致 OOM/栈溢出。
+     *
+     * @param depth 当前递归深度（首次调用传 0）
+     * @param nodes 已访问节点数（首次调用传 0）
+     */
+    public static Object findTarget(Object obj, String idKey, String nameKey, int depth, int nodes) {
         try {
             if (obj == null) return null;
+            if (depth > FIND_MAX_DEPTH) return null;
+            if (nodes > FIND_MAX_NODES) return null;
             if (obj instanceof JSONObject) {
                 JSONObject object = (JSONObject) obj;
                 // 优先精确匹配，其次语义别名回退（借鉴 HHkk/Gold）
@@ -153,14 +171,14 @@ public class JsonParser {
                     for (int i = 0; i < nk.length(); i++) {
                         String key = nk.optString(i);
                         if (key == null) continue;
-                        Object r = findTarget(object.opt(key), idKey, nameKey);
+                        Object r = findTarget(object.opt(key), idKey, nameKey, depth + 1, nodes + 1);
                         if (r != null) return r;
                     }
                 }
             } else if (obj instanceof JSONArray) {
                 JSONArray array = (JSONArray) obj;
                 for (int i = 0; i < array.length(); i++) {
-                    Object r = findTarget(array.get(i), idKey, nameKey);
+                    Object r = findTarget(array.get(i), idKey, nameKey, depth + 1, nodes + 1);
                     if (r != null) return array;
                 }
             }
