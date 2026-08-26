@@ -27,6 +27,7 @@ public class RuleConfig {
 
     /**
      * 中文键名到英文键名的映射表（XBPQ 键名标准）
+     * 每个英文键仅保留一个最通用的中文别名，避免臃肿。
      */
     public static final Map<String, String> CHINESE_KEY_MAP = new LinkedHashMap<>();
 
@@ -34,8 +35,6 @@ public class RuleConfig {
         // ===== 基础配置 =====
         CHINESE_KEY_MAP.put("主页url", "homeUrl");
         CHINESE_KEY_MAP.put("请求头", "header");
-        CHINESE_KEY_MAP.put("头部集合", "header");
-        CHINESE_KEY_MAP.put("编码", "encoding");
         CHINESE_KEY_MAP.put("起始页", "startpage");
         CHINESE_KEY_MAP.put("首页", "firstpage");
         CHINESE_KEY_MAP.put("UserAgent", "User-Agent");
@@ -50,26 +49,17 @@ public class RuleConfig {
         CHINESE_KEY_MAP.put("分类数组", "cat_array");
         CHINESE_KEY_MAP.put("分类标题", "cat_title");
         CHINESE_KEY_MAP.put("分类ID", "cat_id");
-        CHINESE_KEY_MAP.put("分类筛选", "filter");
         CHINESE_KEY_MAP.put("筛选", "filter");
 
         // ===== 列表配置 =====
         CHINESE_KEY_MAP.put("数组", "list_array");
-        CHINESE_KEY_MAP.put("列表数组", "list_array");
         CHINESE_KEY_MAP.put("二次截取", "list_twice");
-        CHINESE_KEY_MAP.put("列表二次截取", "list_twice");
         CHINESE_KEY_MAP.put("标题", "list_name");
-        CHINESE_KEY_MAP.put("列表标题", "list_name");
         CHINESE_KEY_MAP.put("链接", "list_id");
-        CHINESE_KEY_MAP.put("列表链接", "list_id");
         CHINESE_KEY_MAP.put("图片", "list_pic");
-        CHINESE_KEY_MAP.put("列表图片", "list_pic");
         CHINESE_KEY_MAP.put("副标题", "list_remarks");
-        CHINESE_KEY_MAP.put("列表副标题", "list_remarks");
         CHINESE_KEY_MAP.put("链接前缀", "list_prefix");
-        CHINESE_KEY_MAP.put("列表链接前缀", "list_prefix");
         CHINESE_KEY_MAP.put("链接后缀", "list_suffix");
-        CHINESE_KEY_MAP.put("列表链接加后缀", "list_suffix");
         CHINESE_KEY_MAP.put("简介", "detail_content");
 
         // ===== 详情页配置 =====
@@ -78,18 +68,10 @@ public class RuleConfig {
         CHINESE_KEY_MAP.put("详情二次截取", "detail_twice");
         CHINESE_KEY_MAP.put("导演", "detail_director");
         CHINESE_KEY_MAP.put("主演", "detail_actor");
-        CHINESE_KEY_MAP.put("演员", "detail_actor");
-        CHINESE_KEY_MAP.put("影片类型", "detail_type");
         CHINESE_KEY_MAP.put("类型", "detail_type");
-        CHINESE_KEY_MAP.put("影片年代", "detail_year");
         CHINESE_KEY_MAP.put("年份", "detail_year");
-        CHINESE_KEY_MAP.put("年代", "detail_year");
-        CHINESE_KEY_MAP.put("影片地区", "detail_area");
         CHINESE_KEY_MAP.put("地区", "detail_area");
         CHINESE_KEY_MAP.put("状态", "detail_remarks");
-        CHINESE_KEY_MAP.put("备注", "detail_remarks");
-        CHINESE_KEY_MAP.put("剧情", "detail_content");
-        CHINESE_KEY_MAP.put("内容", "detail_content");
         CHINESE_KEY_MAP.put("详情分隔符", "detail_label_split");
         CHINESE_KEY_MAP.put("详情合并字段", "detail_content_merge");
 
@@ -99,15 +81,11 @@ public class RuleConfig {
         CHINESE_KEY_MAP.put("线路二次截取", "line_twice");
         CHINESE_KEY_MAP.put("播放数组", "play_array");
         CHINESE_KEY_MAP.put("播放列表", "url_array");
-        CHINESE_KEY_MAP.put("集数数组", "url_array");
         CHINESE_KEY_MAP.put("播放标题", "url_title");
-        CHINESE_KEY_MAP.put("集数标题", "url_title");
         CHINESE_KEY_MAP.put("播放链接", "url_url");
-        CHINESE_KEY_MAP.put("集数链接", "url_url");
         CHINESE_KEY_MAP.put("播放二次截取", "play_twice");
         CHINESE_KEY_MAP.put("播放链接前缀", "play_prefix");
         CHINESE_KEY_MAP.put("播放链接后缀", "play_suffix");
-        CHINESE_KEY_MAP.put("跳转播放链接", "jump_url");
         CHINESE_KEY_MAP.put("跳转播放", "jump_url");
         CHINESE_KEY_MAP.put("直接播放", "force_play");
         CHINESE_KEY_MAP.put("播放请求头", "play_header");
@@ -128,32 +106,22 @@ public class RuleConfig {
         CHINESE_KEY_MAP.put("搜索二次截取", "search_twice");
         CHINESE_KEY_MAP.put("搜索请求头", "search_header");
         CHINESE_KEY_MAP.put("搜索后缀", "search_suffix");
-        // 搜索链接后缀 与 搜索后缀 功能相同（见 XBPQ使用说明 4.6：搜索后缀=搜索链接后缀），
-        // 映射至同一英文键，不新增字段。
-        CHINESE_KEY_MAP.put("搜索链接后缀", "search_suffix");
         CHINESE_KEY_MAP.put("搜索链接前缀", "search_prefix");
 
         // ===== 其他配置 =====
-        CHINESE_KEY_MAP.put("图片代理前缀", "baseEncodeUrl");
-        CHINESE_KEY_MAP.put("图片代理", "PicNeedProxy");
-        CHINESE_KEY_MAP.put("代理密钥", "secretKey");
         CHINESE_KEY_MAP.put("过滤词", "filter_word");
         CHINESE_KEY_MAP.put("倒序", "reverse");
-        CHINESE_KEY_MAP.put("倒序播放", "reverse");
         CHINESE_KEY_MAP.put("免嗅", "manualVideoCheck");
         CHINESE_KEY_MAP.put("热门推荐", "hot_recommend");
-        CHINESE_KEY_MAP.put("列表显示", "list_display");
         CHINESE_KEY_MAP.put("线路合并", "merge_lines");
-        CHINESE_KEY_MAP.put("播放图片", "play_image");
         CHINESE_KEY_MAP.put("弹幕url", "danmuUrl");
-        CHINESE_KEY_MAP.put("站名", "siteName");
         CHINESE_KEY_MAP.put("超时", "timeout");
-        CHINESE_KEY_MAP.put("重试", "retry");
         CHINESE_KEY_MAP.put("重试次数", "retry");
-        CHINESE_KEY_MAP.put("maccms自动", "auto_maccms");
-        CHINESE_KEY_MAP.put("Maccms自动", "auto_maccms");
-        CHINESE_KEY_MAP.put("苹果cms自动", "auto_maccms");
         CHINESE_KEY_MAP.put("自动Maccms", "auto_maccms");
+        // SSRF 防护开关：allow_internal=1 放行内网地址（仅供自测）
+        CHINESE_KEY_MAP.put("允许内网", "allow_internal");
+        // Maccms 播放器分析模式：Anal_MacPlayer=2 时优先用正则解析脚本块
+        CHINESE_KEY_MAP.put("分析MacPlayer", "Anal_MacPlayer");
 
         // ===== 动态域名/变量链 =====
         CHINESE_KEY_MAP.put("域名-c", "dynamic_domain");
@@ -172,13 +140,43 @@ public class RuleConfig {
         CHINESE_KEY_MAP.put("排序", "排序");
         CHINESE_KEY_MAP.put("时段", "时段");
         CHINESE_KEY_MAP.put("顺序", "顺序");
-        CHINESE_KEY_MAP.put("类型", "筛选类型");
-
-        // ===== 额外详情字段 =====
-        CHINESE_KEY_MAP.put("影片状态", "detail_remarks");
-        CHINESE_KEY_MAP.put("影片年代", "detail_year");
-        CHINESE_KEY_MAP.put("影片类型", "detail_type");
-        CHINESE_KEY_MAP.put("影片地区", "detail_area");
+        // 修复：此处曾重复 put("类型", "筛选类型")，LinkedHashMap 后写覆盖，
+        // 导致详情配置中 "类型"→"detail_type" 的映射丢失（详情页类型字段提取失效）。
+        // 筛选类型字段已有独立中文别名（"筛选类型名称"/"筛选类型替换词"），无需占用 "类型"。
+        // 筛选数据来源（远程/EXT/内置）
+        CHINESE_KEY_MAP.put("筛选数据", "filterdata");
+        // 动态筛选字段名
+        CHINESE_KEY_MAP.put("筛选子分类名称", "fclass_name");
+        CHINESE_KEY_MAP.put("筛选子分类替换词", "fclass_value");
+        CHINESE_KEY_MAP.put("筛选类型名称", "fcatelog_name");
+        CHINESE_KEY_MAP.put("筛选类型替换词", "fcatelog_value");
+        CHINESE_KEY_MAP.put("筛选地区名称", "farea_name");
+        CHINESE_KEY_MAP.put("筛选地区替换词", "farea_value");
+        CHINESE_KEY_MAP.put("筛选年份名称", "fyear_name");
+        CHINESE_KEY_MAP.put("筛选年份替换词", "fyear_value");
+        CHINESE_KEY_MAP.put("筛选语言名称", "flang_name");
+        CHINESE_KEY_MAP.put("筛选语言替换词", "flang_value");
+        CHINESE_KEY_MAP.put("筛选排序名称", "fsort_name");
+        CHINESE_KEY_MAP.put("筛选排序替换词", "fsort_value");
+        // 分页起始页码
+        CHINESE_KEY_MAP.put("分类起始页码", "firstpage");
+        CHINESE_KEY_MAP.put("搜索起始页码", "sea_firstpage");
+        // 分类 JSON 模式字段
+        CHINESE_KEY_MAP.put("分类截取模式", "cat_mode");
+        CHINESE_KEY_MAP.put("分类JSON列表", "catjsonlist");
+        CHINESE_KEY_MAP.put("分类JSON名称", "catjsonname");
+        CHINESE_KEY_MAP.put("分类JSONID", "catjsonid");
+        CHINESE_KEY_MAP.put("分类JSON图片", "catjsonpic");
+        CHINESE_KEY_MAP.put("分类JSON状态", "catjsonstitle");
+        CHINESE_KEY_MAP.put("分类片单链接前缀", "cat_prefix");
+        CHINESE_KEY_MAP.put("分类片单链接后缀", "cat_suffix");
+        CHINESE_KEY_MAP.put("分类副标题", "cat_subtitle");
+        // 选集链接前后缀
+        CHINESE_KEY_MAP.put("选集链接加前缀", "epiurl_prefix");
+        CHINESE_KEY_MAP.put("选集链接加后缀", "epiurl_suffix");
+        // 视频过滤排除词
+        CHINESE_KEY_MAP.put("视频过滤词", "video_filter");
+        // 详情字段别名
         CHINESE_KEY_MAP.put("影片名称", "vod_name");
     }
 
@@ -206,11 +204,14 @@ public class RuleConfig {
                 }
             }
 
-            // 执行重命名：中文名 → 英文名（英文名已有非空值时保留英文，否则用中文名填充）
+            // 执行重命名：中文名 → 英文名。
+            // 修复：原实现仅当英文键不存在时才复制，若英文键存在但值为空白占位
+            //（"空"/"&&"/空串），中文键的实际值会被丢弃（与 javadoc 冲突策略矛盾）。
+            // 现按注释语义实现：英文键缺失或其值为空白占位时，允许中文值覆盖。
             for (String[] pair : toRename) {
                 String cnKey = pair[0];
                 String enKey = pair[1];
-                if (json.has(cnKey) && !json.has(enKey)) {
+                if (json.has(cnKey) && (!json.has(enKey) || isBlank(json.optString(enKey, "")))) {
                     json.put(enKey, json.get(cnKey));
                 }
             }

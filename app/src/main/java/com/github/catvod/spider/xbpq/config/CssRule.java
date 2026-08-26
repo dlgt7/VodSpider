@@ -349,36 +349,37 @@ public class CssRule {
     }
 
     /**
-     * 从已解析的Document中提取CSS规则匹配的内容（性能优化版）。
+     * 从已解析的 Element（Document 或单个列表项元素）中提取CSS规则匹配的内容（性能优化版）。
      * <p>
      * 修复说明：原 {@code extractByCss(String, String, int)} 每次调用都重新 {@code Jsoup.parse(html)}，
      * 当同一HTML需要提取多个字段时（如列表标题+链接+图片），会产生大量重复解析开销。
-     * 本方法允许调用方预先解析一次Document，后续所有字段提取都复用同一个Document实例。
+     * 本方法允许调用方传入已解析的 Document 或列表项 Element，
+     * 同一元素的多个字段提取都复用同一个实例，选择器作用于该元素子树。
      *
-     * @param doc    已解析的Jsoup Document（由调用方预先创建并复用）
+     * @param el      已解析的Jsoup Element/Document（由调用方预先创建并复用）
      * @param cssRule CSS规则
-     * @param index  元素索引（-1表示最后一个）
+     * @param index   元素索引（-1表示最后一个）
      * @return 提取的值
      */
-    public static String extractByCss(Document doc, String cssRule, int index) {
-        if (doc == null || !isCssRule(cssRule)) return "";
+    public static String extractByCss(Element el, String cssRule, int index) {
+        if (el == null || !isCssRule(cssRule)) return "";
         // 剥去 +( 和 +) 拼接包装（如 +(+p:a->href+) → p:a->href）
         cssRule = stripConcatWrap(cssRule);
         if (!isCssRule(cssRule)) return "";
         try {
             CssRuleInfo info = parseRule(cssRule);
             if (info == null) return "";
-            return extractFromDocument(doc, cssRule, info, index);
+            return extractFromDocument(el, cssRule, info, index);
         } catch (Exception e) {
-            SpiderDebug.log("extractByCss(Document) error: " + e.getMessage());
+            SpiderDebug.log("extractByCss(Element) error: " + e.getMessage());
             return "";
         }
     }
 
     /**
-     * 核心提取逻辑：从Document中按CssRuleInfo提取值（供两个重载方法共享）
+     * 核心提取逻辑：从Element中按CssRuleInfo提取值（供两个重载方法共享）
      */
-    private static String extractFromDocument(Document doc, String originalRule, CssRuleInfo info, int index) {
+    private static String extractFromDocument(Element doc, String originalRule, CssRuleInfo info, int index) {
         Elements elements = doc.select(info.selector);
 
         if (elements.isEmpty()) return "";
