@@ -239,7 +239,7 @@ public class XBPQ extends Spider {
      */
     private String expandVariables(String value) {
         if (value == null || value.isEmpty()) {
-            return executeTools(value);
+            return value;
         }
         boolean hasVar = value.indexOf('{') >= 0;
         if (!hasVar) {
