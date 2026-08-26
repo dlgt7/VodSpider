@@ -26,7 +26,7 @@ import com.github.catvod.spider.xbpq.utils.HtmlNodeHelper;
  *   <li>正则非法时按纯文本包含判断</li>
  * </ol>
  */
-final class RegexFieldHelper {
+public final class RegexFieldHelper {
 
     private RegexFieldHelper() {
     }
