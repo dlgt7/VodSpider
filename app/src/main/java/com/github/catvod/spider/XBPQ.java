@@ -1666,7 +1666,6 @@ public class XBPQ extends Spider {
             } catch (Exception ignored) {}
             return "";
         }
-        }
         return "";
     }
 
