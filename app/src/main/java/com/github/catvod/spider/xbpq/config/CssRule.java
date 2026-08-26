@@ -316,28 +316,65 @@ public class CssRule {
             CssRuleInfo info = parseRule(cssRule);
             if (info == null) return "";
 
+            // 修复：每次调用都重新Jsoup.parse()的性能问题——
+            // 对于同一HTML文档的多次字段提取，调用方应使用下方的Document重载版本。
+            // 此String版本保留用于向后兼容和单次调用场景。
             Document doc = Jsoup.parse(html);
-            Elements elements = doc.select(info.selector);
-
-            if (elements.isEmpty()) return "";
-
-            // 规则自身的 :eq(n)/[n]/:last 索引优先生效，入参 index 仅在规则未指定时兜底，
-            // 修复旧实现忽略 info.index 导致 :eq(n) 失效的问题
-            int useIndex = (index == 0) ? info.index : index;
-            Element target;
-            if (useIndex == LAST_INDEX) {
-                target = elements.last();
-            } else if (useIndex >= 0 && useIndex < elements.size()) {
-                target = elements.get(useIndex);
-            } else {
-                return "";
-            }
-
-            return extractValue(target, info.mode, info.attributeName);
+            return extractFromDocument(doc, cssRule, info, index);
         } catch (Exception e) {
             SpiderDebug.log("extractByCss error: " + e.getMessage());
             return "";
         }
+    }
+
+    /**
+     * 从已解析的Document中提取CSS规则匹配的内容（性能优化版）。
+     * <p>
+     * 修复说明：原 {@code extractByCss(String, String, int)} 每次调用都重新 {@code Jsoup.parse(html)}，
+     * 当同一HTML需要提取多个字段时（如列表标题+链接+图片），会产生大量重复解析开销。
+     * 本方法允许调用方预先解析一次Document，后续所有字段提取都复用同一个Document实例。
+     *
+     * @param doc    已解析的Jsoup Document（由调用方预先创建并复用）
+     * @param cssRule CSS规则
+     * @param index  元素索引（-1表示最后一个）
+     * @return 提取的值
+     */
+    public static String extractByCss(Document doc, String cssRule, int index) {
+        if (doc == null || !isCssRule(cssRule)) return "";
+        // 剥去 +( 和 +) 拼接包装（如 +(+p:a->href+) → p:a->href）
+        cssRule = stripConcatWrap(cssRule);
+        if (!isCssRule(cssRule)) return "";
+        try {
+            CssRuleInfo info = parseRule(cssRule);
+            if (info == null) return "";
+            return extractFromDocument(doc, cssRule, info, index);
+        } catch (Exception e) {
+            SpiderDebug.log("extractByCss(Document) error: " + e.getMessage());
+            return "";
+        }
+    }
+
+    /**
+     * 核心提取逻辑：从Document中按CssRuleInfo提取值（供两个重载方法共享）
+     */
+    private static String extractFromDocument(Document doc, String originalRule, CssRuleInfo info, int index) {
+        Elements elements = doc.select(info.selector);
+
+        if (elements.isEmpty()) return "";
+
+        // 规则自身的 :eq(n)/[n]/:last 索引优先生效，入参 index 仅在规则未指定时兜底，
+        // 修复旧实现忽略 info.index 导致 :eq(n) 失效的问题
+        int useIndex = (index == 0) ? info.index : index;
+        Element target;
+        if (useIndex == LAST_INDEX) {
+            target = elements.last();
+        } else if (useIndex >= 0 && useIndex < elements.size()) {
+            target = elements.get(useIndex);
+        } else {
+            return "";
+        }
+
+        return extractValue(target, info.mode, info.attributeName);
     }
 
     /**
