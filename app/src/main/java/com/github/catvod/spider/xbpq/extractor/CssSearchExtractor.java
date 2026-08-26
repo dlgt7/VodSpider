@@ -16,9 +16,10 @@ import com.github.catvod.spider.xbpq.config.CssRule;
  * <p>
  * 使用 search_array 选择器切分搜索结果项，在单项内提取
  * search_name/search_id/search_pic/search_remarks 字段。
+ * 字段提取统一走 {@link RegexFieldHelper}，完整支持 p: 简写、|| 备用规则、[替换]/[不含] 后处理器。
  *
  * @author CatVodSpider Team
- * @version 2.1
+ * @version 2.2
  */
 public class CssSearchExtractor implements ExtractorFactory.SearchExtractor {
 
@@ -40,20 +41,23 @@ public class CssSearchExtractor implements ExtractorFactory.SearchExtractor {
             String suffix = config.optString("search_suffix", "");
 
             Document doc = Jsoup.parse(html);
-            Elements containers = doc.select(CssRule.stripPrefix(containerRule));
+            // 完整转换：stripPrefix → parseCssShortSyntax，确保 p: 简写正确解析
+            String selector = CssRule.parseCssShortSyntax(CssRule.stripPrefix(containerRule));
+            Elements containers = doc.select(selector);
 
             for (Element container : containers) {
                 String itemHtml = container.outerHtml();
-                String name = CssRule.extractByCss(itemHtml, nameRule, 0);
-                String id = CssRule.extractByCss(itemHtml, idRule, 0);
+                // 统一走 RegexFieldHelper，支持 || 备用规则、[替换]/[不含] 后处理器、p: 简写
+                String name = nameRule.isEmpty() ? "" : RegexFieldHelper.extract(itemHtml, nameRule);
+                String id = idRule.isEmpty() ? "" : RegexFieldHelper.extract(itemHtml, idRule);
                 if (name.isEmpty() && id.isEmpty()) continue;
 
                 JSONObject video = new JSONObject();
                 if (!name.isEmpty()) video.put("vod_name", name);
                 if (!id.isEmpty()) video.put("vod_id", prefix + id + suffix);
-                String pic = CssRule.extractByCss(itemHtml, picRule, 0);
+                String pic = picRule.isEmpty() ? "" : RegexFieldHelper.extract(itemHtml, picRule);
                 if (!pic.isEmpty()) video.put("vod_pic", pic);
-                String remarks = CssRule.extractByCss(itemHtml, remarksRule, 0);
+                String remarks = remarksRule.isEmpty() ? "" : RegexFieldHelper.extract(itemHtml, remarksRule);
                 if (!remarks.isEmpty()) video.put("vod_remarks", remarks);
                 videos.put(video);
             }

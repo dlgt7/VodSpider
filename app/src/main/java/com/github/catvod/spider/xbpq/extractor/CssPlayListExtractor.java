@@ -23,7 +23,7 @@ import com.github.catvod.spider.xbpq.config.CssRule;
  * 输出结构：[{name: 线路名, episodes: ["标题$链接", ...]}, ...]
  *
  * @author CatVodSpider Team
- * @version 2.1
+ * @version 2.2
  */
 public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor {
 
@@ -46,7 +46,6 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
 
             if (!lineArrayRule.isEmpty()) {
                 // 多线模式：每条线路内部提取集数
-                // 完整解析规则（含 p: 简写转换），确保 Jsoup 能正确选择元素
                 String rawLineArrayRule = toJsoupSelector(lineArrayRule);
                 Elements lines = doc.select(rawLineArrayRule);
                 String lineTitleRule = config.optString("from_title", "");
@@ -57,6 +56,7 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
                     // 提取线路名：支持 from_title CSS 规则、向上查找同级别按钮、默认"线路N"
                     String lineName = extractLineName(doc, line, lineIndex, lineTitleRule);
 
+                    // 使用 outerHtml 作为范围，让内部规则（url_title/url_url）在正确作用域内提取
                     JSONArray episodes = extractEpisodes(line.outerHtml(), config);
                     if (episodes.length() == 0) continue;
 
@@ -71,7 +71,7 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
                     extractMultiContainerLines(doc, config, playList);
                 }
             } else {
-                // 单线模式：全文提取集数，限制只选择第一个可见的播放列表
+                // 单线模式：全文提取集数
                 String playArrayRule = config.optString("play_array", "");
                 if (!playArrayRule.isEmpty() && CssRule.isCssRule(playArrayRule)) {
                     // CSS 模式：只取第一个匹配的容器
@@ -117,7 +117,7 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
     private String extractLineName(Document doc, Element line, int lineIndex, String lineTitleRule) {
         // 策略1：用 from_title 规则在线路元素内提取
         if (!lineTitleRule.isEmpty()) {
-            String name = CssRule.extractByCss(line.outerHtml(), lineTitleRule, 0);
+            String name = RegexFieldHelper.extract(line.outerHtml(), lineTitleRule);
             if (!name.isEmpty()) return name;
         }
 
@@ -146,6 +146,7 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
 
     /**
      * 在范围内用 url_array（或 play_array）选择器提取集数（"标题$链接"列表）
+     * <p>使用 RegexFieldHelper.extract 统一处理：支持 p: 简写、|| 备用规则、后处理器等。
      */
     private JSONArray extractEpisodes(String scope, JSONObject config) throws Exception {
         JSONArray episodes = new JSONArray();
@@ -163,9 +164,11 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
         Elements items = doc.select(rawArrayRule);
 
         for (Element item : items) {
+            // 使用 item.outerHtml() 作为提取作用域，确保 url_title/url_url 中的 CSS 规则
+            // 可以正确限定在当前 li 内；RegexFieldHelper 支持 p: 简写、|| 备用、[替换]/[不含] 后处理器
             String itemHtml = item.outerHtml();
-            String title = titleRule.isEmpty() ? "" : CssRule.extractByCss(itemHtml, titleRule, 0);
-            String url = urlRule.isEmpty() ? "" : CssRule.extractByCss(itemHtml, urlRule, 0);
+            String title = titleRule.isEmpty() ? "" : RegexFieldHelper.extract(itemHtml, titleRule);
+            String url = urlRule.isEmpty() ? "" : RegexFieldHelper.extract(itemHtml, urlRule);
             if (url.isEmpty()) continue;
             episodes.put((title.isEmpty() ? String.valueOf(episodes.length() + 1) : title)
                     + "$" + prefix + url + suffix);
@@ -193,6 +196,7 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
             lineIndex++;
             String lineName = extractLineName(doc, container, lineIndex, lineTitleRule);
 
+            // 使用 container 的 outerHtml 作为提取范围
             String containerHtml = container.outerHtml();
             JSONArray episodes = extractEpisodes(containerHtml, config);
             if (episodes.length() == 0) continue;

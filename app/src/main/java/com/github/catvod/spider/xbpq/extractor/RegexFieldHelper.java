@@ -31,13 +31,15 @@ final class RegexFieldHelper {
     private RegexFieldHelper() {
     }
 
-    /**
-     * 正则Pattern缓存（修复：避免高频调用路径每次都重新编译正则表达式）
+    /** 正则Pattern缓存（修复：避免高频调用路径每次都重新编译正则表达式）
      * <p>
      * key = "规则字符串"（含DOTALL标志后缀），value = 预编译的Pattern实例。
      * 使用 ConcurrentHashMap 保证线程安全，无界缓存（XBPQ规则数量通常有限）。
      */
     private static final Map<String, Pattern> PATTERN_CACHE = new ConcurrentHashMap<>();
+
+    /** 规则字符串最大长度（防御性上限，防止恶意超长规则 ReDoS/OOM） */
+    private static final int REGEX_RULE_MAX_LEN = 4096;
 
     /** 缓存key前缀，用于标记DOTALL标志 */
     private static final String DOTALL_SUFFIX = ":dotall";
@@ -63,6 +65,8 @@ final class RegexFieldHelper {
      */
     static String extract(String scope, String rule) {
         if (scope == null || scope.isEmpty() || rule == null || rule.isEmpty()) return "";
+        // 防御性上限：超长规则直接返回空，防止恶意/损坏规则导致 ReDoS 或 OOM
+        if (rule.length() > REGEX_RULE_MAX_LEN) return "";
         rule = rule.trim();
 
         // 剥去 +(+xxx+) 拼接包装

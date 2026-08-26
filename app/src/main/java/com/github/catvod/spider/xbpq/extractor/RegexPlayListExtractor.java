@@ -131,7 +131,9 @@ public class RegexPlayListExtractor implements ExtractorFactory.PlayListExtracto
         if (CssRule.isCssRule(arrayRule)) {
             try {
                 Document doc = Jsoup.parse(scope);
-                for (Element el : doc.select(CssRule.stripPrefix(arrayRule))) {
+                // 完整转换：stripPrefix → parseCssShortSyntax，确保 p: 简写正确解析
+                String selector = CssRule.parseCssShortSyntax(CssRule.stripPrefix(arrayRule));
+                for (Element el : doc.select(selector)) {
                     items.add(el.outerHtml());
                 }
             } catch (Exception ignored) {
