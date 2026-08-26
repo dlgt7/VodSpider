@@ -214,7 +214,7 @@ public class XBPQ extends Spider {
 
     /** 读规则值（"空"/"&&"占位视为未配置；rule 为 null 时安全返回默认值） */
     private String getVal(String key) {
-        return expandVariables(RuleConfig.getRuleVal(rule, key));
+        return stripBackticks(expandVariables(RuleConfig.getRuleVal(rule, key)));
     }
 
     /**
@@ -264,6 +264,17 @@ public class XBPQ extends Spider {
         }
         value = applyReplaceInValue(value);
         return executeTools(value);
+    }
+
+    /**
+     * 去除字符串首尾的反引号（`），兼容部分配置习惯中使用反引号包裹 URL 的写法。
+     */
+    private static String stripBackticks(String value) {
+        if (value == null || value.isEmpty()) return value;
+        if (value.length() >= 2 && value.charAt(0) == '`' && value.charAt(value.length() - 1) == '`') {
+            return value.substring(1, value.length() - 1);
+        }
+        return value;
     }
 
     /**
