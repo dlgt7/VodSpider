@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import com.github.catvod.crawler.SpiderDebug;
 
@@ -16,16 +17,28 @@ import com.github.catvod.crawler.SpiderDebug;
  * <p>
  * 基于OkHttp的HTTP客户端实现，提供完整的网络请求能力。
  * 包含SSRF防护、WAF绕过、Cookie管理等增强功能。
+ * <p>
+ * 优化说明：
+ * <ul>
+ *   <li>host 内网判定结果缓存：原实现每次请求都 InetAddress.getByName(host)
+ *       做一次同步 DNS 解析（OkHttp 实际请求时还会再解析一次），串行翻页/搜索时
+ *       双重 DNS 开销显著；现按 host 缓存判定结果（域名数有限，设上限防膨胀）。</li>
+ *   <li>lastStatusCode 加 volatile：多线程共享状态需保证可见性。</li>
+ * </ul>
  *
  * @author CatVodSpider Team
- * @version 2.0
+ * @version 2.1
  */
 public class OkHttpWrapper implements HttpClient {
 
-    private static final Map<String, String> INTERNAL_IPS = new HashMap<>();
+    private static final Map<String, String> INTERNAL_IPS = new ConcurrentHashMap<>();
+    /** host → 是否内网 判定缓存（消除每次请求的预解析 DNS 开销） */
+    private static final Map<String, Boolean> INTERNAL_HOST_CACHE = new ConcurrentHashMap<>();
+    /** 判定缓存上限（防异常场景下无限膨胀） */
+    private static final int INTERNAL_HOST_CACHE_MAX = 1024;
     private final Map<String, String> defaultHeaders;
     private final List<HttpInterceptor> interceptors;
-    private int lastStatusCode = 0;
+    private volatile int lastStatusCode = 0;
 
     /** 默认超时（秒） */
     private static final int DEFAULT_TIMEOUT_SECONDS = 10;
@@ -102,18 +115,28 @@ public class OkHttpWrapper implements HttpClient {
             if (h.startsWith("[") && h.endsWith("]")) {
                 h = h.substring(1, h.length() - 1);
             }
+            // 命中缓存直接返回，避免每次请求都做一次预解析 DNS 查询
+            Boolean cached = INTERNAL_HOST_CACHE.get(h);
+            if (cached != null) return cached;
+            boolean internal;
             try {
                 InetAddress addr = InetAddress.getByName(h);
-                if (isInternalAddress(addr)) return true;
+                internal = isInternalAddress(addr);
             } catch (UnknownHostException e) {
                 // 解析失败：仅对明显内网关键字主机名拦截；
                 // 普通公网域名解析抖动时放行，避免误杀正常站点（解析失败本身无法连到内网）
+                internal = false;
                 for (String key : INTERNAL_IPS.keySet()) {
-                    if (h.contains(key.toLowerCase())) return true;
+                    if (h.contains(key.toLowerCase())) {
+                        internal = true;
+                        break;
+                    }
                 }
-                return false;
             }
-            return false;
+            if (INTERNAL_HOST_CACHE.size() < INTERNAL_HOST_CACHE_MAX) {
+                INTERNAL_HOST_CACHE.put(h, internal);
+            }
+            return internal;
         } catch (Exception e) {
             SpiderDebug.log("URL解析失败: " + urlStr + ", 错误: " + e.getMessage());
             return true;

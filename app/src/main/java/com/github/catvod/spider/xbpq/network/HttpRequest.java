@@ -60,6 +60,12 @@ public class HttpRequest {
 
     /**
      * 构建POST请求
+     * <p>
+     * 修复说明：OkHttp 的 RequestBody.contentType 会覆盖请求头中的 Content-Type。
+     * 原实现无显式 contentType 时默认 RequestBody.create(MediaType.parse("application/json"), body)，
+     * 导致调用方在 headers 中设置的 "application/x-www-form-urlencoded" 等表单类型被强制覆盖，
+     * ";post" 搜索的表单请求被以 JSON Content-Type 发出、服务端 $_POST 解析失败。
+     * 现优先级：显式 contentType > 请求头 Content-Type > 默认 application/json。
      */
     public Request toPostRequest() {
         Request.Builder builder = new Request.Builder().url(url);
@@ -67,14 +73,29 @@ public class HttpRequest {
 
         RequestBody requestBody = null;
         if (body != null && !body.isEmpty()) {
-            if (contentType != null) {
-                requestBody = RequestBody.create(contentType, body);
-            } else {
-                requestBody = RequestBody.create(MediaType.parse("application/json"), body);
+            MediaType ct = contentType != null ? contentType : findHeaderContentType();
+            if (ct == null) {
+                ct = MediaType.parse("application/json");
             }
+            requestBody = RequestBody.create(ct, body);
         }
 
         return builder.post(requestBody != null ? requestBody : RequestBody.create(new byte[0])).build();
+    }
+
+    /** 从请求头中查找 Content-Type（大小写不敏感） */
+    private MediaType findHeaderContentType() {
+        if (headers == null) return null;
+        for (Map.Entry<String, String> entry : headers.entrySet()) {
+            if ("Content-Type".equalsIgnoreCase(entry.getKey())) {
+                String value = entry.getValue();
+                if (value != null && !value.isEmpty()) {
+                    return MediaType.parse(value);
+                }
+                return null;
+            }
+        }
+        return null;
     }
 
     private void addHeaders(Request.Builder builder) {
