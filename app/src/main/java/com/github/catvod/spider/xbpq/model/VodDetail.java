@@ -24,7 +24,8 @@ public class VodDetail {
     }
 
     public VodDetail(VodItem item) {
-        this.item = item;
+        // 防御：传入 null 时使用空 VodItem，避免后续 item.toJSON() NPE
+        this.item = item != null ? item : new VodItem();
         this.playSources = new ArrayList<>();
         this.episodes = new ArrayList<>();
     }

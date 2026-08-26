@@ -27,6 +27,8 @@ public class VodItem {
     public VodItem() {}
 
     public VodItem(JSONObject json) {
+        // 防御：传入 null 时使用空对象，避免 NPE（由 detailExtractor 返回空时触发）
+        if (json == null) json = new JSONObject();
         this.vod_id = json.optString("vod_id", "");
         this.vod_name = json.optString("vod_name", "");
         this.vod_pic = json.optString("vod_pic", "");
