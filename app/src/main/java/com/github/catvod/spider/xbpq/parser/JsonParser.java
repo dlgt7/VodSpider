@@ -8,19 +8,21 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * JSON提取器
- * <p>
- * 提供JSON数据的解析和提取能力，支持JSONP包装响应、嵌套对象递归查找等。
+ * JSON parser utility.
+ * Supports JSONP unwrapping, nested object lookup, and comment stripping.
  */
 public class JsonParser {
 
-    /** JSONP包装模式：callback({...}) */
+    /** JSONP wrapper pattern: callback({...}) */
     private static final Pattern P_JSONP_WRAP = Pattern.compile(
             "^[^(]+\\((.*)\\)\\s*;?\\s*$",
             Pattern.DOTALL
     );
 
-    /** 去除 JSON 字符串中的注释（支持 // 行注释和 /* */ 块注释），不包含字符串字面量内的注释。 */
+    /**
+     * Remove comments (// line and /* */ block) from a JSON string.
+     * Does NOT remove // or /* inside string literals.
+     */
     public static String stripComments(String json) {
         if (json == null || json.isEmpty()) return json;
         StringBuilder sb = new StringBuilder();
@@ -49,11 +51,11 @@ public class JsonParser {
                     sb.append(c);
                 } else if (c == '/' && i + 1 < json.length()) {
                     if (json.charAt(i + 1) == '/') {
-                        // 行注释：跳过至行尾
+                        // line comment: skip to end of line
                         while (i < json.length() && json.charAt(i) != '\n') i++;
                         continue;
                     } else if (json.charAt(i + 1) == '*') {
-                        // 块注释：跳过至 */
+                        // block comment: skip to */
                         i += 2;
                         while (i + 1 < json.length() && !(json.charAt(i) == '*' && json.charAt(i + 1) == '/')) i++;
                         i += 2;
@@ -71,10 +73,10 @@ public class JsonParser {
     }
 
     /**
-     * 去除JSONP包装
+     * Strip JSONP wrapper, returning pure JSON string.
      *
-     * @param jsonp JSONP格式字符串
-     * @return 纯JSON字符串
+     * @param jsonp JSONP-formatted string
+     * @return raw JSON string
      */
     public static String stripJsonp(String jsonp) {
         if (jsonp == null || jsonp.isEmpty()) return jsonp;
@@ -90,11 +92,11 @@ public class JsonParser {
     }
 
     /**
-     * 解析JSON字符串
+     * Parse a JSON string into a JSONObject.
      *
-     * @param json JSON字符串
-     * @return JSONObject
-     * @throws JSONException 解析失败时抛出
+     * @param json JSON string
+     * @return parsed JSONObject
+     * @throws JSONException if parsing fails
      */
     public static JSONObject parseObject(String json) throws JSONException {
         if (json == null || json.isEmpty()) return new JSONObject();
@@ -102,10 +104,10 @@ public class JsonParser {
     }
 
     /**
-     * 解析JSON字符串（不抛异常）
+     * Parse a JSON string into a JSONObject (non-throwing).
      *
-     * @param json JSON字符串
-     * @return JSONObject，解析失败返回null
+     * @param json JSON string
+     * @return parsed JSONObject, or null on failure
      */
     public static JSONObject safeParseObject(String json) {
         try {
@@ -116,11 +118,11 @@ public class JsonParser {
     }
 
     /**
-     * 解析JSON数组字符串
+     * Parse a JSON string into a JSONArray.
      *
-     * @param json JSON字符串
-     * @return JSONArray
-     * @throws JSONException 解析失败时抛出
+     * @param json JSON string
+     * @return parsed JSONArray
+     * @throws JSONException if parsing fails
      */
     public static JSONArray parseArray(String json) throws JSONException {
         if (json == null || json.isEmpty()) return new JSONArray();
@@ -128,7 +130,7 @@ public class JsonParser {
         if (cleaned.startsWith("[")) {
             return new JSONArray(cleaned);
         }
-        // 如果是对象，尝试提取第一个数组值
+        // if it is an object, try to extract the first array value
         JSONObject obj = new JSONObject(cleaned);
         JSONArray nk = obj.names();
         if (nk != null) {
@@ -145,16 +147,16 @@ public class JsonParser {
     }
 
     /**
-     * 视频字段候选别名表（借鉴 HHkk 的 id→playlet_id、Gold 的 episodeList→episodelist
-     * 字段别名回退思路）。当规则 JSON 使用非标字段名时，仍能映射到标准语义。
-     * 顺序即优先级，命中第一个非空值。
+     * Video field alias table.
+     * Non-standard field names (id, name, pic, etc.) map to standard vod_* keys.
+     * Order = priority; first non-empty match wins.
      */
     private static final String[][] FIELD_ALIASES = {
             {"vod_id", "id", "vodId", "playlet_id", "book_id", "ent_id", "vid", "movie_id", "oneId", "roomId", "series_id", "bookId", "duanjuId"},
             {"vod_name", "name", "title", "vodName", "playlet_title", "book_name", "titleTxt", "movie_name", "book_name", "video_name", "show_name"},
-            {"vod_pic", "pic", "cover", "img", "image", "poster", "cover_url", "playlet_poster", "vodPic", "cdncover", "horzPoster", "vertPoster", "thumb_url", "image_link", "big_pic", "thumbnail", "big_pic", "verticalPic"},
+            {"vod_pic", "pic", "cover", "img", "image", "poster", "cover_url", "playlet_poster", "vodPic", "cdncover", "horzPoster", "vertPoster", "thumb_url", "image_link", "big_pic", "thumbnail", "verticalPic"},
             {"vod_remarks", "remarks", "remark", "note", "subtitle", "tag", "episodes_num_text", "upinfo", "total_episode_num", "totalChapterNum", "vod_total", "episodeCount", "viewCount"},
-            {"vod_content", "content", "desc", "description", "intro", "introduce", "abstract", "book_abstract_v2", "vod_blurb", "vod_content", "blurb", "synopsis", "plot", "info", "detail", "introduction", "book_intro"},
+            {"vod_content", "content", "desc", "description", "intro", "introduce", "abstract", "book_abstract_v2", "vod_blurb", "blurb", "synopsis", "plot", "info", "detail", "introduction", "book_intro"},
             {"vod_director", "director", "vod_director", "dz", "daoyan", "direct"},
             {"vod_actor", "actor", "vod_actor", "zy", "zhuyan", "actors", "cast", "starring", "author"},
             {"vod_area", "area", "vod_area", "region", "country", "dq", "diqu"},
@@ -162,7 +164,7 @@ public class JsonParser {
             {"type_name", "type", "vod_type", "typename", "class", "classify", "category", "genre", "kind", "type_name"}
     };
 
-    /** 取字段值：按语义别名依次回退（借鉴 HHkk/Gold 的多键回退） */
+    /** Pick field value by semantic key, falling back to aliases (HHkk/Gold approach). */
     public static String pickField(JSONObject obj, String semantic) {
         for (String[] group : FIELD_ALIASES) {
             if (group[0].equals(semantic)) {
@@ -175,35 +177,32 @@ public class JsonParser {
                 return "";
             }
         }
-        // 未知语义：直接取键
+        // unknown semantic: direct lookup
         return obj.optString(semantic, "");
     }
 
-    /** 递归深度上限（防御异常深层 JSON 导致栈溢出） */
+    /** Recursion depth limit (guard against stack overflow on deeply nested JSON). */
     private static final int FIND_MAX_DEPTH = 20;
-    /** 访问节点数上限（防御超大 JSON 对象） */
+    /** Max visited nodes (guard against OOM on huge JSON). */
     private static final int FIND_MAX_NODES = 5000;
 
     /**
-     * 在 JSON 树中递归查找同时含 idKey 和 nameKey 的 JSONObject（或包含该对象的 JSONArray）。
-     * <p>支持字段别名回退（HHkk/Gold 思路）。</p>
-     * <p>为防止外部响应极大/极深，本方法内部使用 20 层深度 + 5000 节点上限；
-     * 业务侧若需要自定义阈值请使用 {@link #findTarget(Object, String, String, int, int)}。</p>
+     * Recursively find a JSONObject (or JSONArray containing one) that has both idKey and nameKey.
      *
-     * @param obj 入口对象（JSONObject/JSONArray/其他）
-     * @param idKey   必含的 id 字段名
-     * @param nameKey 必含的 name 字段名
-     * @return 包含id和name字段的对象，未找到返回null
+     * @param obj     root object/array
+     * @param idKey   required id field name
+     * @param nameKey required name field name
+     * @return matching object, or null
      */
     public static Object findTarget(Object obj, String idKey, String nameKey) {
         return findTarget(obj, idKey, nameKey, 0, 0);
     }
 
     /**
-     * 带深度/节点数限制的递归查找，避免外部响应巨大/嵌套过深导致 OOM/栈溢出。
+     * Recursively find with depth/node limits.
      *
-     * @param depth 当前递归深度（首次调用传 0）
-     * @param nodes 已访问节点数（首次调用传 0）
+     * @param depth current recursion depth (pass 0 on first call)
+     * @param nodes current visited node count (pass 0 on first call)
      */
     public static Object findTarget(Object obj, String idKey, String nameKey, int depth, int nodes) {
         try {
@@ -212,7 +211,6 @@ public class JsonParser {
             if (nodes > FIND_MAX_NODES) return null;
             if (obj instanceof JSONObject) {
                 JSONObject object = (JSONObject) obj;
-                // 优先精确匹配，其次语义别名回退（借鉴 HHkk/Gold）
                 boolean idOk = object.has(idKey) || hasAlias(object, idKey);
                 boolean nameOk = object.has(nameKey) || hasAlias(object, nameKey);
                 if (idOk && nameOk) return object;
@@ -238,7 +236,7 @@ public class JsonParser {
         return null;
     }
 
-    /** 对象是否含有某语义的任一别名键（借鉴 HHkk 字段别名回退） */
+    /** Check if obj has any alias of the given semantic key with a non-empty value. */
     private static boolean hasAlias(JSONObject obj, String semantic) {
         for (String[] group : FIELD_ALIASES) {
             if (group[0].equals(semantic)) {
@@ -251,14 +249,7 @@ public class JsonParser {
         return false;
     }
 
-    /**
-     * 从JSON对象中安全获取字符串值
-     *
-     * @param json         JSON对象
-     * @param key          键名
-     * @param defaultValue 默认值
-     * @return 字符串值
-     */
+    /** Get string value safely. */
     public static String getString(JSONObject json, String key, String defaultValue) {
         if (json == null || key == null) return defaultValue;
         try {
@@ -269,14 +260,7 @@ public class JsonParser {
         }
     }
 
-    /**
-     * 从JSON对象中安全获取整数值
-     *
-     * @param json         JSON对象
-     * @param key          键名
-     * @param defaultValue 默认值
-     * @return 整数值
-     */
+    /** Get int value safely. */
     public static int getInt(JSONObject json, String key, int defaultValue) {
         if (json == null || key == null) return defaultValue;
         try {
@@ -286,14 +270,7 @@ public class JsonParser {
         }
     }
 
-    /**
-     * 从JSON对象中安全获取布尔值
-     *
-     * @param json         JSON对象
-     * @param key          键名
-     * @param defaultValue 默认值
-     * @return 布尔值
-     */
+    /** Get boolean value safely. */
     public static boolean getBoolean(JSONObject json, String key, boolean defaultValue) {
         if (json == null || key == null) return defaultValue;
         try {
@@ -303,13 +280,7 @@ public class JsonParser {
         }
     }
 
-    /**
-     * 从JSON对象中安全获取嵌套对象
-     *
-     * @param json JSON对象
-     * @param key  键名
-     * @return 嵌套对象，不存在返回null
-     */
+    /** Get nested JSONObject safely. */
     public static JSONObject getObject(JSONObject json, String key) {
         if (json == null || key == null) return null;
         try {
@@ -321,13 +292,7 @@ public class JsonParser {
         }
     }
 
-    /**
-     * 从JSON对象中安全获取数组
-     *
-     * @param json JSON对象
-     * @param key  键名
-     * @return 数组，不存在返回null
-     */
+    /** Get nested JSONArray safely. */
     public static JSONArray getArray(JSONObject json, String key) {
         if (json == null || key == null) return null;
         try {
@@ -339,12 +304,7 @@ public class JsonParser {
         }
     }
 
-    /**
-     * 扁平化JSON对象（将所有键值对展开到顶层）
-     *
-     * @param json JSON对象
-     * @return 扁平化的JSON对象
-     */
+    /** Flatten a JSONObject into a single-level map with dot-notation keys. */
     public static JSONObject flatten(JSONObject json) {
         JSONObject result = new JSONObject();
         if (json == null) return result;
