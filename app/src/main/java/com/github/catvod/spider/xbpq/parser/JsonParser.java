@@ -20,10 +20,7 @@ public class JsonParser {
             Pattern.DOTALL
     );
 
-    /**
-     * Remove comments (// line and /* */ block) from JSON string.
-     * Note: does not remove // or /* inside string literals.
-     */
+    /** 去除 JSON 字符串中的注释（支持 // 行注释和 /* */ 块注释），不包含字符串字面量内的注释。 */
     public static String stripComments(String json) {
         if (json == null || json.isEmpty()) return json;
         StringBuilder sb = new StringBuilder();
