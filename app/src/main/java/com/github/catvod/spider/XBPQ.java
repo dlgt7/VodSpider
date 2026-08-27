@@ -67,9 +67,6 @@ public class XBPQ extends Spider {
             ".m3u8", ".mp4", ".flv", ".avi", ".mkv", ".rmvb", ".wmv", ".mov"
     };
 
-    /** 默认音频扩展名（video_format 未配置时使用） */
-    private static final String[] DEFAULT_AUDIO_EXTS = {".mp3", ".m4a", ".wav", ".flac", ".aac"};
-
     // 分页统计正则
     private static final Pattern P_PAGE_TOTAL = Pattern.compile("共(\\d+)页");
     private static final Pattern P_TOTAL_COUNT = Pattern.compile("共(\\d+)条");
@@ -108,10 +105,7 @@ public class XBPQ extends Spider {
             "favicon", "logo", "logo_placeholder", "pic-loading", "noimage"
     };
 
-    /** 常见懒加载图片属性优先级链（借鉴 Bttwo/Mtyy/Hgdj 的 firstNonEmpty 思路） */
-    private static final String[] LAZY_IMG_ATTRS = {
-            "data-original", "data-src", "data-lazy-src", "data-lazyload", "data-echo", "src"
-    };
+
 
     /** HTML 实体归一表（借鉴 FengYe normalizeUrl & 各爬虫对 &#58; 的处理） */
     private static final String[][] HTML_ENTITIES = {
@@ -131,7 +125,6 @@ public class XBPQ extends Spider {
     //（原实现每次调用都进 synchronized 方法，锁释放隐式保证可见性但有无谓锁开销）
     private String ext;
     private volatile JSONObject rule;
-    private String cachedHost; // absUrl 结果缓存，避免每次重复 hostOf(getHomeUrl())
     private static HttpClient httpClient;
     private volatile boolean reverse;
     private volatile boolean mergeLines;
@@ -325,14 +318,15 @@ public class XBPQ extends Spider {
         m.reset();
         while (m.find()) {
             String toolSpec = m.group(1);
-            String result = executeSingleTool(toolSpec);
+            // 将工具前面的累积文本作为 prefix 传入，使 [工具:1截取N] 能截取上下文文本
+            String result = executeSingleTool(toolSpec, sb.toString());
             m.appendReplacement(sb, Matcher.quoteReplacement(result == null ? "" : result));
         }
         m.appendTail(sb);
         return sb.toString();
     }
 
-    private String executeSingleTool(String spec) {
+    private String executeSingleTool(String spec, String prefix) {
         if (spec == null || spec.isEmpty()) return "";
         String[] parts = spec.split("#", 2);
         String toolName = parts[0].trim();
@@ -361,22 +355,29 @@ public class XBPQ extends Spider {
                     for (byte b : digest) hex.append(String.format("%02x", b));
                     return hex.toString();
                 case "1截取": {
-                    // 修复：原实现错误地split了arg（数字参数）而非输入字符串
-                    // 正确语义：将输入字符串按分隔符截取第N段（从1开始计数）
-                    // 格式：1截取N 或 1截取N#分隔符，默认分隔符为","
-                    String[] argParts = arg.split("#", 2);
-                    int n = Integer.parseInt(argParts[0].trim());
-                    // 注意：此工具的"输入"来自 [工具:1截取N] 前面的文本上下文，
-                    // 但由于 executeSingleTool 不接收原始输入，这里保留对arg的处理。
-                    // 实际使用中，arg应为 待截取字符串#N 的格式或由调用方传入完整文本。
-                    // 兼容旧调用：若arg为纯数字，返回空串（需配合上下文使用）
-                    if (argParts.length < 2) {
-                        SpiderDebug.log("1截取 参数格式错误，期望: N#待截取文本 或在上下文中使用");
-                        return "";
+                    // 语义：截取第 N 段（1-based）。
+                    // 写法一（从上下文截取）：文本在工具之前，如 "a,b,c[工具:1截取2]" → "b"
+                    //   此时 arg 仅含 N（可选 #分隔符），输入取自 prefix。
+                    // 写法二（显式文本）：arg 为 "N#待截取文本"，直接截取 arg 文本（兼容旧配置）。
+                    // 分隔符默认 ","，可用 "N#sep#文本" 指定（第二个 # 后的全部作为文本）。
+                    int n;
+                    String srcText;
+                    String[] argParts = arg.split("#", 3);
+                    n = Integer.parseInt(argParts[0].trim());
+                    if (argParts.length >= 3) {
+                        // 显式写法：N#sep#文本
+                        String sep = argParts[1];
+                        srcText = argParts[2];
+                    } else if (argParts.length == 2) {
+                        // 仅 "N#文本"：文本中不含自定义分隔符，用默认 ","
+                        srcText = argParts[1];
+                    } else {
+                        // 仅 "N"：从工具前的上下文 prefix 截取
+                        srcText = prefix == null ? "" : prefix;
                     }
-                    String input = argParts[1];
-                    String[] ss = input.split(",", -1);
-                    // n为1-based索引，转为0-based
+                    if (srcText.isEmpty()) return "";
+                    String sep = (argParts.length >= 3) ? argParts[1] : ",";
+                    String[] ss = srcText.split(java.util.regex.Pattern.quote(sep), -1);
                     int idx = n - 1;
                     return (idx >= 0 && idx < ss.length) ? ss[idx] : "";
                 }
@@ -1279,7 +1280,9 @@ public class XBPQ extends Spider {
         }
 
         int pgNum = parseIntSafe(pg, 1);
-        String firstPage = getVal("firstpage");
+        // 优先使用独立键 cate_firstpage（分类第1页替换串），回退兼容旧的 firstpage 写法
+        String firstPage = getVal("cate_firstpage");
+        if (firstPage.isEmpty()) firstPage = getVal("firstpage");
         int startPage = parseIntSafe(getVal("startpage"), 1);
         String pageStr = (pgNum == 1 && !firstPage.isEmpty()) ? firstPage
                 : String.valueOf(startPage + pgNum - 1);
@@ -1292,14 +1295,19 @@ public class XBPQ extends Spider {
             if ("cateId".equals(key)) {
                 val = tid;
             } else if ("catePg".equals(key)) {
+                // 页码/首页替换串属于站点 URL 路径结构，禁止整体 URL 编码
+                // （否则 firstpage=?page=1 会被编码成 %3Fpage%3D1 破坏分页）
                 val = pageStr;
             } else {
                 val = extend != null ? extend.get(key) : null;
                 if (val == null) val = "class".equals(key) ? tid : "";
-            }
-            try {
-                val = URLEncoder.encode(val, "UTF-8");
-            } catch (Exception ignored) {
+                // 筛选类占位符（来自用户输入的 extend 参数）才做 URL 编码
+                if (val != null && !val.isEmpty()) {
+                    try {
+                        val = URLEncoder.encode(val, "UTF-8");
+                    } catch (Exception ignored) {
+                    }
+                }
             }
             // val 可能为 null（极端情况下），appendReplacement 要求非 null
             if (val == null) val = "";
@@ -1322,7 +1330,12 @@ public class XBPQ extends Spider {
             // 图片净化（过滤占位图 + 地址补全，借鉴 nongm/Hgdj/Glod）
             if (video.has("vod_pic")) {
                 String pic = cleanImageUrl(video.optString("vod_pic", ""));
-                if (!pic.isEmpty()) video.put("vod_pic", pic);
+                if (!pic.isEmpty()) {
+                    video.put("vod_pic", pic);
+                } else {
+                    // 占位图/无效图：移除该字段，避免展示垃圾图片
+                    try { video.remove("vod_pic"); } catch (Exception ignored) {}
+                }
             }
             cleaned.put(video);
         }
@@ -1471,7 +1484,11 @@ public class XBPQ extends Spider {
         // 封面图净化（过滤占位图 + 地址补全，借鉴 nongm/Hgdj/Glod）
         if (vod.has("vod_pic")) {
             String pic = cleanImageUrl(vod.optString("vod_pic", ""));
-            if (!pic.isEmpty()) vod.put("vod_pic", pic);
+            if (!pic.isEmpty()) {
+                vod.put("vod_pic", pic);
+            } else {
+                try { vod.remove("vod_pic"); } catch (Exception ignored) {}
+            }
         }
         return vod;
     }
@@ -1616,18 +1633,41 @@ public class XBPQ extends Spider {
      * 解不开则按 {"vod_id": vid} 处理
      */
     private JSONObject decodeVinfo(String vid) {
+        if (vid == null) vid = "";
         try {
+            // 1) 加密规则：vid 整体为 base64(JSON)，解码后形如 {"vod_id":...,"vod_name":...}
             String decoded = new String(Base64.decode(vid, BASE64_FLAG), "UTF-8").trim();
             if (decoded.startsWith("{")) {
                 return new JSONObject(decoded);
             }
-        } catch (Exception e) {
-            // 非 base64，按普通 id 处理
+        } catch (Exception ignored) {
+            // 非 base64，继续按明文格式解析
         }
+        // 2) 标准 XBPQ 格式：name$$$pic$$$link（$$$ 分隔，明文）
+        //    link 可能是详情相对路径/绝对URL，需正确拆分供 buildDetailUrl 使用
         JSONObject vinfo = new JSONObject();
         try {
-            vinfo.put("vod_id", vid);
+            String realId = vid;
+            String name = "";
+            String pic = "";
+            int firstSep = vid.indexOf("$$$");
+            if (firstSep >= 0) {
+                name = vid.substring(0, firstSep);
+                String rest = vid.substring(firstSep + 3);
+                int secondSep = rest.indexOf("$$$");
+                if (secondSep >= 0) {
+                    pic = rest.substring(0, secondSep);
+                    realId = rest.substring(secondSep + 3);
+                } else {
+                    realId = rest;
+                }
+            }
+            if (!name.isEmpty()) vinfo.put("vod_name", name);
+            if (!pic.isEmpty()) vinfo.put("vod_pic", pic);
+            // 只保留真实 id/link 作为 vod_id，避免 buildDetailUrl 把 $$$ 垃圾拼进 URL
+            vinfo.put("vod_id", realId);
         } catch (Exception ignored) {
+            try { vinfo.put("vod_id", vid); } catch (Exception ignore2) {}
         }
         return vinfo;
     }
@@ -1921,7 +1961,11 @@ public class XBPQ extends Spider {
                 // 图片净化（借鉴 nongm/Hgdj/Glod）
                 if (v.has("vod_pic")) {
                     String pic = cleanImageUrl(v.optString("vod_pic", ""));
-                    if (!pic.isEmpty()) v.put("vod_pic", pic);
+                    if (!pic.isEmpty()) {
+                        v.put("vod_pic", pic);
+                    } else {
+                        try { v.remove("vod_pic"); } catch (Exception ignored) {}
+                    }
                 }
                 // 标题清洗（借鉴 Hgdj/Glod）
                 if (v.has("vod_name")) {
