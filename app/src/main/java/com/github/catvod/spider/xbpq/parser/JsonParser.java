@@ -20,8 +20,9 @@ public class JsonParser {
     );
 
     /**
-     * Remove comments (// line and /* */ block) from a JSON string.
-     * Does NOT remove // or /* inside string literals.
+     * Remove comments (double-slash line comments and slash-star block comments)
+     * from a JSON string.
+     * Does NOT remove double-slash or slash-star sequences inside string literals.
      */
     public static String stripComments(String json) {
         if (json == null || json.isEmpty()) return json;
