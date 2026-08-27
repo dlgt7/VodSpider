@@ -21,8 +21,8 @@ public class JsonParser {
     );
 
     /**
-     * Strip // line comments and /* block comments from JSON string.
-     * Does not touch // or /* inside string literals.
+     * Remove comments (// line and /* */ block) from JSON string.
+     * Note: does not remove // or /* inside string literals.
      */
     public static String stripComments(String json) {
         if (json == null || json.isEmpty()) return json;
