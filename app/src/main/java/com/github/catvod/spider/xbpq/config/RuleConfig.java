@@ -159,7 +159,11 @@ public class RuleConfig {
         CHINESE_KEY_MAP.put("筛选排序名称", "fsort_name");
         CHINESE_KEY_MAP.put("筛选排序替换词", "fsort_value");
         // 分页起始页码
-        CHINESE_KEY_MAP.put("分类起始页码", "firstpage");
+        // 注意：原 "分类起始页码" 曾映射到 firstpage，但与 "首页"→firstpage 严重冲突，
+        // 且 firstpage 在分类中被当作"第1页替换串"使用，与"分类起始页码"语义不符。
+        // 现改为独立键 cate_firstpage，避免键冲突导致配置互相污染。
+        CHINESE_KEY_MAP.put("分类起始页码", "cate_firstpage");
+        CHINESE_KEY_MAP.put("分类首页", "cate_firstpage");
         CHINESE_KEY_MAP.put("搜索起始页码", "sea_firstpage");
         // 分类 JSON 模式字段
         CHINESE_KEY_MAP.put("分类截取模式", "cat_mode");
