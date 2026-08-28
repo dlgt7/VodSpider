@@ -226,29 +226,37 @@ public class CssRule {
             selector = left.substring(4).trim();
         } else if (left.startsWith(P_PREFIX)) {
             selector = left.substring(2).trim();
+        } else if (!left.isEmpty()) {
+            // 修复：css:div->text 经 stripPrefix 后 left="div" 无前缀，
+            // 原实现 selector 保持空串，选择器整体丢失（输出 ":text"）。
+            // 现将 left 本身作为选择器（输出 "div@text"）。
+            selector = left;
         }
 
         // 处理 @text/@html/@href/@src 等属性提取标记（.class->@href 形式）
         if (right.startsWith("@")) {
             String attrMarker = right.substring(1).trim();
-            if ("text".equals(attrMarker) || "ownText".equals(attrMarker) || "html".equals(attrMarker)) {
-                return selector.isEmpty() ? ":" + attrMarker : selector + ":" + attrMarker;
-            } else if ("href".equals(attrMarker) || "src".equals(attrMarker) || "alt".equals(attrMarker)) {
-                return selector.isEmpty() ? "[" + attrMarker + "]" : selector + "[" + attrMarker + "]";
+            if ("text".equals(attrMarker) || "ownText".equals(attrMarker)) {
+                return selector.isEmpty() ? "@" + attrMarker : selector + "@" + attrMarker;
+            } else if ("html".equals(attrMarker) || "outerHtml".equals(attrMarker)) {
+                return selector.isEmpty() ? "@" + attrMarker : selector + "@" + attrMarker;
             } else {
                 // 通用属性提取
-                return selector.isEmpty() ? "[" + attrMarker + "]" : selector + "[" + attrMarker + "]";
+                return selector.isEmpty() ? "@" + attrMarker : selector + "@" + attrMarker;
             }
         }
 
         if (right.contains("(") && right.contains(")")) {
             int start = right.indexOf('(');
             int end = right.indexOf(')');
-            String attrName = right.substring(start + 1, end);
-            String attrExpr = "[" + attrName + "]";
-            return selector.isEmpty() ? attrExpr : selector + attrExpr;
+            String attrName = right.substring(start + 1, end).trim();
+            return selector.isEmpty() ? "@" + attrName : selector + "@" + attrName;
         } else {
-            return selector.isEmpty() ? ":" + right : selector + ":" + right;
+            // 修复：right 为 text/ownText/html/outerHtml 时输出 @text 等模式标记，
+            // 其余（href/src/title/data-* 等）一律按属性提取输出 @attr。
+            // 原实现输出 ":attr"（非法选择器）或 "[attr]"（只选中含该属性的元素、
+            // 仍取 text），导致 p:a->href / p:img->data-original 等真实规则全部取空。
+            return selector.isEmpty() ? "@" + right : selector + "@" + right;
         }
     }
 
@@ -280,16 +288,23 @@ public class CssRule {
             int start = right.indexOf('(');
             int end = right.indexOf(')');
             return selector.isEmpty()
-                    ? "[" + right.substring(start + 1, end) + "]"
-                    : selector + "[" + right.substring(start + 1, end) + "]";
+                    ? "@" + right.substring(start + 1, end).trim()
+                    : selector + "@" + right.substring(start + 1, end).trim();
         } else {
-            return selector.isEmpty() ? ":" + right : selector + ":" + right;
+            // 修复：与 parseCssShortSyntax 对齐，输出 @text/@attr 形式（原 ":right" 非法）
+            return selector.isEmpty() ? "@" + right : selector + "@" + right;
         }
     }
 
     /**
      * 解析元素索引
+     * <p>修复：原实现用 {@code contains(":first")/contains(":last")} 判定，
+     * 会把 jsoup 原生的 {@code :first-child}/:last-child/:last-of-type 误当成索引标记，
+     * 且 cleanIndexMarkers 剥离 ":first" 后残留 "-child" 使选择器非法。现只匹配独立形态。
      */
+    private static final Pattern P_LAST_PLAIN = Pattern.compile(":last(?![\\w-])");
+    private static final Pattern P_FIRST_PLAIN = Pattern.compile(":first(?![\\w-])");
+
     private static int parseIndex(String rule) {
         // 检查 :eq(n)
         Matcher eqMatcher = P_CSS_EQ.matcher(rule);
@@ -297,9 +312,10 @@ public class CssRule {
             return Integer.parseInt(eqMatcher.group(1));
         }
 
-        // :first / :last（jsoup 不识别，需自行转索引并从选择器中清除）
-        if (rule.contains(":last")) return LAST_INDEX;
-        if (rule.contains(":first")) return 0;
+        // :first / :last（jsoup 不识别，需自行转索引并从选择器中清除；
+        // :first-child / :last-child / :last-of-type 等 jsoup 原生伪类不受影响）
+        if (P_LAST_PLAIN.matcher(rule).find()) return LAST_INDEX;
+        if (P_FIRST_PLAIN.matcher(rule).find()) return 0;
 
         // 检查 [n]
         Matcher indexMatcher = P_CSS_INDEX.matcher(rule);
@@ -315,9 +331,40 @@ public class CssRule {
      */
     private static String cleanIndexMarkers(String rule) {
         rule = P_CSS_EQ.matcher(rule).replaceAll("");
-        rule = rule.replace(":first", "").replace(":last", "");
+        rule = P_LAST_PLAIN.matcher(rule).replaceAll("");
+        rule = P_FIRST_PLAIN.matcher(rule).replaceAll("");
         rule = P_CSS_INDEX.matcher(rule).replaceAll("");
         return rule.trim();
+    }
+
+    /**
+     * 按规则选择元素（含 "容器&&条目" 形态展开）。
+     * <p>{@code .stui-vodlist&&li}：先选容器，再在各容器内选条目，结果合并返回；
+     * 普通选择器直接 {@code root.select(selector)}。入参为已 stripPrefix 的原始规则，
+     * 各段会再经 {@link #parseCssShortSyntax(String)} 转换（支持 p: 简写残留）。
+     */
+    public static Elements selectWithAnd(Element root, String rawRule) {
+        if (root == null || rawRule == null || rawRule.trim().isEmpty()) return new Elements();
+        int amp = rawRule.indexOf("&&");
+        if (amp < 0) {
+            try {
+                return root.select(parseCssShortSyntax(rawRule.trim()));
+            } catch (Exception e) {
+                SpiderDebug.log("selectWithAnd error: " + e.getMessage());
+                return new Elements();
+            }
+        }
+        Elements out = new Elements();
+        try {
+            String contSel = parseCssShortSyntax(rawRule.substring(0, amp).trim());
+            String itemSel = parseCssShortSyntax(rawRule.substring(amp + 2).trim());
+            for (Element container : root.select(contSel)) {
+                out.addAll(container.select(itemSel));
+            }
+        } catch (Exception e) {
+            SpiderDebug.log("selectWithAnd error: " + e.getMessage());
+        }
+        return out;
     }
 
     /**
@@ -380,7 +427,8 @@ public class CssRule {
      * 核心提取逻辑：从Element中按CssRuleInfo提取值（供两个重载方法共享）
      */
     private static String extractFromDocument(Element doc, String originalRule, CssRuleInfo info, int index) {
-        Elements elements = doc.select(info.selector);
+        // 统一走 selectWithAnd：支持 ".container&&li" 容器&&条目形态（展开后合并）
+        Elements elements = selectWithAnd(doc, info.selector);
 
         if (elements.isEmpty()) return "";
 
@@ -417,10 +465,49 @@ public class CssRule {
     }
 
     /**
-     * 截取CSS规则区域
+     * 截取CSS规则区域（供 detail_array / list_twice / search_twice 等区域截取场景）。
+     * <p>
+     * 修复：原实现直接复用 extractByCss（TEXT 模式），区域截取返回的是纯文本，
+     * 后续内层字段规则（如 href="&&"、p:a->href）在纯文本上全部取空。
+     * 现按区域语义返回 outerHtml 保留 HTML 结构；仅当规则显式带 @text/@attr 标记时
+     * 才按标记提取。
      */
     public static String cutRegion(String html, String cssRule) {
-        return extractByCss(html, cssRule, 0);
+        if (html == null || html.isEmpty() || !isCssRule(cssRule)) return "";
+        cssRule = stripConcatWrap(cssRule);
+        if (!isCssRule(cssRule)) return "";
+        try {
+            CssRuleInfo info = parseRule(cssRule);
+            if (info == null) return "";
+            Document doc = Jsoup.parse(html);
+            Elements elements = selectWithAnd(doc, info.selector);
+            if (elements.isEmpty()) return "";
+
+            int useIndex = info.index;
+            Element target;
+            if (useIndex == LAST_INDEX) {
+                target = elements.last();
+            } else if (useIndex >= 0 && useIndex < elements.size()) {
+                target = elements.get(useIndex);
+            } else {
+                return "";
+            }
+
+            boolean explicitText = info.originalRule.contains("@text") || info.originalRule.contains("@ownText");
+            if (explicitText) {
+                return extractValue(target, info.mode, info.attributeName);
+            }
+            if (info.mode == ExtractMode.ATTRIBUTE && !info.attributeName.isEmpty()) {
+                return target.attr(info.attributeName);
+            }
+            if (info.mode == ExtractMode.HTML) return target.html();
+            if (info.mode == ExtractMode.OUTER_HTML) return target.outerHtml();
+            // 默认区域语义：保留 HTML 结构
+            return target.outerHtml();
+        } catch (Exception e) {
+            SpiderDebug.log("cutRegion error: " + e.getMessage());
+            return "";
+        }
     }
 
     /**

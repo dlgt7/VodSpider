@@ -105,8 +105,17 @@ public class RuleConfig {
         CHINESE_KEY_MAP.put("搜索简介", "search_content");
         CHINESE_KEY_MAP.put("搜索二次截取", "search_twice");
         CHINESE_KEY_MAP.put("搜索请求头", "search_header");
-        CHINESE_KEY_MAP.put("搜索后缀", "search_suffix");
+        // 修复：真实规则（xBPQ/*.json，30+ 条）里 "搜索后缀" 的取值形如 "/voddetail/"、" /v/"、
+        // "/detail/"、" /play/"，它是【搜索结果详情页链接的前缀】，与 "搜索链接前缀" 同义。
+        // 原实现把它映射到 search_suffix，并被 XBPQ 拼在搜索页面 URL 末尾
+        //（如 /search?wd=xx/voddetail/），导致这些站点搜索必然失败。
         CHINESE_KEY_MAP.put("搜索链接前缀", "search_prefix");
+        // 修复：原实现把 "搜索后缀" 也映射到 search_prefix，与 "搜索链接前缀" 撞键。
+        // 两者同时配置时按 HashMap 遍历顺序随机二选一，其中一个静默失效。
+        // 现先落到独立的临时键，再由 mergeSearchAffixAliases() 在 search_prefix 为空时合并。
+        CHINESE_KEY_MAP.put("搜索后缀", "search_prefix_alt");
+        // "搜索链接后缀" 形如 "-1-1.html"、".html"，是结果链接的后缀
+        CHINESE_KEY_MAP.put("搜索链接后缀", "search_suffix");
 
         // ===== 其他配置 =====
         CHINESE_KEY_MAP.put("过滤词", "filter_word");
@@ -117,6 +126,23 @@ public class RuleConfig {
         CHINESE_KEY_MAP.put("弹幕url", "danmuUrl");
         CHINESE_KEY_MAP.put("超时", "timeout");
         CHINESE_KEY_MAP.put("重试次数", "retry");
+        // 修复：写法说明模板使用的键是 "重试"（"重试": "3"），原映射表只收了
+        // "重试次数"，导致按模板配置的重试次数静默失效
+        CHINESE_KEY_MAP.put("重试", "retry");
+        // 修复：写法说明 §二 的 "分类筛选"（标准 JSON 筛选菜单）与 "筛选" 同义，
+        // homeContent 消费 filter 键；原映射表只收了 "筛选"，用 "分类筛选" 的
+        // 规则其筛选菜单整体丢失
+        CHINESE_KEY_MAP.put("分类筛选", "filter");
+        // 修复：使用说明 §4.7 / 注意事项10 文档的多线播放系列键，与本实现的
+        // from_array/from_url/line_twice 同功能；原映射缺失导致按文档写法的
+        // 多线规则全部静默失效
+        CHINESE_KEY_MAP.put("多线数组", "from_array");
+        CHINESE_KEY_MAP.put("多线链接", "from_url");
+        CHINESE_KEY_MAP.put("多线二次截取", "line_twice");
+        CHINESE_KEY_MAP.put("多线链接前缀", "multi_line_prefix");
+        CHINESE_KEY_MAP.put("多线链接后缀", "multi_line_suffix");
+        // 写法说明 §六：详情/列表缺封面时的兜底图片 URL
+        CHINESE_KEY_MAP.put("播放图片", "play_image");
         CHINESE_KEY_MAP.put("自动Maccms", "auto_maccms");
         // SSRF 防护开关：allow_internal=1 放行内网地址（仅供自测）
         CHINESE_KEY_MAP.put("允许内网", "allow_internal");
@@ -182,6 +208,26 @@ public class RuleConfig {
         CHINESE_KEY_MAP.put("视频过滤词", "video_filter");
         // 详情字段别名
         CHINESE_KEY_MAP.put("影片名称", "vod_name");
+        // 修复：真实规则（xBPQ/*.json，影片类型 33 条 / 影片地区 32 条 / 影片年代 30 条）
+        // 使用的是 "影片类型"/"影片地区"/"影片年代"，与 "类型"/"地区"/"年份" 完全同功能，
+        // 但映射表中缺失，导致这三批站点的详情页类型/地区/年份全部提取不到。
+        CHINESE_KEY_MAP.put("影片类型", "detail_type");
+        CHINESE_KEY_MAP.put("影片地区", "detail_area");
+        CHINESE_KEY_MAP.put("影片年代", "detail_year");
+        // 图片代理：与英文键 PicNeedProxy 同功能（xBPQ 中 6 条配置使用）
+        CHINESE_KEY_MAP.put("图片代理", "PicNeedProxy");
+        // 列表二次截取：与 "二次截取"（list_twice）同功能
+        CHINESE_KEY_MAP.put("列表二次截取", "list_twice");
+        // 倒序播放：与 "倒序"（reverse）同功能
+        CHINESE_KEY_MAP.put("倒序播放", "reverse");
+        // 页面编码（GBK/UTF-8 等），与英文键 charset 同功能
+        CHINESE_KEY_MAP.put("编码", "charset");
+        // 跳转播放链接：与 "跳转播放"（jump_url）同功能
+        CHINESE_KEY_MAP.put("跳转播放链接", "jump_url");
+        // 多线路：线路块对应的链接提取规则（线路数组/线路标题/线路链接 配套）
+        CHINESE_KEY_MAP.put("线路链接", "from_url");
+        // "ua" 与 "请求头"（header）同功能，均为 UA 简写/完整 UA 串
+        CHINESE_KEY_MAP.put("ua", "header");
     }
 
     /**
@@ -238,11 +284,36 @@ public class RuleConfig {
                     }
                 }
             }
+            mergeSearchAffixAliases(json);
         } catch (Exception e) {
             SpiderDebug.log("convertChineseKeys error: " + e.getMessage());
         }
 
         return json;
+    }
+
+    /**
+     * 合并搜索链接前后缀的中文别名。
+     * <p>「搜索后缀」（真实规则中形如 "/voddetail/"，语义上是链接<b>前缀</b>）与
+     * 「搜索链接前缀」同义。为避免撞键导致其中一个被静默丢弃，先把「搜索后缀」
+     * 落到临时键 search_prefix_alt，再在此处按优先级合并：</p>
+     * <ol>
+     *   <li>search_prefix（搜索链接前缀）非空 —— 直接使用</li>
+     *   <li>否则回退 search_prefix_alt（搜索后缀）</li>
+     * </ol>
+     * 临时键最终一律移除，不暴露给规则读取逻辑。
+     */
+    private static void mergeSearchAffixAliases(JSONObject json) {
+        if (json == null) return;
+        try {
+            String prefix = json.optString("search_prefix", "");
+            String alt = json.optString("search_prefix_alt", "");
+            if (isBlank(prefix) && !isBlank(alt)) json.put("search_prefix", alt);
+        } catch (Exception ignored) {
+            // 忽略：合并失败不影响其它键
+        } finally {
+            json.remove("search_prefix_alt");
+        }
     }
 
     private static boolean isBlank(String value) {

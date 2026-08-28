@@ -124,55 +124,62 @@ public class StringCutRule {
     // ==================== 后处理器 ====================
 
     /**
-     * 应用后处理器（由 RegexFieldHelper 调用）
+     * 应用后处理器
      * <p>
-     * 支持的后处理器语法：
+     * 支持的后处理器语法（标记作用于其之前的正文，标记本身被剥离）：
      * <ul>
-     *   <li>{@code [替换:a>>b]} — 将匹配到的整段文本中的 a 替换为 b</li>
-     *   <li>{@code [包含:关键词]} — 结果必须包含关键词，否则返回空串</li>
-     *   <li>{@code [不包含:关键词]} — 结果不能包含关键词，否则返回空串</li>
+     *   <li>{@code [替换:a>>b]} — 对正文执行 a→b 全局替换；支持多组 {@code [替换:a>>b#x>>y]}</li>
+     *   <li>{@code [包含:关键词]} — 正文包含关键词时保留，否则返回空串</li>
+     *   <li>{@code [不包含:关键词]} — 正文不包含关键词时保留，否则返回空串</li>
      * </ul>
-     * 多个后处理器按出现顺序依次作用于 StringBuilder（原地修改）。
+     * 多个后处理器按出现顺序依次作用于正文。
      *
-     * @param str 原始字符串（可能含有后处理器标记）
+     * @param str 原始字符串（正文 + 后处理器标记）
      * @return 处理后字符串；不满足包含/不包含条件时返回空字符串
      */
     public static String applyPostProcessors(String str) {
         if (str == null || str.isEmpty()) return str;
 
         Matcher m = P_PROC_MARK.matcher(str);
-        StringBuilder result = new StringBuilder(str);
-        int offset = 0;
-
+        StringBuilder text = new StringBuilder();
+        int last = 0;
         while (m.find()) {
-            int matchStart = m.start() + offset;
-            int matchEnd = m.end() + offset;
+            // 标记之前的正文先入队，后处理器只作用于正文，标记本身被剥离。
+            // 修复：原实现把标记区间整体替换成 parts[1]，正文从未执行 a→b 替换
+            //（"Hello[替换:Hello>>World]" 得到 "HelloWorld" 而非 "World"）。
+            text.append(str, last, m.start());
             String type = m.group(1);
             String value = m.group(2);
 
             if (REPLACE_TAG.equals(type)) {
-                // 替换: a>>b
-                // 注意：StringBuilder.replace() 是原地修改方法，返回自身仅用于链式调用，
-                // 无需将返回值赋回 result 变量。
-                String[] parts = value.split(">>");
-                if (parts.length == 2) {
-                    result.replace(matchStart, matchEnd, parts[1]);
-                    offset += (parts[1].length() - (matchEnd - matchStart));
+                // 替换: a>>b，可多组 a>>b#x>>y
+                for (String pair : value.split("#")) {
+                    int sep = pair.indexOf(">>");
+                    if (sep <= 0) continue;
+                    String from = pair.substring(0, sep);
+                    String to = pair.substring(sep + 2);
+                    if (from.isEmpty()) continue;
+                    int idx = text.indexOf(from);
+                    while (idx >= 0) {
+                        text.replace(idx, idx + from.length(), to);
+                        idx = text.indexOf(from, idx + to.length());
+                    }
                 }
             } else if (INCLUDE_TAG.equals(type)) {
                 // 包含检查
-                if (!result.toString().contains(value)) {
+                if (text.indexOf(value) < 0) {
                     return "";
                 }
             } else if (EXCLUDE_TAG.equals(type)) {
                 // 不包含检查
-                if (result.toString().contains(value)) {
+                if (text.indexOf(value) >= 0) {
                     return "";
                 }
             }
+            last = m.end();
         }
-
-        return result.toString();
+        text.append(str, last, str.length());
+        return text.toString();
     }
 
     // ==================== HTML 清理 ====================
@@ -207,7 +214,8 @@ public class StringCutRule {
         // 3. 解码常见 HTML 实体（按长度降序排列，避免短实体先误匹配长实体的子串）
         text = text.replaceAll("&nbsp;", " ");
         text = text.replaceAll("&quot;", "\"");
-        text = text.replaceAll("&apos", "'");
+        // &apos 带不带分号都识别（"&apos;" 原写法会残留一个分号）
+        text = text.replaceAll("&apos;?", "'");
         text = text.replaceAll("&lt;", "<");
         text = text.replaceAll("&gt;", ">");
         text = text.replaceAll("&amp;", "&");
