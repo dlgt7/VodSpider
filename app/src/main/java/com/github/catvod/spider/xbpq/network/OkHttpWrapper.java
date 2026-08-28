@@ -72,7 +72,12 @@ public class OkHttpWrapper implements HttpClient {
 
     @Override
     public HttpResponse post(String url, Map<String, String> headers, String body) {
-        return executeRequest(buildRequest(url, headers, HttpRequest.Method.POST, body));
+        return post(url, headers, body, DEFAULT_TIMEOUT_SECONDS);
+    }
+
+    @Override
+    public HttpResponse post(String url, Map<String, String> headers, String body, int timeout) {
+        return executeRequest(buildRequest(url, headers, HttpRequest.Method.POST, body, timeout));
     }
 
     @Override
@@ -89,9 +94,40 @@ public class OkHttpWrapper implements HttpClient {
 
     @Override
     public String string(String url, Map<String, String> headers, String body) {
-        HttpResponse response = post(url, headers, body);
+        return string(url, headers, body, DEFAULT_TIMEOUT_SECONDS);
+    }
+
+    @Override
+    public String string(String url, Map<String, String> headers, String body, int timeout) {
+        HttpResponse response = post(url, headers, body, timeout);
         lastStatusCode = response.getStatusCode();
         return response.isSuccess() ? response.getBody() : "";
+    }
+
+    @Override
+    public byte[] bytes(String url, Map<String, String> headers) {
+        // 修复：二进制回源（代理图片/M3U8）原先绕过拦截器链，
+        // WAF 绕过与 Cookie 管理对 proxy 图片请求全部失效。现与 GET 同走拦截器链。
+        return executeRequestBytes(buildRequest(url, headers, HttpRequest.Method.GET, null, DEFAULT_TIMEOUT_SECONDS));
+    }
+
+    /** 按拦截器链执行请求并返回原始字节（与 {@link #executeRequest} 同一链路语义） */
+    private byte[] executeRequestBytes(HttpRequest request) {
+        final int[] index = {0};
+        InterceptorChain chain = new InterceptorChain() {
+            @Override
+            public HttpResponse proceed(HttpRequest req) {
+                if (index[0] < interceptors.size()) {
+                    HttpInterceptor interceptor = interceptors.get(index[0]++);
+                    return interceptor.intercept(req, this);
+                }
+                byte[] data = req.executeBytes();
+                return data != null ? HttpResponse.fromBytes(data) : HttpResponse.error("bytes fetch failed");
+            }
+        };
+        HttpResponse response = chain.proceed(request);
+        lastStatusCode = response.getStatusCode();
+        return response.getBodyBytes();
     }
 
     @Override
@@ -208,8 +244,6 @@ public class OkHttpWrapper implements HttpClient {
      * 执行请求，按拦截器链顺序处理
      */
     private HttpResponse executeRequest(HttpRequest request) {
-        final HttpRequest[] processed = {request};
-
         // 构建拦截器链：从后往前递归
         final int[] index = {0};
         InterceptorChain chain = new InterceptorChain() {
@@ -251,8 +285,59 @@ public class OkHttpWrapper implements HttpClient {
             builder.body(body);
         }
         builder.timeout(timeout);
+        // 字符集按 host 隔离：per-host 配置优先，全局默认兜底
+        String charset = charsetForUrl(url);
+        if (charset != null && !charset.isEmpty()) {
+            builder.responseCharset(charset);
+        }
 
         return builder.build();
+    }
+
+    /** 响应体解码字符集（对应规则 "编码" 字段，GBK/GB2312 站点必填；全局默认值） */
+    private volatile String responseCharset;
+
+    /** host → 响应解码字符集（httpClient 为静态共享实例，被多站点复用，
+     *  字符集必须按主机隔离，否则后加载 "编码" 的站点会覆盖先加载站点 → 跨站乱码） */
+    private static final Map<String, String> HOST_CHARSETS = new ConcurrentHashMap<>();
+
+    /**
+     * 设置指定主机的响应体解码字符集；host 为空时退化为全局默认。
+     */
+    public void setResponseCharsetForHost(String host, String charset) {
+        if (host == null || host.trim().isEmpty()) {
+            setResponseCharset(charset);
+            return;
+        }
+        String key = host.trim().toLowerCase();
+        if (charset == null || charset.trim().isEmpty()) {
+            HOST_CHARSETS.remove(key);
+        } else {
+            HOST_CHARSETS.put(key, charset.trim());
+        }
+    }
+
+    /** 解析 URL 对应的生效字符集：per-host 优先，其次全局默认 */
+    private String charsetForUrl(String url) {
+        String c = responseCharset;
+        try {
+            String host = new java.net.URL(url).getHost();
+            if (host != null) {
+                String hc = HOST_CHARSETS.get(host.toLowerCase());
+                if (hc != null && !hc.isEmpty()) c = hc;
+            }
+        } catch (Exception ignored) {
+            // URL 非法时仅用全局默认
+        }
+        return c;
+    }
+
+    public void setResponseCharset(String charset) {
+        this.responseCharset = charset;
+    }
+
+    public String getResponseCharset() {
+        return responseCharset;
     }
 
 }

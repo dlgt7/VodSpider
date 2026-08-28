@@ -28,6 +28,8 @@ public class HttpRequest {
     private final String body;
     private final MediaType contentType;
     private final int timeout;
+    /** 响应体解码字符集；为空时交给 OkHttp 自动判定（缺省 UTF-8） */
+    private final String responseCharset;
 
     public enum Method {
         GET, POST, PUT, DELETE
@@ -40,6 +42,7 @@ public class HttpRequest {
         this.body = builder.body;
         this.contentType = builder.contentType;
         this.timeout = builder.timeout;
+        this.responseCharset = builder.responseCharset;
     }
 
     public String getUrl() { return url; }
@@ -48,6 +51,7 @@ public class HttpRequest {
     public String getBody() { return body; }
     public MediaType getContentType() { return contentType; }
     public int getTimeout() { return timeout; }
+    public String getResponseCharset() { return responseCharset; }
 
     /**
      * 构建GET请求
@@ -117,13 +121,39 @@ public class HttpRequest {
             Response response = null;
             try {
                 response = client.newCall(request).execute();
-                return HttpResponse.from(response);
+                return HttpResponse.from(response, responseCharset);
             } finally {
                 if (response != null) response.close();
             }
         } catch (Exception e) {
             SpiderDebug.log("HttpRequest execute error: " + e.getMessage());
             return HttpResponse.error(e.getMessage());
+        }
+    }
+
+    /**
+     * 执行请求并返回原始字节（供图片/M3U8 等二进制回源使用）。
+     * <p>与 {@link #execute()} 走同一份共享客户端与超时策略。</p>
+     *
+     * @return 响应体字节；失败返回 null
+     */
+    public byte[] executeBytes() {
+        try {
+            int effectiveTimeout = timeout > 0 ? timeout : DEFAULT_TIMEOUT_SECONDS;
+            OkHttpClient client = SharedClientHolder.get(effectiveTimeout);
+            Request request = method == Method.GET ? toGetRequest() : toPostRequest();
+            Response response = null;
+            try {
+                response = client.newCall(request).execute();
+                if (!response.isSuccessful()) return null;
+                ResponseBody body = response.body();
+                return body == null ? null : body.bytes();
+            } finally {
+                if (response != null) response.close();
+            }
+        } catch (Exception e) {
+            SpiderDebug.log("HttpRequest executeBytes error: " + e.getMessage());
+            return null;
         }
     }
 
@@ -155,6 +185,7 @@ public class HttpRequest {
         private String body;
         private MediaType contentType;
         private int timeout = 10;
+        private String responseCharset;
 
         public Builder url(String url) {
             this.url = url;
@@ -183,6 +214,12 @@ public class HttpRequest {
 
         public Builder timeout(int timeout) {
             this.timeout = timeout;
+            return this;
+        }
+
+        /** 设置响应体解码字符集（对应规则 "编码" 字段，如 GBK） */
+        public Builder responseCharset(String charset) {
+            this.responseCharset = charset;
             return this;
         }
 

@@ -36,6 +36,17 @@ public interface HttpClient {
     HttpResponse post(String url, Map<String, String> headers, String body);
 
     /**
+     * 发送POST请求（指定超时秒数）
+     *
+     * @param url     请求URL
+     * @param headers 请求头
+     * @param body    请求体
+     * @param timeout 超时秒数
+     * @return 响应结果
+     */
+    HttpResponse post(String url, Map<String, String> headers, String body, int timeout);
+
+    /**
      * 获取响应文本
      *
      * @param url    请求URL
@@ -63,6 +74,26 @@ public interface HttpClient {
      * @return 响应文本
      */
     String string(String url, Map<String, String> headers, String body);
+
+    /**
+     * 发送POST请求并返回响应文本（指定超时秒数）
+     *
+     * @param url     请求URL
+     * @param headers 请求头
+     * @param body    请求体
+     * @param timeout 超时秒数
+     * @return 响应文本
+     */
+    String string(String url, Map<String, String> headers, String body, int timeout);
+
+    /**
+     * 获取响应的原始字节（图片/M3U8 等二进制回源）
+     *
+     * @param url     请求URL
+     * @param headers 请求头
+     * @return 响应字节，失败返回 null
+     */
+    byte[] bytes(String url, Map<String, String> headers);
 
     /**
      * 获取上次请求的状态码
