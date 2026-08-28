@@ -2878,11 +2878,11 @@ public class XBPQ extends Spider {
             if (target.isEmpty() || !target.contains("http")) {
                 MaccmsPlayer mp = extractMaccmsPlayer(body);
                 if (mp != null && !mp.url.isEmpty()) {
+                    // 修复：link_next 是"下一集播放页链接"（如 /play/xxx-1-2.html），
+                    // 原实现无条件用它覆盖已解出的视频地址 target，导致 Maccms
+                    // 播放页（encrypt=1 的 player_aaaa）永远解析不出真实 m3u8，
+                    // 播放退化为对播放页 URL 的嗅探。现只使用 mp.url。
                     target = mp.url;
-                    // link_next：解析到的 url 是 next 地址，继续跳转一次
-                    if (mp.linkNext != null && !mp.linkNext.isEmpty()) {
-                        target = mp.linkNext;
-                    }
                 }
             }
             if (target.isEmpty()) {
@@ -2926,25 +2926,42 @@ public class XBPQ extends Spider {
                     MaccmsPlayer mp = parseMaccmsPlayerJson(m.group(1));
                     if (mp != null && !mp.url.isEmpty()) return mp;
                 }
+                // 修复：正则要求 "};"/结尾分号且无法配对嵌套对象——
+                // 热剧TV网等站点 player_aaaa 以 "}</script>" 结尾（无分号）且内含
+                // vod_data 嵌套对象，正则路径必然失败。失败时回落括号配对扫描。
+                MaccmsPlayer byScan = extractMaccmsPlayerByBraceScan(body);
+                if (byScan != null) return byScan;
             } else {
-                // Original indexOf-based traversal
-                int pos = 0;
-                while (pos < body.length()) {
-                    int pi = body.indexOf("var player_", pos);
-                    if (pi < 0) return null;
-                    int braceStart = body.indexOf('{', pi);
-                    if (braceStart < 0) return null;
-                    // 配对花括号，处理嵌套对象（如 "config":{...} 形式）
-                    int braceEnd = findMatchingBrace(body, braceStart);
-                    if (braceEnd < 0) return null;
-                    String jsonText = body.substring(braceStart, braceEnd + 1);
-                    MaccmsPlayer mp = parseMaccmsPlayerJson(jsonText);
-                    if (mp != null && !mp.url.isEmpty()) return mp;
-                    pos = braceEnd + 1;
-                }
+                // Original indexOf-based traversal（括号配对，处理嵌套对象）
+                MaccmsPlayer byScan = extractMaccmsPlayerByBraceScan(body);
+                if (byScan != null) return byScan;
             }
         } catch (Exception e) {
             // ignore
+        }
+        return null;
+    }
+
+    /**
+     * Maccms 播放脚本括号配对扫描（indexOf 路径独立入口）。
+     * 供 regexMode 失败时回落使用（正则无法配对嵌套对象、且部分站点
+     * 的 player_aaaa 以 "&lt;/script&gt;" 结尾无分号）。
+     */
+    private MaccmsPlayer extractMaccmsPlayerByBraceScan(String body) {
+        try {
+            int pos = 0;
+            while (pos < body.length()) {
+                int pi = body.indexOf("var player_", pos);
+                if (pi < 0) return null;
+                int braceStart = body.indexOf('{', pi);
+                if (braceStart < 0) return null;
+                int braceEnd = findMatchingBrace(body, braceStart);
+                if (braceEnd < 0) return null;
+                MaccmsPlayer mp = parseMaccmsPlayerJson(body.substring(braceStart, braceEnd + 1));
+                if (mp != null && !mp.url.isEmpty()) return mp;
+                pos = braceEnd + 1;
+            }
+        } catch (Exception ignored) {
         }
         return null;
     }
