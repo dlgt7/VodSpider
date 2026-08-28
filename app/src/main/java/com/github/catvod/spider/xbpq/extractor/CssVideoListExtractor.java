@@ -10,6 +10,7 @@ import org.jsoup.select.Elements;
 
 import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.spider.xbpq.config.CssRule;
+import com.github.catvod.spider.xbpq.config.StringCutRule;
 
 /**
  * CSS视频列表提取器
@@ -40,10 +41,22 @@ public class CssVideoListExtractor implements ExtractorFactory.VideoListExtracto
             String prefix = config.optString("list_prefix", "");
             String suffix = config.optString("list_suffix", "");
 
+            // 修复：CSS 模式原先完全忽略 分类二次截取（list_twice），
+            // 与正则模式行为不一致，导致配置了二次截取的 CSS 规则抓到整页无关条目。
+            String twiceRule = config.optString("list_twice", "");
+            if (!twiceRule.isEmpty()) {
+                if (CssRule.isCssRule(twiceRule)) {
+                    String cut = CssRule.cutRegion(html, twiceRule);
+                    if (!cut.isEmpty()) html = cut;
+                } else {
+                    html = StringCutRule.applySecondCut(html, twiceRule);
+                }
+            }
+
             Document doc = Jsoup.parse(html);
-            // 完整转换：stripPrefix → parseCssShortSyntax，确保 p: 简写正确解析
-            String selector = CssRule.parseCssShortSyntax(CssRule.stripPrefix(containerRule));
-            Elements containers = doc.select(selector);
+            // 统一走 selectWithAnd：支持 ".stui-vodlist&&li"（容器&&条目，规格 §4.3 形态）
+            // 与普通选择器两种写法；p: 简写在 selectWithAnd 内部转换
+            Elements containers = CssRule.selectWithAnd(doc, CssRule.stripPrefix(containerRule));
 
             for (Element container : containers) {
                 String itemHtml = container.outerHtml();

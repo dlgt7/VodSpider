@@ -27,15 +27,6 @@ import com.github.catvod.spider.xbpq.config.CssRule;
  */
 public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor {
 
-    /**
-     * 将 CSS 规则（含 p: 简写）转换为 Jsoup 可直接使用的选择器字符串。
-     * <p>完整路径：stripPrefix → parseCssShortSyntax，与 extractByCss 内部处理保持一致。
-     */
-    private static String toJsoupSelector(String rawRule) {
-        String stripped = CssRule.stripPrefix(rawRule);
-        return CssRule.parseCssShortSyntax(stripped);
-    }
-
     @Override
     public JSONArray extract(String html, JSONObject config, int sort) throws Exception {
         JSONArray playList = new JSONArray();
@@ -46,8 +37,7 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
 
             if (!lineArrayRule.isEmpty()) {
                 // 多线模式：每条线路内部提取集数
-                String rawLineArrayRule = toJsoupSelector(lineArrayRule);
-                Elements lines = doc.select(rawLineArrayRule);
+                Elements lines = CssRule.selectWithAnd(doc, CssRule.stripPrefix(lineArrayRule));
                 String lineTitleRule = config.optString("from_title", "");
 
                 int lineIndex = 0;
@@ -75,8 +65,7 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
                 String playArrayRule = config.optString("play_array", "");
                 if (!playArrayRule.isEmpty() && CssRule.isCssRule(playArrayRule)) {
                     // CSS 模式：只取第一个匹配的容器
-                    String rawPlayArrayRule = toJsoupSelector(playArrayRule);
-                    Elements firstOnly = doc.select(rawPlayArrayRule);
+                    Elements firstOnly = CssRule.selectWithAnd(doc, CssRule.stripPrefix(playArrayRule));
                     if (!firstOnly.isEmpty()) {
                         // 找到第一个父容器（ul），只在其内部提取
                         Element parentUl = firstOnly.first().parent();
@@ -161,8 +150,7 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
         String suffix = config.optString("play_suffix", "");
 
         Document doc = Jsoup.parse(scope);
-        String rawArrayRule = toJsoupSelector(arrayRule);
-        Elements items = doc.select(rawArrayRule);
+        Elements items = CssRule.selectWithAnd(doc, CssRule.stripPrefix(arrayRule));
 
         for (Element item : items) {
             // 性能修复：原实现每字段 RegexFieldHelper.extract(itemHtml, ...) 都触发一次
@@ -187,8 +175,7 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
         String lineArrayRule = config.optString("from_array", "");
         if (lineArrayRule.isEmpty()) return;
 
-        String rawLineArrayRule = toJsoupSelector(lineArrayRule);
-        Elements lineContainers = doc.select(rawLineArrayRule);
+        Elements lineContainers = CssRule.selectWithAnd(doc, CssRule.stripPrefix(lineArrayRule));
         if (lineContainers.isEmpty()) return;
 
         String lineTitleRule = config.optString("from_title", "");

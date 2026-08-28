@@ -58,8 +58,14 @@ public class RegexPlayListExtractor implements ExtractorFactory.PlayListExtracto
     private void extractMultiLine(String html, JSONObject config, JSONArray playList) throws Exception {
         String content = html;
         String lineTwice = config.optString("line_twice", "");
+        // 修复：CSS 形态的线路二次截取原先被当作字符串截取规则静默失败，统一分流
         if (!lineTwice.isEmpty()) {
-            content = StringCutRule.applySecondCut(content, lineTwice);
+            if (CssRule.isCssRule(lineTwice)) {
+                String cut = CssRule.cutRegion(content, lineTwice);
+                if (!cut.isEmpty()) content = cut;
+            } else {
+                content = StringCutRule.applySecondCut(content, lineTwice);
+            }
         }
 
         String titleRule = config.optString("from_title", "");
@@ -131,9 +137,7 @@ public class RegexPlayListExtractor implements ExtractorFactory.PlayListExtracto
         if (CssRule.isCssRule(arrayRule)) {
             try {
                 Document doc = Jsoup.parse(scope);
-                // 完整转换：stripPrefix → parseCssShortSyntax，确保 p: 简写正确解析
-                String selector = CssRule.parseCssShortSyntax(CssRule.stripPrefix(arrayRule));
-                for (Element el : doc.select(selector)) {
+                for (Element el : CssRule.selectWithAnd(doc, CssRule.stripPrefix(arrayRule))) {
                     items.add(el.outerHtml());
                 }
             } catch (Exception ignored) {

@@ -83,8 +83,31 @@ public final class RegexFieldHelper {
             }
             return "";
         }
-        if (CssRule.isCssRule(stripped)) {
-            return CssRule.extractByCss(el, stripped, 0);
+        // "+" 拼接（真实规则形态：p:span->text+(+p:small->text+)、
+        // p:div->text+p:div->text[序号:2]）：逐段提取后按序连接
+        List<String> concat = splitConcat(trimmed);
+        if (concat.size() > 1) {
+            StringBuilder sb = new StringBuilder();
+            for (String part : concat) {
+                sb.append(extractCssOrFallback(el, scope, part));
+            }
+            return clean(sb.toString());
+        }
+        return extractCssOrFallback(el, scope, trimmed);
+    }
+
+    /** Element 版单段提取：CSS 规则作用于元素子树，其余回落到 String 版 */
+    private static String extractCssOrFallback(org.jsoup.nodes.Element el, String scope, String rule) {
+        String trimmed = rule == null ? "" : rule.trim();
+        if (trimmed.isEmpty()) return "";
+        // 后处理器必须先于 CSS 分支剥离：真实规则形如
+        // "p:div[...]->text[含序号:3][替换:导演：>>空]"，标记混进选择器会使其非法
+        PostProcess pp = extractPostProcessors(trimmed);
+        String rawRule = pp.rule.trim();
+        if (rawRule.isEmpty()) return "";
+        if (CssRule.isCssRule(rawRule)) {
+            String val = CssRule.extractByCss(el, rawRule, cssIndexFromSeq(pp));
+            return applyPostProcessors(val, pp);
         }
         return extract(scope, trimmed);
     }
@@ -114,14 +137,33 @@ public final class RegexFieldHelper {
             return "";
         }
 
-        // p:xxx->attr 或 p:.class->text 或 css:/css:// 前缀 → CSS 提取
-        if (CssRule.isCssRule(rule)) {
-            return CssRule.extractByCss(scope, rule, 0);
+        // "+" 拼接：仅 CSS 简写规则使用（真实规则 "p:span->text+(+p:small->text+)"）。
+        // 正则规则普遍含 "+"（量词），绝不对其做拼接切分。
+        List<String> concat = splitConcat(rule);
+        if (concat.size() > 1) {
+            StringBuilder sb = new StringBuilder();
+            for (String part : concat) {
+                sb.append(extractCssSingle(scope, part));
+            }
+            return clean(sb.toString());
         }
 
-        // 从规则中提取并剥离后处理器（[替换]、[不含]、[序号]、分割）
+        return extractCssSingle(scope, rule);
+    }
+
+    /** String 版单段提取：后处理器前置 → CSS / && 截取 / 正则 三分流 */
+    private static String extractCssSingle(String scope, String rule) {
+        // 从规则中提取并剥离后处理器（[替换]、[不含]、[序号]、分割）。
+        // 修复：原先该步骤在 CSS 分支之后，p:xxx->text[含序号:3] 的标记会混入
+        // 选择器使其非法（真实规则大量使用此形态）。
         PostProcess pp = extractPostProcessors(rule);
         String rawRule = pp.rule;
+
+        // CSS 提取：[含序号:n]/[序号:n] 映射为第 n 个匹配元素（1-based）
+        if (CssRule.isCssRule(rawRule)) {
+            String val = CssRule.extractByCss(scope, rawRule, cssIndexFromSeq(pp));
+            return applyPostProcessors(val, pp);
+        }
 
         // && 前后缀截取（支持多级）
         if (rawRule.contains("&&")) {
@@ -133,6 +175,56 @@ public final class RegexFieldHelper {
         // 正则提取
         String val = regexExtract(scope, rawRule);
         return applyPostProcessors(val, pp);
+    }
+
+    /**
+     * 将后处理器中的序号配置转换为 CSS 元素索引（0-based，供 extractByCss 使用）。
+     * <p>真实规则语义（见 擦边2.json）："p:div[...]->text[含序号:3]" = 第 3 个匹配元素；
+     * [序号:n] 同义。</p>
+     */
+    private static int cssIndexFromSeq(PostProcess pp) {
+        if (pp.seqIndex > 0) return pp.seqIndex - 1;
+        if (pp.seqFrom > 0) return pp.seqFrom - 1;
+        return 0;
+    }
+
+    /**
+     * 拆分 "+" 拼接的 CSS 简写规则。
+     * <p>仅当整条规则以 p:/css: 开头时生效。为避免误拆选择器属性值中的 "+"
+     *（如 {@code p:div[class*="x+y"]}），只在 "+" 后面紧跟 p:/css: 前缀或
+     * 拼接括号 "(" / ")" 时才切分；括号碎片（"+(+xxx+)" 拆分残留）直接丢弃。</p>
+     */
+    private static List<String> splitConcat(String rule) {
+        List<String> parts = new ArrayList<>();
+        if (rule == null) return parts;
+        String t = rule.trim();
+        if (!(t.startsWith("p:") || t.startsWith("css:"))) return parts;
+        StringBuilder cur = new StringBuilder();
+        int i = 0;
+        while (i < t.length()) {
+            char c = t.charAt(i);
+            if (c == '+') {
+                String rest = t.substring(i + 1).trim();
+                if (rest.startsWith("p:") || rest.startsWith("css:")
+                        || rest.startsWith("(") || rest.startsWith(")")) {
+                    addConcatPart(parts, cur.toString());
+                    cur.setLength(0);
+                    i++;
+                    continue;
+                }
+            }
+            cur.append(c);
+            i++;
+        }
+        addConcatPart(parts, cur.toString());
+        return parts;
+    }
+
+    /** 拼接段入队：空段与括号碎片丢弃 */
+    private static void addConcatPart(List<String> parts, String seg) {
+        String s = seg.trim();
+        if (s.isEmpty() || s.equals("(") || s.equals(")")) return;
+        parts.add(s);
     }
 
     /**
@@ -154,14 +246,18 @@ public final class RegexFieldHelper {
     private static PostProcess extractPostProcessors(String rule) {
         PostProcess pp = new PostProcess();
         pp.rule = rule;
+        // 修复：各后处理块原先都从【原始 rule】重建 pp.rule，多类标记共存时
+        // 后处理的块会覆盖前面块的剥离结果（如 "[含序号:3][替换:x>>空]" 残留 [替换:]）。
+        // 现统一在一个 remaining 串上依次剥离。
+        String remaining = rule;
 
         // [替换:a>>b#x>>y] — 可能多个替换用 # 分隔
-        int ri = rule.indexOf("[替换:");
+        int ri = remaining.indexOf("[替换:");
         if (ri >= 0) {
-            int re = rule.indexOf("]", ri);
+            int re = remaining.indexOf("]", ri);
             if (re > ri) {
-                pp.replacements = rule.substring(ri + 4, re);
-                pp.rule = rule.substring(0, ri) + rule.substring(re + 1);
+                pp.replacements = remaining.substring(ri + 4, re);
+                remaining = remaining.substring(0, ri) + remaining.substring(re + 1);
             }
         }
 
@@ -169,34 +265,38 @@ public final class RegexFieldHelper {
         // 修复：原实现 xi + 4 < xe ? 5 : 4 的偏移判断依据是位置而非匹配的前缀形式，
         // "[不含:abc]"（4字符前缀）会错误地 +5 起始，导致提取值丢失首字符。
         // 现按实际匹配的前缀分别记录其长度。
-        int xi = rule.indexOf("[不含:");
+        int xi = remaining.indexOf("[不含:");
         int xPrefixLen = 4;
         if (xi < 0) {
-            xi = rule.indexOf("[不包含:");
+            xi = remaining.indexOf("[不包含:");
             xPrefixLen = 5;
         }
         if (xi >= 0) {
-            int xe = rule.indexOf("]", xi);
+            int xe = remaining.indexOf("]", xi);
             if (xe > xi) {
-                pp.exclude = rule.substring(xi + xPrefixLen, xe);
-                pp.rule = rule.substring(0, xi) + rule.substring(xe + 1);
+                pp.exclude = remaining.substring(xi + xPrefixLen, xe);
+                remaining = remaining.substring(0, xi) + remaining.substring(xe + 1);
             }
         }
 
         // [含序号:n][序号:m]
-        int si = rule.indexOf("[含序号:");
+        // 修复：两处取值偏移各多跳 1 个字符（"[含序号:" 为 5 字符、"[序号:" 为 4 字符），
+        // 原实现 "[含序号:3]" 取到空串、"[序号:12]" 取到 "2"，序号功能整体失效
+        int si = remaining.indexOf("[含序号:");
         if (si >= 0) {
-            int se = rule.indexOf("]", si);
+            int se = remaining.indexOf("]", si);
             if (se > si) {
-                pp.seqIndex = Integer.parseInt(rule.substring(si + 6, se));
-                pp.rule = rule.substring(0, si) + rule.substring(se + 1);
+                // 修复：parseInt 未做容错，规则写成 [含序号:第N集] 等非法数值时
+                // 抛 NumberFormatException 会一路向上打断整个字段提取流程
+                pp.seqIndex = parseIntQuiet(remaining.substring(si + 5, se), 0);
+                remaining = remaining.substring(0, si) + remaining.substring(se + 1);
             }
         }
-        int si2 = rule.indexOf("[序号:");
+        int si2 = remaining.indexOf("[序号:");
         if (si2 >= 0) {
-            int se2 = rule.indexOf("]", si2);
+            int se2 = remaining.indexOf("]", si2);
             if (se2 > si2) {
-                int n = Integer.parseInt(rule.substring(si2 + 5, se2));
+                int n = parseIntQuiet(remaining.substring(si2 + 4, se2), 0);
                 if (n > 0) {
                     pp.seqFrom = n;
                     pp.seqTo = n;
@@ -207,33 +307,44 @@ public final class RegexFieldHelper {
                     pp.seqFrom = 1;
                     pp.seqTo = 1;
                 }
-                pp.rule = rule.substring(0, si2) + rule.substring(se2 + 1);
+                remaining = remaining.substring(0, si2) + remaining.substring(se2 + 1);
             }
         }
 
         // 分割(前:xxx) 或 分割(后:xxx) — 支持中文括号和英文括号
-        int fi = rule.indexOf("分割(前:");
-        if (fi < 0) fi = rule.indexOf("分割（前:");
+        int fi = remaining.indexOf("分割(前:");
+        if (fi < 0) fi = remaining.indexOf("分割（前:");
         if (fi >= 0) {
-            int fe = rule.indexOf(")", fi);
-            if (fe < 0) fe = rule.indexOf("）", fi);
+            int fe = remaining.indexOf(")", fi);
+            if (fe < 0) fe = remaining.indexOf("）", fi);
             if (fe > fi) {
-                pp.splitBefore = rule.substring(fi + 5, fe);
-                pp.rule = rule.substring(0, fi) + rule.substring(fe + 1);
+                pp.splitBefore = remaining.substring(fi + 5, fe);
+                remaining = remaining.substring(0, fi) + remaining.substring(fe + 1);
             }
         }
-        int fi2 = rule.indexOf("分割(后:");
-        if (fi2 < 0) fi2 = rule.indexOf("分割（后:");
+        int fi2 = remaining.indexOf("分割(后:");
+        if (fi2 < 0) fi2 = remaining.indexOf("分割（后:");
         if (fi2 >= 0) {
-            int fe2 = rule.indexOf(")", fi2);
-            if (fe2 < 0) fe2 = rule.indexOf("）", fi2);
+            int fe2 = remaining.indexOf(")", fi2);
+            if (fe2 < 0) fe2 = remaining.indexOf("）", fi2);
             if (fe2 > fi2) {
-                pp.splitAfter = rule.substring(fi2 + 5, fe2);
-                pp.rule = rule.substring(0, fi2) + rule.substring(fe2 + 1);
+                pp.splitAfter = remaining.substring(fi2 + 5, fe2);
+                remaining = remaining.substring(0, fi2) + remaining.substring(fe2 + 1);
             }
         }
 
+        pp.rule = remaining;
         return pp;
+    }
+
+    /** 安全整数解析：非法数值返回默认值，绝不抛异常 */
+    private static int parseIntQuiet(String value, int defaultValue) {
+        if (value == null) return defaultValue;
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (Exception e) {
+            return defaultValue;
+        }
     }
 
     /** 后处理器数据 */
@@ -259,12 +370,17 @@ public final class RegexFieldHelper {
             return "";
         }
 
-        // [替换:a>>b#x>>y]：多个替换
+        // [替换:a>>b#x>>y]：多个替换（"空" 为删除语义，见真实规则 [替换:导演：>>空]）
         if (!pp.replacements.isEmpty()) {
             for (String pair : pp.replacements.split("#")) {
                 String[] parts = pair.split(">>", 2);
                 if (parts.length == 2) {
-                    result = result.replace(parts[0].trim(), parts[1].trim());
+                    String from = parts[0].trim();
+                    String to = parts[1].trim();
+                    if ("空".equals(to)) to = "";
+                    if (!from.isEmpty()) {
+                        result = result.replace(from, to);
+                    }
                 }
             }
         }
@@ -280,12 +396,11 @@ public final class RegexFieldHelper {
             if (idx >= 0) result = result.substring(0, idx);
         }
 
-        // [含序号:n]：按索引截取（修复：原分割符为空字符串""会拆成单字符，
-        // 应使用"\\|"或保留原始语义——XBPQ惯例中[含序号]通常指按"|"分割后的第N项）
+        // [含序号:n]（非 CSS 规则）：按 "|" 分割后取第 n 项（1-based）
         if (pp.seqIndex > 0) {
             String[] parts = result.split("\\|", -1);
-            if (parts.length > pp.seqIndex) {
-                result = parts[pp.seqIndex];
+            if (parts.length >= pp.seqIndex) {
+                result = parts[pp.seqIndex - 1];
             }
         } else if (pp.seqFrom > 0) {
             // 按空格/逗号/& 分割取第N项
@@ -313,6 +428,10 @@ public final class RegexFieldHelper {
      * @return 提取值
      */
     private static String regexExtract(String scope, String rule) {
+        // 修复：真实规则里存在"字段值即常量"的写法（如
+        // "搜索图片": "https://cainisi.cf/暂无封面.jpg"），它并不是截取规则。
+        // 原先会被当作正则去 HTML 里匹配，匹配不到就返回空，导致封面永远为空。
+        if (isPlainValue(rule)) return rule.trim();
         try {
             // 使用缓存池获取或创建Pattern，避免重复编译
             Matcher m = getOrCreatePattern(rule).matcher(scope);
@@ -327,6 +446,25 @@ public final class RegexFieldHelper {
     }
 
     /**
+     * 判断规则是否为"常量值"而非截取规则：形如完整的 http(s) 链接，
+     * 且不含 XBPQ 截取语法（&&、$、[替换: 等）与空白字符。
+     */
+    private static boolean isPlainValue(String rule) {
+        if (rule == null) return false;
+        String v = rule.trim();
+        if (v.length() < 8) return false;
+        if (!v.startsWith("http://") && !v.startsWith("https://")) return false;
+        if (v.contains("&&") || v.contains("$") || v.contains("[替换:")
+                || v.contains("[不含:") || v.contains("[序号:") || v.contains("[含序号:")) {
+            return false;
+        }
+        for (int i = 0; i < v.length(); i++) {
+            if (Character.isWhitespace(v.charAt(i))) return false;
+        }
+        return true;
+    }
+
+    /**
      * 按数组规则循环切分出所有列表项。
      * <p>
      * 支持两种规则格式：
@@ -338,7 +476,7 @@ public final class RegexFieldHelper {
      *
      * @return 列表项集合，规则非法返回空
      */
-    static List<String> splitItems(String content, String arrayRule) {
+    public static List<String> splitItems(String content, String arrayRule) {
         List<String> items = new ArrayList<>();
         if (content == null || content.isEmpty() || arrayRule == null || arrayRule.isEmpty()) return items;
 
@@ -454,8 +592,11 @@ public final class RegexFieldHelper {
         // 检查是否为"有前缀无后缀"的截取（最后部分为空，如 "start&&end&&"）
         boolean hasTrailingEmpty = !parts.isEmpty() && parts.get(parts.size() - 1).trim().isEmpty();
         if (hasTrailingEmpty) {
-            // 去掉末尾空部分，最后一对 (start, end) 使用"截到末尾"语义
-            int pairs = (parts.size() - 1) / 2;
+            // 去掉末尾空部分，最后一对 (start, end) 使用"截到末尾"语义。
+            // 修复：原公式 (size-1)/2 在三段截取（如 "<i&&</i>&nbsp;&&" →
+            // [<i, </i>, &nbsp;, ""]）时算出 1 对，末段 "截到末尾" 被丢弃；
+            // 正确对数 = 去掉末尾空段后的段数 / 2，即 size/2。
+            int pairs = parts.size() / 2;
             String current = scope;
             for (int i = 0; i < pairs; i++) {
                 String start = parts.get(i * 2).trim();
