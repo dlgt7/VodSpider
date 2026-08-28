@@ -89,10 +89,12 @@ public class CookieManager implements HttpClient.HttpInterceptor, CookieJar {
             String[] parts = cookie.split(";");
             String nameValue = parts[0].trim();
             int eqIdx = nameValue.indexOf('=');
-            if (eqIdx > 0) {
-                builder.name(nameValue.substring(0, eqIdx).trim());
-                builder.value(nameValue.substring(eqIdx + 1).trim());
-            }
+            // 无名 Cookie（无 "="）无法构建，显式跳过（原实现落入 builder.build()
+            // 抛 IllegalArgumentException 后靠 catch 吞掉）
+            if (eqIdx <= 0) return;
+
+            builder.name(nameValue.substring(0, eqIdx).trim());
+            builder.value(nameValue.substring(eqIdx + 1).trim());
 
             Cookie cookieObj = builder.build();
             cookieStore

@@ -89,6 +89,13 @@ public class WafBypassInterceptor implements HttpClient.HttpInterceptor {
         if (original.getBody() != null) {
             builder.body(original.getBody());
         }
+        // 修复：重试请求原先丢失响应体解码字符集（GBK 站点重试后正文乱码）与显式 Content-Type
+        if (original.getResponseCharset() != null && !original.getResponseCharset().isEmpty()) {
+            builder.responseCharset(original.getResponseCharset());
+        }
+        if (original.getContentType() != null) {
+            builder.contentType(original.getContentType());
+        }
         return builder.build();
     }
 
