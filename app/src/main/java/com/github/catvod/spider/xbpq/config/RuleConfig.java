@@ -65,6 +65,11 @@ public class RuleConfig {
         // ===== 详情页配置 =====
         CHINESE_KEY_MAP.put("详情url", "detail_url");
         CHINESE_KEY_MAP.put("详情数组", "detail_array");
+        // 详情页专属标题/图片规则：详情页结构与列表页差异大时使用，
+        // 优先于沿用的 list_name/list_pic（如 hl-模板站点详情信息区的
+        // 点赞/评论按钮 <a title="顶"> 会污染列表标题规则）
+        CHINESE_KEY_MAP.put("详情标题", "detail_title");
+        CHINESE_KEY_MAP.put("详情图片", "detail_pic");
         CHINESE_KEY_MAP.put("详情二次截取", "detail_twice");
         CHINESE_KEY_MAP.put("导演", "detail_director");
         CHINESE_KEY_MAP.put("主演", "detail_actor");
