@@ -101,7 +101,10 @@ public class JsonParser {
      */
     public static JSONObject parseObject(String json) throws JSONException {
         if (json == null || json.isEmpty()) return new JSONObject();
-        return new JSONObject(stripJsonp(json));
+        // 修复：原先遗漏 stripComments，而 XBPQ 规则文件普遍采用带 // 注释的 JSONC 写法
+        //（xBPQ 目录下 10+ 个规则因此整体加载失败，表现为"站点打不开/空白"）。
+        // parseArray 早已调用 stripComments，此处补齐以保持一致。
+        return new JSONObject(stripJsonp(stripComments(json.trim())));
     }
 
     /**
@@ -206,10 +209,22 @@ public class JsonParser {
      * @param nodes current visited node count (pass 0 on first call)
      */
     public static Object findTarget(Object obj, String idKey, String nameKey, int depth, int nodes) {
+        // 用共享计数器承载 nodes：若继续以 nodes + 1 传值，兄弟节点之间不会累加，
+        // 计数器恒等于 depth，FIND_MAX_NODES 形同虚设（宽 JSON 只能靠 depth 兜底）。
+        return findTarget(obj, idKey, nameKey, depth, new int[]{nodes});
+    }
+
+    /**
+     * Recursively find with depth/node limits.
+     *
+     * @param depth current recursion depth (pass 0 on first call)
+     * @param nodes shared visited-node counter (pass {@code new int[]{0}} on first call)
+     */
+    private static Object findTarget(Object obj, String idKey, String nameKey, int depth, int[] nodes) {
         try {
             if (obj == null) return null;
             if (depth > FIND_MAX_DEPTH) return null;
-            if (nodes > FIND_MAX_NODES) return null;
+            if (++nodes[0] > FIND_MAX_NODES) return null;
             if (obj instanceof JSONObject) {
                 JSONObject object = (JSONObject) obj;
                 boolean idOk = object.has(idKey) || hasAlias(object, idKey);
@@ -220,14 +235,16 @@ public class JsonParser {
                     for (int i = 0; i < nk.length(); i++) {
                         String key = nk.optString(i);
                         if (key == null) continue;
-                        Object r = findTarget(object.opt(key), idKey, nameKey, depth + 1, nodes + 1);
+                        Object r = findTarget(object.opt(key), idKey, nameKey, depth + 1, nodes);
                         if (r != null) return r;
                     }
                 }
             } else if (obj instanceof JSONArray) {
                 JSONArray array = (JSONArray) obj;
                 for (int i = 0; i < array.length(); i++) {
-                    Object r = findTarget(array.get(i), idKey, nameKey, depth + 1, nodes + 1);
+                    Object elem = array.opt(i);
+                    if (elem == null) continue;
+                    Object r = findTarget(elem, idKey, nameKey, depth + 1, nodes);
                     if (r != null) return array;
                 }
             }
