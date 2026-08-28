@@ -50,6 +50,12 @@ public class JsonParser {
                     inString = true;
                     quoteChar = c;
                     sb.append(c);
+                    // 修复：原实现此处缺少 continue，落到底部 sb.append(c) 又追加一次，
+                    // 每个字符串的【开引号被双写】（"站名" → ""站名"），任何含字符串的
+                    // 规则 JSON 经 stripComments 后全部损坏，解析得空对象——表现为
+                    // 全站分类/首页/搜索空白。现开引号只追加一次。
+                    i++;
+                    continue;
                 } else if (c == '/' && i + 1 < json.length()) {
                     if (json.charAt(i + 1) == '/') {
                         // line comment: skip to end of line
