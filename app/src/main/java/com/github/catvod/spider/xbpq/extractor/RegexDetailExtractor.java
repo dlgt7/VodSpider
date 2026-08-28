@@ -30,9 +30,14 @@ public class RegexDetailExtractor implements ExtractorFactory.DetailExtractor {
                 content = StringCutRule.applySecondCut(content, twiceRule);
             }
 
-            // 详情页字段（平铺键，标题/图片沿用列表页键）
-            putIfFound(vod, "vod_name", RegexFieldHelper.extract(content, config.optString("list_name", "")));
-            putIfFound(vod, "vod_pic", RegexFieldHelper.extract(content, config.optString("list_pic", "")));
+            // 详情页字段（平铺键）。标题/图片：详情页专属规则（详情标题/详情图片）
+            // 优先，未配置时沿用列表键（hl-模板站点的详情按钮 <a title="顶"> 会污染列表规则）
+            String titleRule = config.optString("detail_title", "");
+            if (titleRule.isEmpty()) titleRule = config.optString("list_name", "");
+            String picRule = config.optString("detail_pic", "");
+            if (picRule.isEmpty()) picRule = config.optString("list_pic", "");
+            putIfFound(vod, "vod_name", RegexFieldHelper.extract(content, titleRule));
+            putIfFound(vod, "vod_pic", RegexFieldHelper.extract(content, picRule));
             putIfFound(vod, "vod_content", RegexFieldHelper.extract(content, config.optString("detail_content", "")));
             putIfFound(vod, "vod_director", RegexFieldHelper.extract(content, config.optString("detail_director", "")));
             putIfFound(vod, "vod_actor", RegexFieldHelper.extract(content, config.optString("detail_actor", "")));

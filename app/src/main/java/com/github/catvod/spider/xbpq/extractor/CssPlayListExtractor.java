@@ -48,6 +48,12 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
 
                     // 使用 outerHtml 作为范围，让内部规则（url_title/url_url）在正确作用域内提取
                     JSONArray episodes = extractEpisodes(line.outerHtml(), config);
+                    if (episodes.length() == 0) {
+                        // 修复：热剧TV网等 hl-模板站点，线路按钮(<a>)与剧集列表
+                        // (兄弟节点 .hl-tabs-box)分离——按钮块内永远提取不到剧集。
+                        // 现按线路序号回退到祖先容器中对应的 hl-tabs-box 剧集盒提取。
+                        episodes = extractEpisodesFromSiblingBox(line, lineIndex, config);
+                    }
                     if (episodes.length() == 0) continue;
 
                     JSONObject source = new JSONObject();
@@ -164,6 +170,33 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
                     + "$" + prefix + url + suffix);
         }
         return episodes;
+    }
+
+    /**
+     * 线路按钮与剧集盒分离结构的回退提取（如 hl-模板：hl-plays-from 内的
+     * a.hl-tabs-btn 与同级 .hl-tabs-box 一一对应）。
+     * <p>从线路按钮沿祖先向上查找包含剧集盒的容器，按线路序号取对应盒子，
+     * 在盒内按 url_array/url_title/url_url 提取剧集。未找到则返回空数组。</p>
+     */
+    private JSONArray extractEpisodesFromSiblingBox(Element line, int lineIndex, JSONObject config) throws Exception {
+        Element parent = line;
+        for (int i = 0; i < 8 && parent != null; i++) {
+            parent = parent.parent();
+            if (parent == null) break;
+            // 精准匹配 hl-模板词（class 分词等于 hl-tabs-box，不会误中 hl-tabs-box2 公告）
+            Elements boxes = parent.select("[class~=hl-tabs-box]");
+            if (boxes.isEmpty()) {
+                // 通用回退：类名含 tabs-box 但排除 tabs-box2（公告 tab）
+                Elements all = parent.select("[class*=tabs-box]");
+                for (Element b : all) {
+                    if (!b.className().contains("tabs-box2")) boxes.add(b);
+                }
+            }
+            if (!boxes.isEmpty() && lineIndex <= boxes.size()) {
+                return extractEpisodes(boxes.get(lineIndex - 1).outerHtml(), config);
+            }
+        }
+        return new JSONArray();
     }
 
     /**

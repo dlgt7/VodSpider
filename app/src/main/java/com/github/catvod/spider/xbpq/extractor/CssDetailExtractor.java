@@ -48,8 +48,15 @@ public class CssDetailExtractor implements ExtractorFactory.DetailExtractor {
             }
 
             // 3. 依次提取详情各字段（统一走 RegexFieldHelper，支持 || 备用规则、[替换]/[不含] 后处理器）
-            putByField(vod, scope, "vod_name", config.optString("list_name", ""));
-            putByField(vod, scope, "vod_pic", config.optString("list_pic", ""));
+            // 标题/图片：详情页专属规则（详情标题/详情图片）优先，未配置时沿用列表键。
+            // 修复：hl-模板站点详情信息区的"顶/评论"按钮 <a title="顶"> 排在前面，
+            // 沿用列表规则会把按钮文案写进 vod_name。
+            String titleRule = config.optString("detail_title", "");
+            if (titleRule.isEmpty()) titleRule = config.optString("list_name", "");
+            String picRule = config.optString("detail_pic", "");
+            if (picRule.isEmpty()) picRule = config.optString("list_pic", "");
+            putByField(vod, scope, "vod_name", titleRule);
+            putByField(vod, scope, "vod_pic", picRule);
             putByField(vod, scope, "vod_content", config.optString("detail_content", ""));
             putByField(vod, scope, "vod_director", config.optString("detail_director", ""));
             putByField(vod, scope, "vod_actor", config.optString("detail_actor", ""));
