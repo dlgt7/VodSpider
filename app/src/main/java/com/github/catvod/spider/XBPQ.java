@@ -5505,11 +5505,17 @@ public class XBPQ extends Spider {
         // 播放请求头
         applyPlayHeader(result, webUrl);
 
-        // 清理标记
+        // XYQBiu 同款约定：链接含 #isVideo=true# 标记时强制按视频直连处理，
+        // 磁力/网盘直链等非视频格式依赖它绕过嗅探；先判后剥，剥离标记后再下发
+        boolean forceVideo = webUrl.contains("#isVideo=true#");
         webUrl = webUrl.replaceAll("#isVideo=true#", "");
 
         // 判断类型
-        if (Util.isVideoFormat(webUrl)) {
+        if (Util.isVideoFormat(webUrl) || forceVideo) {
+            result.put("parse", 0);
+            result.put("playUrl", "");
+        } else if (Util.isThunder(webUrl)) {
+            // 磁力/迅雷/ed2k 直链交播放器处理（资源下载站规则），嗅探必然失败不能走 parse:1
             result.put("parse", 0);
             result.put("playUrl", "");
         } else if (Util.isVip(webUrl)) {
@@ -5870,15 +5876,37 @@ public class XBPQ extends Spider {
             // 扁平搜索URL优先（buildSearchUrl 内部已应用 search_suffix）
             result.url = buildSearchUrl(searchUrlFlat, keyword, page);
             JSONObject headers = parseSearchHeaders(getRuleVal("search_header"));
-            result.content = fetchUrl(result.url, headers);
+            result.content = unwrapJsonString(fetchUrl(result.url, headers));
         } else if (search != null && search.has("url")) {
             result.url = applySearchSuffix(addHttpPrefix(search.getString("url")
                     .replace("{wd}", keyword).replace("{pg}", page)));
             JSONObject headers = parseSearchHeaders(getRuleVal("search_header"));
             if (headers == null && search != null) headers = search.optJSONObject("header");
-            result.content = fetchUrl(result.url, headers);
+            result.content = unwrapJsonString(fetchUrl(result.url, headers));
         }
         return result;
+    }
+
+    /**
+     * 响应体若是 JSON 字符串字面量包裹的 HTML（FastAdmin 等框架对 AJAX 请求返回
+     * "\"&lt;html&gt;...\"" 形式，内部含 \" 与 \/ 转义），剥掉外壳还原纯 HTML，
+     * 避免 && 截取规则撞上转义字符全部失效
+     */
+    protected String unwrapJsonString(String body) {
+        if (body == null) return body;
+        String trimmed = body.trim();
+        if (trimmed.length() < 2 || trimmed.charAt(0) != '"' || trimmed.charAt(trimmed.length() - 1) != '"') {
+            return body;
+        }
+        try {
+            Object value = new org.json.JSONTokener(trimmed).nextValue();
+            if (value instanceof String) {
+                return (String) value;
+            }
+        } catch (Exception e) {
+            SpiderDebug.log("unwrapJsonString 解析失败，按原始响应处理");
+        }
+        return body;
     }
 
     /**
