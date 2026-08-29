@@ -4546,6 +4546,12 @@ public class XBPQ extends Spider {
             }
 
             arr = HtmlNodeHelper.findUpNodes(content, pos - 1, lookback.getInt(4));
+            if (arr.isEmpty()) {
+                // 命中点之前不存在未闭合的开标签（如二次截取切掉了外层开标签），
+                // 无法构造祖先节点，放弃该匹配点，由调用方中断本轮提取
+                SpiderDebug.log("findUpNodes 未找到祖先节点，跳过当前匹配点");
+                return null;
+            }
             if (urlNodes == null) {
                 urlNodes = arr;
                 blockPos = arr.get(arr.size() - 1);
@@ -6830,6 +6836,12 @@ public class XBPQ extends Spider {
             }
 
             arr = HtmlNodeHelper.findUpNodes(content, pos - 1, lookback.getInt(4));
+            if (arr.isEmpty()) {
+                // 命中点之前不存在未闭合的开标签（如二次截取切掉了外层开标签），
+                // 无法构造祖先节点，放弃该匹配点，由调用方中断本轮提取
+                SpiderDebug.log("findUpNodes 未找到祖先节点，跳过当前匹配点");
+                return null;
+            }
             if (urlNodes == null) {
                 urlNodes = arr;
                 blockPos = arr.get(arr.size() - 1);
