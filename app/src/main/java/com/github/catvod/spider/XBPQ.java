@@ -9,10 +9,13 @@ import android.util.Pair;
 import com.github.catvod.crawler.Spider;
 import com.github.catvod.crawler.SpiderDebug;
 import com.github.catvod.utils.Crypto;
+import com.github.catvod.utils.Json;
 import com.github.catvod.utils.SliderVerifyUtils;
 import com.github.catvod.utils.Util;
 import com.github.catvod.net.OkHttp;
 
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
@@ -220,163 +223,16 @@ public class XBPQ extends Spider {
     /** cleanHtmlResponse: HTML 注释 <!--...--> */
     private static final Pattern P_HTML_COMMENT = Pattern.compile("<!--.+?-->");
 
-    // ==================== 字段映射表 ====================
+    // ==================== 字段映射表（统一命名标准，见 XBPQKey） ====================
 
     /**
-     * 中文字段名到英文Key的映射表
-     * 用于兼容中文规则配置
+     * 「任意写法 -> 英文规范键」映射表：兼容中文键、历史别名与其它爬虫的同义键。
+     * <p>
+     * 单一事实源为 XBPQKey：新增字段只需在 XBPQKey 登记表中加一行，
+     * 中文名 / 英文别名 / 历史拼写在此自动生效，本类无需改动。
+     * 仅收录「非规范写法 -> 规范键」，规范英文键原样保留，避免归一化打乱规则键序。
      */
-    private static final Map<String, String> CHINESE_KEY_MAP = new HashMap<>();
-
-    static {
-        // 基础配置
-        CHINESE_KEY_MAP.put("主页url", "homeUrl");
-        CHINESE_KEY_MAP.put("请求头", "header");
-        CHINESE_KEY_MAP.put("编码", "encoding");
-        CHINESE_KEY_MAP.put("起始页", "startpage");
-        CHINESE_KEY_MAP.put("首页", "firstpage");
-        CHINESE_KEY_MAP.put("UserAgent", "User-Agent");
-        CHINESE_KEY_MAP.put("Referer", "Referer");
-
-        // 分类相关
-        CHINESE_KEY_MAP.put("分类url", "class_url");
-        CHINESE_KEY_MAP.put("分类", "fenlei");
-        CHINESE_KEY_MAP.put("分类名称", "class_name");
-        CHINESE_KEY_MAP.put("分类值", "class_value");
-        CHINESE_KEY_MAP.put("分类二次截取", "cat_twice");
-        CHINESE_KEY_MAP.put("分类数组", "cat_array");
-        CHINESE_KEY_MAP.put("分类标题", "cat_title");
-        CHINESE_KEY_MAP.put("分类ID", "cat_id");
-        CHINESE_KEY_MAP.put("分类筛选", "filter");
-        CHINESE_KEY_MAP.put("筛选", "filter");
-        CHINESE_KEY_MAP.put("排序", "sort_type");
-        CHINESE_KEY_MAP.put("排序值", "sort_value");
-
-        // 列表/数组
-        CHINESE_KEY_MAP.put("数组", "list_array");
-        CHINESE_KEY_MAP.put("二次截取", "list_twice");
-        CHINESE_KEY_MAP.put("图片", "list_pic");
-        CHINESE_KEY_MAP.put("标题", "list_name");
-        CHINESE_KEY_MAP.put("链接", "list_id");
-        CHINESE_KEY_MAP.put("链接前缀", "list_prefix");
-        CHINESE_KEY_MAP.put("链接后缀", "list_suffix");
-        CHINESE_KEY_MAP.put("副标题", "list_remarks");
-        CHINESE_KEY_MAP.put("简介", "detail_content");
-        CHINESE_KEY_MAP.put("导演", "detail_director");
-        CHINESE_KEY_MAP.put("主演", "detail_actor");
-        CHINESE_KEY_MAP.put("影片类型", "detail_type");
-        CHINESE_KEY_MAP.put("影片年代", "detail_year");
-        CHINESE_KEY_MAP.put("影片地区", "detail_area");
-        CHINESE_KEY_MAP.put("状态", "detail_remarks");
-        // 详情字段别名（与已有“影片类型/影片年代/影片地区/简介”功能相同，仅名称不同）
-        CHINESE_KEY_MAP.put("类型", "detail_type");
-        CHINESE_KEY_MAP.put("年份", "detail_year");
-        CHINESE_KEY_MAP.put("地区", "detail_area");
-        CHINESE_KEY_MAP.put("剧情", "detail_content");
-
-        // 播放相关
-        CHINESE_KEY_MAP.put("线路数组", "from_array");
-        CHINESE_KEY_MAP.put("线路标题", "from_title");
-        CHINESE_KEY_MAP.put("播放数组", "play_array");
-        CHINESE_KEY_MAP.put("播放列表", "url_array");
-        CHINESE_KEY_MAP.put("播放标题", "url_title");
-        CHINESE_KEY_MAP.put("播放链接", "url_url");
-        CHINESE_KEY_MAP.put("跳转播放链接", "jump_url");
-        CHINESE_KEY_MAP.put("分析MacPlayer", "Anal_MacPlayer");
-        CHINESE_KEY_MAP.put("空播放兜底", "empty_play_url");
-        CHINESE_KEY_MAP.put("空播放线路名", "empty_play_from");
-        CHINESE_KEY_MAP.put("选集链接加前缀", "epiurl_prefix");
-        CHINESE_KEY_MAP.put("选集链接加后缀", "epiurl_suffix");
-        // 详情标题覆盖（&& 截取规则，注入 detail.vod_name，优先于列表标题回填）
-        CHINESE_KEY_MAP.put("影片名称", "detail_name");
-        CHINESE_KEY_MAP.put("直接播放", "force_play");
-        CHINESE_KEY_MAP.put("播放请求头", "play_header");
-        CHINESE_KEY_MAP.put("嗅探词", "video_format");
-        CHINESE_KEY_MAP.put("剧集过滤", "episode_filter");
-
-        // 搜索
-        CHINESE_KEY_MAP.put("搜索url", "search_url");
-        CHINESE_KEY_MAP.put("搜索模式", "search_mode");
-        CHINESE_KEY_MAP.put("搜索数组", "search_array");
-        CHINESE_KEY_MAP.put("搜索标题", "search_name");
-        CHINESE_KEY_MAP.put("搜索图片", "search_pic");
-        CHINESE_KEY_MAP.put("搜索链接", "search_id");
-        CHINESE_KEY_MAP.put("搜索副标题", "search_remarks");
-        CHINESE_KEY_MAP.put("搜索二次截取", "search_twice");
-        CHINESE_KEY_MAP.put("搜索请求头", "search_header");
-        CHINESE_KEY_MAP.put("搜索后缀", "search_suffix");
-        CHINESE_KEY_MAP.put("搜索链接前缀", "search_prefix");
-        CHINESE_KEY_MAP.put("线路二次截取", "line_second_cut");
-        CHINESE_KEY_MAP.put("播放二次截取", "play_twice");
-        CHINESE_KEY_MAP.put("多线二次截取", "multi_line_twice");
-        CHINESE_KEY_MAP.put("多线数组", "multi_line_array");
-        CHINESE_KEY_MAP.put("多线链接", "multi_line_url");
-        CHINESE_KEY_MAP.put("多线链接前缀", "multi_line_prefix");
-        CHINESE_KEY_MAP.put("多线链接后缀", "multi_line_suffix");
-
-        // 其他
-        CHINESE_KEY_MAP.put("图片代理", "PicNeedProxy");
-        CHINESE_KEY_MAP.put("过滤词", "filter_word");
-        CHINESE_KEY_MAP.put("倒序", "reverse");
-        CHINESE_KEY_MAP.put("倒序播放", "reverse");
-        CHINESE_KEY_MAP.put("免嗅", "manualVideoCheck");
-        CHINESE_KEY_MAP.put("反爬超时", "antiCrawlTimeout");
-
-        // CSS 选择器相关（新增）
-        CHINESE_KEY_MAP.put("CSS 选择器", "css_selector");
-        CHINESE_KEY_MAP.put("CSS 提取", "css_extract");
-        CHINESE_KEY_MAP.put("CSS 属性", "css_attribute");
-        CHINESE_KEY_MAP.put("JSOUP 解析", "jsoup_parse");
-
-        // ===== 扩展映射（借鉴第18次升级版 ZH_EN_CONFIG_KEYS 与参考文件 CHINESE_KEY_MAP）=====
-
-        // 图片代理双模式与公共请求头（类级共享）
-        CHINESE_KEY_MAP.put("图片代理前缀", "baseEncodeUrl");
-        CHINESE_KEY_MAP.put("代理密钥", "secretKey");
-        CHINESE_KEY_MAP.put("公共请求头", "headerJson");
-        CHINESE_KEY_MAP.put("打开调试", "openDebug");
-
-        // 元数据
-        CHINESE_KEY_MAP.put("站名", "siteName");
-        CHINESE_KEY_MAP.put("作者", "author");
-        CHINESE_KEY_MAP.put("超时", "timeout");
-        CHINESE_KEY_MAP.put("重试", "retries");
-
-        // 详情字段别名（语义化英文，兼容参考文件写法）
-        CHINESE_KEY_MAP.put("详情数组", "detail_array");
-
-        // 播放相关别名
-        CHINESE_KEY_MAP.put("播放链接前缀", "play_prefix");
-        CHINESE_KEY_MAP.put("播放链接后缀", "play_suffix");
-
-        // 分类相关别名
-
-        // 请求头别名
-        CHINESE_KEY_MAP.put("头部集合", "header");
-
-        // 错误码配置
-        CHINESE_KEY_MAP.put("错误码", "errorCodes");
-        CHINESE_KEY_MAP.put("失败码", "failCodes");
-        CHINESE_KEY_MAP.put("成功码", "successCodes");
-
-        // 直播与弹幕
-        CHINESE_KEY_MAP.put("直播url", "liveUrl");
-        CHINESE_KEY_MAP.put("弹幕url", "danmuUrl");
-
-        // ==================== 6 个新字段（真实实现，符合本项目规则） ====================
-        // 热门推荐：首页聚合主页热门/推荐视频
-        CHINESE_KEY_MAP.put("热门推荐", "hot_recommend");
-        // 列表显示：首页以列表形式展示（结果经 ext 透传）
-        CHINESE_KEY_MAP.put("列表显示", "list_display");
-        // 线路合并：多线路合并为单一线路
-        CHINESE_KEY_MAP.put("线路合并", "merge_lines");
-        // 线路链接：与「多线链接」同义，提取每条线路的页面链接（线路数组 + 线路链接 逐页拉取剧集）
-        CHINESE_KEY_MAP.put("线路链接", "multi_line_url");
-        // 播放图片：详情/列表缺封面时的兜底图
-        CHINESE_KEY_MAP.put("播放图片", "play_image");
-        // User：独立请求头（Key:Value 形式，如 User-Agent:xxx），注入公共请求头
-        CHINESE_KEY_MAP.put("User", "userHeader");
-    }
+    private static final Map<String, String> CHINESE_KEY_MAP = XBPQKey.aliasMap();
 
     /** 标准分类名称列表（用于猜测分类） */
     protected final List<String> standardCategoryNames = Arrays.asList(
@@ -1201,6 +1057,412 @@ public class XBPQ extends Spider {
         this.ext = extend;
     }
 
+    // ==================== 标准模板适配层（网页解析标准模板 4+1 接口） ====================
+    //
+    // 标准模板对外只暴露「分类 / 列表 / 详情 / 播放解析 / 搜索」五个方法加一组 http 工具。
+    // 本层把 XBPQ 的规则引擎包装成模板签名，内部全部复用已有实现，不另起炉灶。
+    //
+    // 返回信封统一为：
+    //   列表/搜索：{code,msg,page,pagecount,limit,total,list:[{vod_id,vod_name,vod_pic,vod_remarks}]}
+    //   详情    ：{code,msg,data:{...},list:[{...}]}（data 供模板消费，list 供三平台消费）
+    //   分类    ：影视仓 {"code","msg","list":[{type_id,type_name}]}；海螺/苹果直接输出数组
+    //
+    // 分隔符（三平台一致）：线路 $$$ ；同线多集 # ；集名与地址 $
+    // ================================================================================
+
+    /** 标准成功码 */
+    public static final int CODE_OK = 200;
+    /** 标准失败码 */
+    public static final int CODE_FAIL = 500;
+    /** 线路分隔符（多条播放源） */
+    public static final String SEP_FROM = "$$$";
+    /** 集数分隔符（同一线路多集） */
+    public static final String SEP_EPISODE = "#";
+    /** 集名与播放地址分隔符 */
+    public static final String SEP_URL = "$";
+
+    /**
+     * 当前源主页地址（等同标准模板的 static BASE_URL）。
+     * 设为实例级：CatVod 多源共存时静态字段会互串，实例字段天然隔离。
+     */
+    public String BASE_URL = "";
+
+    /** 平台：catvod=影视仓（分类外层需包 list）；apple=苹果；hl=海螺 */
+    private String platform = "catvod";
+
+    /**
+     * 同步标准模板字段：BASE_URL / platform 与规则保持一致。
+     * <p>
+     * 平台差异（见标准模板三平台对照表）：影视仓分类必须包 {@code {"list":[]}}，
+     * 海螺、苹果直接输出数组；播放分隔符三平台完全一致。
+     */
+    private void applyStandardTemplateConfig() {
+        try {
+            BASE_URL = rule.optString("homeUrl", "");
+            String p = getRuleVal("platform").trim().toLowerCase();
+            platform = p.isEmpty() ? "catvod" : p;
+        } catch (Exception e) {
+            SpiderDebug.log("applyStandardTemplateConfig: " + e.getMessage());
+        }
+    }
+
+    /** 当前源主页地址（{@link #BASE_URL} 的 getter，规则未加载时先加载） */
+    public String getBaseUrl() {
+        fetchRule();
+        return BASE_URL;
+    }
+
+    /** 覆盖主页地址（同步回规则的 homeUrl，使后续相对路径补全生效） */
+    public void setBaseUrl(String url) {
+        try {
+            fetchRule();
+            BASE_URL = url == null ? "" : url.trim();
+            if (rule != null && !BASE_URL.isEmpty()) rule.put("homeUrl", BASE_URL);
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+        }
+    }
+
+    /** 是否「海螺/苹果」平台（分类直接返回裸数组，不包 list） */
+    protected boolean isBareArrayPlatform() {
+        return "hl".equals(platform) || "apple".equals(platform);
+    }
+
+    // ------------------------------------------------------------------
+    // 【标准模板 1】分类
+    // ------------------------------------------------------------------
+
+    /**
+     * 【标准模板 1】分类获取。
+     *
+     * @return 影视仓：{@code {"code":200,"msg":"ok","list":[{"type_id":"1","type_name":"电影"}]}}；
+     *         海螺/苹果：直接输出 {@code [{"type_id":"1","type_name":"电影"}]}
+     */
+    public String getCategory() throws Exception {
+        fetchRule();
+        JSONArray classes = rule == null ? new JSONArray() : buildClassList(false);
+        if (isBareArrayPlatform()) return classes.toString();
+        // 影视仓 CatVod：分类接口不能直接返回数组，必须包一层 list，否则分类空白
+        JSONObject result = new JSONObject();
+        result.put("code", CODE_OK);
+        result.put("msg", "ok");
+        result.put("list", classes);
+        return result.toString();
+    }
+
+    // ------------------------------------------------------------------
+    // 【标准模板 2】列表
+    // ------------------------------------------------------------------
+
+    /**
+     * 【标准模板 2】分类列表。
+     *
+     * @param tid  分类ID
+     * @param page 页码（从 1 开始，非法值由引擎回退为 1）
+     * @return {@code {"code":200,"msg":"ok","page":1,"pagecount":N,"limit":N,"total":N,"list":[...]}}
+     */
+    public String getVideoList(String tid, String page) throws Exception {
+        return categoryContent(tid, page == null ? "1" : page, false, new HashMap<String, String>());
+    }
+
+    // ------------------------------------------------------------------
+    // 【标准模板 3】详情
+    // ------------------------------------------------------------------
+
+    /**
+     * 【标准模板 3】详情。
+     *
+     * @param vid 影片ID（裸ID 或本类产出的 base64 包裹ID 均可）
+     * @return {@code {"code":200,"msg":"ok","data":{...},"list":[{...}]}}
+     */
+    public String getDetail(String vid) throws Exception {
+        List<String> ids = new ArrayList<>();
+        ids.add(encodeId(vid));
+        return detailContent(ids);
+    }
+
+    /**
+     * 把 vid 包装成 {@link #detailContent} 需要的 id。
+     * 已是本类产出的 base64 包裹（内部为 JSON 对象）时原样透传，避免二次编码。
+     */
+    protected String encodeId(String vid) {
+        if (vid == null || vid.isEmpty()) return "";
+        try {
+            String plain = new String(Base64.decode(vid, BASE64_FLAG), "UTF-8");
+            if (plain.trim().startsWith("{")) {
+                new JSONObject(plain);
+                return vid;
+            }
+        } catch (Exception ignored) {
+            // 不是 base64 包裹，走下面的包装分支
+        }
+        try {
+            JSONObject o = new JSONObject();
+            o.put("vod_id", vid);
+            return Base64.encodeToString(o.toString().getBytes(StandardCharsets.UTF_8), BASE64_FLAG);
+        } catch (Exception e) {
+            SpiderDebug.log("encodeId error: " + e.getMessage());
+            return "";
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 【标准模板 4】搜索
+    // ------------------------------------------------------------------
+
+    /**
+     * 【标准模板 4】搜索。
+     *
+     * @param key  关键词（内部自动 URL 编码）
+     * @param page 页码
+     * @return 同 {@link #getVideoList} 的列表信封
+     */
+    public String getSearch(String key, String page) throws Exception {
+        return searchContent(key, false, page == null ? "1" : page);
+    }
+
+    // ------------------------------------------------------------------
+    // 【标准模板 5】播放解析
+    // ------------------------------------------------------------------
+
+    /**
+     * 【标准模板 5】播放地址解析。
+     *
+     * @param url 选集链接
+     * @return {@code {"parse":0,"playUrl":"","url":"..."}} 形态的播放结果
+     */
+    public String playParse(String url) throws Exception {
+        return playerContent("", url, new ArrayList<String>());
+    }
+
+    // ------------------------------------------------------------------
+    // 标准信封
+    // ------------------------------------------------------------------
+
+    /**
+     * 标准列表信封：{@code {code,msg,page,pagecount,limit,total,list}}。
+     * <p>
+     * 空页时 pagecount 回填「当前页-1」（第 1 页空则为 0），让前端停止展示「下一页」；
+     * 有内容时维持 Integer.MAX_VALUE（引擎无法预知真实总页数）。
+     * 瞬时请求失败导致的误判代价仅是少翻一页，重新进入分类即可恢复。
+     */
+    protected JSONObject wrapList(JSONArray videos, String pg) throws JSONException {
+        int size = videos == null ? 0 : videos.length();
+        JSONObject result = new JSONObject();
+        result.put("code", CODE_OK);
+        result.put("msg", "ok");
+        result.put("page", pg == null || pg.trim().isEmpty() ? "1" : pg.trim());
+        if (size == 0) {
+            int page = 1;
+            try {
+                page = Integer.parseInt(String.valueOf(pg).trim());
+            } catch (Exception ignored) {
+                // 非数字页码按第 1 页处理
+            }
+            result.put("pagecount", Math.max(0, page - 1));
+            result.put("total", 0);
+        } else {
+            result.put("pagecount", Integer.MAX_VALUE);
+            result.put("total", Integer.MAX_VALUE);
+        }
+        result.put("limit", Math.max(90, size));
+        result.put("list", videos == null ? new JSONArray() : videos);
+        return result;
+    }
+
+    // ------------------------------------------------------------------
+    // 标准模板的 http 工具（全部复用既有链路，不另建 OkHttp 客户端）
+    // ------------------------------------------------------------------
+
+    /**
+     * 【标准模板】GET 请求。
+     * 走完整链路：{{变量}} 替换 → SSRF 校验 → 公共请求头合并 → 反爬绕过 → 响应清洗。
+     */
+    public String httpGet(String url) {
+        return fetchUrl(url, null);
+    }
+
+    /** GET 请求（附加自定义请求头，JSON 对象形式） */
+    public String httpGet(String url, JSONObject headers) {
+        return fetchUrl(url, headers);
+    }
+
+    /** GET 请求（失败返回空串，不抛异常，容错模板） */
+    public String httpGetSafe(String url) {
+        try {
+            return fetchUrl(url, null);
+        } catch (Exception e) {
+            SpiderDebug.log(safeLog("httpGetSafe error: " + e.getMessage()));
+            return "";
+        }
+    }
+
+    /**
+     * GET 原始响应（跳过 HTML 注释/换行清洗，JSON 接口专用）。
+     * 仍保留 SSRF 校验与公共请求头，安全性与其它请求路径一致。
+     */
+    public String httpGetRaw(String url) {
+        try {
+            if (isInternalUrl(url) && !"1".equals(getRuleVal("allow_internal"))) {
+                SpiderDebug.log(safeLog("httpGetRaw SSRF blocked: " + url));
+                return "";
+            }
+            return OkHttp.string(url, getHeaders(url));
+        } catch (Exception e) {
+            SpiderDebug.log(safeLog("httpGetRaw error: " + e.getMessage()));
+            return "";
+        }
+    }
+
+    /**【标准模板】POST 表单请求 */
+    public String httpPost(String url, Map<String, String> params) {
+        return fetchPostForm(url, params, null);
+    }
+
+    /** POST JSON 请求 */
+    public String httpPostJson(String url, String json) {
+        try {
+            if (isInternalUrl(url) && !"1".equals(getRuleVal("allow_internal"))) {
+                SpiderDebug.log(safeLog("httpPostJson SSRF blocked: " + url));
+                return "";
+            }
+            return OkHttp.post(url, json, getHeaders(url));
+        } catch (Exception e) {
+            SpiderDebug.log(safeLog("httpPostJson error: " + e.getMessage()));
+            return "";
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // JSON 接口模式（标准模板「异步 JSON-API」：Vue/React 站点直连后端接口）
+    // 复用项目工具 Json.pathFindBy / Json.pathGet 做路径取值，不手写解析
+    // ------------------------------------------------------------------
+
+    /**
+     * 按 JSON 路径抽取影片数组，输出标准 vod 对象数组。
+     *
+     * @param json     接口原始响应
+     * @param path     数组路径（支持 {@code data.list}、{@code list[0].items} 等语法）
+     * @param idKey    id 字段名（空则跳过）
+     * @param nameKey  名称字段名
+     * @param picKey   封面字段名
+     * @param noteKey  备注字段名
+     */
+    protected JSONArray extractVideosByJson(String json, String path,
+                                            String idKey, String nameKey,
+                                            String picKey, String noteKey) {
+        JSONArray videos = new JSONArray();
+        if (json == null || json.isEmpty() || path == null || path.isEmpty()) return videos;
+        try {
+            JsonElement el = firstArray(Json.pathFindBy(Json.parse(json), path));
+            if (el == null) return videos;
+            Set<String> seen = new HashSet<>();
+            for (JsonElement item : el.getAsJsonArray()) {
+                if (!item.isJsonObject()) continue;
+                JsonObject o = item.getAsJsonObject();
+                String id = jsonPick(o, idKey);
+                String name = jsonPick(o, nameKey);
+                if (id.isEmpty() && name.isEmpty()) continue;
+                if (!id.isEmpty()) {
+                    if (seen.contains(id)) continue;
+                    seen.add(id);
+                }
+                JSONObject v = new JSONObject();
+                v.put("vod_id", applyIdAffix(id));
+                v.put("vod_name", name);
+                v.put("vod_pic", addHttpPrefix(jsonPick(o, picKey)));
+                v.put("vod_remarks", jsonPick(o, noteKey));
+                v.put("vod_id", encodeVodId(v));
+                videos.put(v);
+            }
+        } catch (Exception e) {
+            SpiderDebug.log("JSON 模式解析失败: " + e.getMessage());
+        }
+        return videos;
+    }
+
+    /**
+     * 按 JSON 路径抽取分类数组，输出 {@code [{type_id,type_name}]}。
+     * 由 {@code 分类JSON列表(catjsonlist)} 等字段驱动。
+     */
+    protected JSONArray extractCategoriesByJson(String json, String path,
+                                                String idKey, String nameKey) {
+        JSONArray classes = new JSONArray();
+        if (json == null || json.isEmpty() || path == null || path.isEmpty()) return classes;
+        try {
+            JsonElement el = firstArray(Json.pathFindBy(Json.parse(json), path));
+            if (el == null) return classes;
+            for (JsonElement item : el.getAsJsonArray()) {
+                if (!item.isJsonObject()) continue;
+                JsonObject o = item.getAsJsonObject();
+                String id = jsonPick(o, idKey);
+                String name = jsonPick(o, nameKey);
+                if (id.isEmpty() || name.isEmpty()) continue;
+                JSONObject c = new JSONObject();
+                c.put("type_id", id);
+                c.put("type_name", name);
+                classes.put(c);
+            }
+        } catch (Exception e) {
+            SpiderDebug.log("分类 JSON 模式解析失败: " + e.getMessage());
+        }
+        return classes;
+    }
+
+    /** 取元素本身；路径指向对象时取其内部第一个数组（容错：path 少写一层） */
+    private static JsonElement firstArray(JsonElement el) {
+        if (el == null) return null;
+        if (el.isJsonArray()) return el;
+        if (!el.isJsonObject()) return null;
+        for (Map.Entry<String, JsonElement> e : el.getAsJsonObject().entrySet()) {
+            if (e.getValue().isJsonArray()) return e.getValue();
+        }
+        return null;
+    }
+
+    /**
+     * 从 JsonObject 取值：普通字段名直接取；含 {@code .} 或 {@code [} 时按路径取。
+     */
+    private static String jsonPick(JsonObject obj, String key) {
+        if (obj == null || key == null || key.isEmpty()) return "";
+        try {
+            if (key.indexOf('.') >= 0 || key.indexOf('[') >= 0) {
+                List<String> got = Json.pathGet(obj.toString(), key, "");
+                return got.isEmpty() ? "" : got.get(0);
+            }
+            return Json.getString(obj, key);
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /** 套用 链接前缀/链接后缀（与正则模式保持一致） */
+    private String applyIdAffix(String id) {
+        if (id == null || id.isEmpty()) return "";
+        return getRuleVal("list_prefix") + id + getRuleVal("list_suffix");
+    }
+
+    /**
+     * 分类的 JSON 接口模式：{@code 分类JSON列表(catjsonlist)} 非空时优先走后端接口取分类。
+     *
+     * @return 命中并产出分类返回 true；否则 false，由调用方回退到网页解析
+     */
+    private boolean tryBuildFromJson(JSONArray classes) throws JSONException {
+        String jsonPath = getRuleVal("catjsonlist");
+        if (jsonPath.isEmpty()) return false;
+        String url = rule.optString("class_url", "");
+        // 含分类占位符的 URL 是网页路由，不是固定接口，回退到主页地址
+        if (url.contains("{cateId}")) url = "";
+        if (url.isEmpty()) url = rule.optString("homeUrl", "");
+        if (url.isEmpty()) return false;
+        String json = httpGetRaw(addHttpPrefix(url));
+        if (json.isEmpty()) return false;
+        JSONArray parsed = extractCategoriesByJson(json, jsonPath,
+                getRuleVal("catjsonid"), getRuleVal("catjsonname"));
+        for (int i = 0; i < parsed.length(); i++) classes.put(parsed.get(i));
+        return classes.length() > 0;
+    }
+
     /**
      * 将JSON中的中文字段名转换为英文Key
      * 支持递归处理嵌套对象和数组
@@ -1333,6 +1595,7 @@ public class XBPQ extends Spider {
                     initializeRuleConfig();
                     initEnhancedConfig();
                     applyPrefMenu();
+                    applyStandardTemplateConfig();
 
                     SpiderDebug.log(sanitizeRuleLog(rule));
                 } catch (Exception e) {
@@ -1471,6 +1734,23 @@ public class XBPQ extends Spider {
      * 初始化 homeUrl 和 list.url
      */
     private void initializeHomeUrl(JSONObject list) throws JSONException, MalformedURLException {
+        // 主页地址缺省时从 分类url/列表url 推导：大量规则只写「分类url」，
+        // 旧实现直接 rule.getString("homeUrl") 抛异常，会中断整个 initializeRuleConfig，
+        // 导致搜索配置、list.url、标准模板配置全部不生效（分类/列表/搜索全空）。
+        if (rule.optString("homeUrl", "").isEmpty()) {
+            String derived = deriveHomeUrl(rule.optString("class_url", ""));
+            if (derived.isEmpty() && list != null) derived = deriveHomeUrl(list.optString("url", ""));
+            if (derived.isEmpty() && list != null) derived = deriveHomeUrl(getRuleVal("list_url"));
+            if (!derived.isEmpty()) {
+                rule.put("homeUrl", derived);
+                SpiderDebug.log("未配置 主页url，已由分类url推导: " + derived);
+            }
+        }
+        if (rule.optString("homeUrl", "").isEmpty()) {
+            // 仍拿不到主页地址：相对路径补全只能原样返回，此处不再抛出，保证其余配置继续初始化
+            SpiderDebug.log("警告: 未配置 主页url 且无法推导，相对链接将无法补全");
+            return;
+        }
         String homeUrl = rule.getString("homeUrl");
         if (homeUrl.contains("{cateId}")) {
             URL url = new URL(homeUrl);
@@ -1486,6 +1766,37 @@ public class XBPQ extends Spider {
             if (!classUrl.isEmpty()) {
                 list.put("url", classUrl);
             }
+        }
+    }
+
+    /**
+     * 从任意站点 URL 推导主页地址（协议+主机+端口）。
+     * 会先剥离 {@code ;;} 后缀与未赋值的 {占位符}，再取 origin。
+     *
+     * @return 形如 {@code https://www.example.com}；无法解析时返回空串
+     */
+    private static String deriveHomeUrl(String rawUrl) {
+        if (rawUrl == null) return "";
+        String u = rawUrl.trim();
+        if (u.isEmpty()) return "";
+        int sep = u.indexOf(";;");
+        if (sep >= 0) u = u.substring(0, sep);
+        // 占位符用具体值替换后再解析，避免 URL 解析失败
+        u = u.replace("{cateId}", "1")
+                .replace("{catePg}", "1")
+                .replace("{catepg}", "1")
+                .replace("{pg}", "1")
+                .replace("{wd}", "x");
+        // 其余未赋值占位符直接移除
+        u = u.replaceAll("\\{[^}]*\\}", "").trim();
+        if (!u.contains("://")) return "";
+        try {
+            URL parsed = new URL(u);
+            String host = parsed.getHost();
+            if (host == null || host.isEmpty()) return "";
+            return parsed.getProtocol() + "://" + host + (parsed.getPort() > 0 ? ":" + parsed.getPort() : "");
+        } catch (MalformedURLException e) {
+            return "";
         }
     }
 
@@ -2805,7 +3116,7 @@ public class XBPQ extends Spider {
         return p;
     }
 
-    protected List<String> subContent(String content, String startFlag, String endFlag) {
+    protected static List<String> subContent(String content, String startFlag, String endFlag) {
         List<String> result = new ArrayList<>();
         if (startFlag.isEmpty() && endFlag.isEmpty()) {
             result.add(content);
@@ -2997,7 +3308,12 @@ public class XBPQ extends Spider {
      * 猜测分类列表的HTML区间
      */
     protected String guessCateManualHtmlString(String body) {
-        String regex = String.format("<a.+?href=\"(.+?)\".*?<(", TextUtils.join("|", standardCategoryNames));
+        // 旧写法把分类词表当作 String.format 参数却没有 %s 占位，
+        // 实际编译出的正则是 "<a.+?href=\"(.+?)\".*?<(" —— 括号未闭合，
+        // Pattern.compile 直接抛 "Unclosed group"，分类猜测功能整体失效。
+        // 这里改为「href 捕获组 + 分类词非捕获组」的闭合写法。
+        String regex = String.format("<a[^>]+href=\"([^\"]+)\"[^>]*>\\s*(?:%s)\\s*<",
+                TextUtils.join("|", standardCategoryNames));
         Pattern pattern = Pattern.compile(regex);
         Matcher m = pattern.matcher(body);
         List<HtmlMatchInfo> matchList = new ArrayList<>();
@@ -3418,6 +3734,25 @@ public class XBPQ extends Spider {
     }
 
     /**
+     * 节点级 vod_id 猜测：取节点内第一个 href。
+     * <p>
+     * 兜底场景：规则未配置「链接」(list_id) 且页级 {@link #guessRuleVodId} 也没猜中时，
+     * list.vod_id 会缺失，旧实现所有条目因 vod_id 为空被整页丢弃，
+     * 表现为「分类列表全空且日志无任何报错」。
+     */
+    public String guessValueVodId(String nodeContent) {
+        if (nodeContent == null || nodeContent.isEmpty()) return "";
+        try {
+            JSONArray vec = new JSONArray();
+            vec.put("href=\"");
+            vec.put("\"");
+            return RuleUtils.findSubString(nodeContent, 0, vec);
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /**
      * 猜测图片地址
      */
     public String guessValueVodPic(String nodeContent, int startPos) {
@@ -3453,6 +3788,14 @@ public class XBPQ extends Spider {
             lower.contains("=https%3a%2f") || lower.contains("=http%3a%2f")) {
             return false;
         }
+        // 视频过滤词：命中即判定为非视频（排除伪装成直链的网页、广告与跳转页）
+        String videoFilter = getRuleVal("video_filter");
+        if (!videoFilter.isEmpty()) {
+            for (String kw : videoFilter.split("#")) {
+                String k = kw.trim().toLowerCase();
+                if (!k.isEmpty() && lower.contains(k)) return false;
+            }
+        }
         for (String format : videoFormatList) {
             if (lower.contains(format)) return true;
         }
@@ -3461,7 +3804,10 @@ public class XBPQ extends Spider {
 
     @Override
     public boolean manualVideoCheck() throws Exception {
-        return true;
+        // 免嗅：0=交给框架嗅探，1=免嗅探（由本类的 isVideoFormat 自管判定）。
+        // 未配置时沿用既有行为（自管），保证历史规则行为不变。
+        String v = getRuleVal("manualVideoCheck");
+        return v.isEmpty() || !"0".equals(v);
     }
 
     // ==================== 首页内容接口 ====================
@@ -3494,8 +3840,10 @@ public class XBPQ extends Spider {
     /**
      * 构建分类列表
      */
-    private JSONArray buildClassList(boolean filter) throws JSONException {
+    protected JSONArray buildClassList(boolean filter) throws JSONException {
         JSONArray classes = new JSONArray();
+        // 优先走后端 JSON 接口（标准模板「异步 JSON-API」），未命中回退网页解析
+        if (tryBuildFromJson(classes)) return classes;
         JSONObject cateManual = rule.optJSONObject("cateManual");
         String fenleiExplicit = rule.optString("fenlei", "");
 
@@ -3847,8 +4195,7 @@ public class XBPQ extends Spider {
                 }
             }
 
-            JSONObject result = new JSONObject();
-            result.put("list", allVideos);
+            JSONObject result = wrapList(allVideos, "1");
             // 列表显示：通过 ext 透传列表展示偏好（框架扩展字段，向后兼容）
             if (listDisplay) {
                 JSONObject ext = new JSONObject();
@@ -4030,6 +4377,16 @@ public class XBPQ extends Spider {
     }
 
     /**
+     * 搜索页码偏移（根据 搜索起始页码/sea_firstpage 配置，未配置时等价于页码不变）
+     */
+    protected String shiftSearchPage(String pg) {
+        String cfg = getRuleVal("sea_firstpage");
+        int startPage = cfg.isEmpty() ? 1 : parseIntSafely(cfg, 1);
+        if (startPage < 0) startPage = 0;
+        return String.valueOf(parseIntSafely(pg, 1) + startPage - 1);
+    }
+
+    /**
      * 安全整数解析
      */
     protected int parseIntSafely(String value, int defaultValue) {
@@ -4046,6 +4403,17 @@ public class XBPQ extends Spider {
             fetchRule(); // 与其他入口（home/detail/player/search）一致：保证规则已加载，避免被提前调用时规则为空
             JSONObject list = this.rule.getJSONObject("list");
             String url = categoryUrl(tid, pg, filter, extend);
+
+            // ========== JSON 接口模式（标准模板「异步 JSON-API」：直连后端接口，不解析 HTML） ==========
+            if ("1".equals(getRuleVal("list_mode"))) {
+                JSONArray jsonVideos = extractVideosByJson(httpGetRaw(url),
+                        getRuleVal("listjsonlist"), getRuleVal("listjsonid"),
+                        getRuleVal("listjsonname"), getRuleVal("listjsonpic"),
+                        getRuleVal("listjsonnote"));
+                if (jsonVideos.length() > 0) return wrapList(jsonVideos, pg).toString();
+                SpiderDebug.log("列表 JSON 模式无结果，回退到网页解析");
+            }
+
             String body = fetchUrl(url, list.optJSONObject("header"));
             String content = RuleUtils.getRegion(body, list);
 
@@ -4139,6 +4507,16 @@ public class XBPQ extends Spider {
         return videos;
     }
 
+    /** 列表 vod_id 规则缺失告警（每次规则加载只提示一次，避免逐条刷屏） */
+    private boolean vodIdRuleWarned = false;
+
+    private void warnMissingVodIdRule() {
+        if (vodIdRuleWarned) return;
+        vodIdRuleWarned = true;
+        SpiderDebug.log("列表未配置「链接」(list_id) 且自动猜测失败，已启用节点级 href 兜底；"
+                + "建议显式配置以获取稳定结果");
+    }
+
     /**
      * 节点提取结果
      */
@@ -4193,6 +4571,16 @@ public class XBPQ extends Spider {
         String listSuffix = getRuleVal("list_suffix");
         if (!result.vodId.isEmpty() && (!listPrefix.isEmpty() || !listSuffix.isEmpty())) {
             result.vodId = listPrefix + result.vodId + listSuffix;
+        }
+        // 未配置「链接」且页级猜测也未命中时，退到节点级取首个 href。
+        // 仅当节点同时能猜出名称或封面才认定为有效片单，避免页脚/导航链接混入。
+        if (result.vodId.isEmpty() && list.optJSONArray("vod_id") == null) {
+            String guessed = guessValueVodId(node);
+            if (!guessed.isEmpty()
+                    && (!guessValueVodName(node, 0).isEmpty() || !guessValueVodPic(node, 0).isEmpty())) {
+                result.vodId = addHttpPrefix(guessed);
+                warnMissingVodIdRule();
+            }
         }
         result.endPos = blockPos + node.length();
         return result;
@@ -4359,24 +4747,7 @@ public class XBPQ extends Spider {
      * 瞬时请求失败导致的误判代价仅是少翻一页，重新进入分类即可恢复。
      */
     private String buildCategoryResult(JSONArray videos, String pg) throws JSONException {
-        JSONObject result = new JSONObject();
-        result.put("page", pg);
-        if (videos.length() == 0) {
-            int page;
-            try {
-                page = pg == null ? 1 : Integer.parseInt(pg.trim());
-            } catch (NumberFormatException e) {
-                page = 1;
-            }
-            result.put("pagecount", Math.max(0, page - 1));
-            result.put("total", 0);
-        } else {
-            result.put("pagecount", Integer.MAX_VALUE);
-            result.put("total", Integer.MAX_VALUE);
-        }
-        result.put("limit", Math.max(90, videos.length()));
-        result.put("list", videos);
-        return result.toString();
+        return wrapList(videos, pg).toString();
     }
 
     // ==================== 播放列表相关 ====================
@@ -4561,6 +4932,10 @@ public class XBPQ extends Spider {
             List<String> playArrayResult = tryPlayArrayMode(content, playlist, sort, tmpPlayUrl, removeSet);
             if (playArrayResult != null) return playArrayResult;
 
+            // 兜底：配置了「播放数组」却漏配「播放链接」时，按默认 href 规则解析选集
+            List<String> playArrayDefault = tryPlayArrayDefaultMode(content, sort);
+            if (playArrayDefault != null) return playArrayDefault;
+
             // 收集结果
             for (int i = 0; i < tmpPlayUrl.size(); ++i) {
                 if (!removeSet.contains(i)) {
@@ -4574,7 +4949,20 @@ public class XBPQ extends Spider {
             if (playUrl.isEmpty()) {
                 JSONArray playLookback = playlist.optJSONArray("vod_play_url");
                 if (playLookback != null) {
-                    String url = RuleUtils.findSubString(content, 0, playLookback);
+                    // 逐条扫描直到拿到一条像样的选集链接：
+                    // 旧实现只取全页第一个 href，站点 <head> 里的 favicon / CSS 会被当成播放地址
+                    String url = "";
+                    int scan = 0;
+                    for (int i = 0; i < MAX_FALLBACK_SCAN && scan < content.length(); i++) {
+                        String one = RuleUtils.findSubString(content, scan, playLookback);
+                        if (one.isEmpty()) break;
+                        int at = content.indexOf(one, scan);
+                        scan = at >= 0 ? at + one.length() : scan + 1;
+                        if (isPlausibleEpisodeUrl(one)) {
+                            url = one;
+                            break;
+                        }
+                    }
                     if (!url.isEmpty()) {
                         // 与 extractEpisodes 产出对齐：标题$链接 格式，链接补全为绝对地址
                         // 标题取链接结束位置之后的默认边界（>...<，即 <a> 文本）
@@ -4746,8 +5134,17 @@ public class XBPQ extends Spider {
 
         // 标题规则
         String[] titleBounds = getTitleBounds();
+        // 播放列表(url_array)：选集元素定位（如 "<a&&/a>[包含:magnet]"），
+        // 配置了就按「元素」逐条取 href/标题，未配置则沿用旧的整体块内取 href。
+        String urlArrayRule = getRuleVal("url_array");
+        String[] itemBounds = parseItemBounds(urlArrayRule);
         int listPos = 0;
         int blockCount = 0;
+
+        // 剧集过滤未显式配置时，若默认特征（/play/、vodplay）一条都筛不出，
+        // 则放宽过滤重试一次：默认特征只适用于 maccms 系站点，
+        // 磁力、网盘、自定义路由的源会被整条线路清空。
+        boolean filterConfigured = !getRuleVal("episode_filter").isEmpty();
 
         while (true) {
             int ls = content.indexOf(listStart, listPos);
@@ -4762,7 +5159,16 @@ public class XBPQ extends Spider {
             // 混入后面的真实选集造成重复线路；真实选集 UL 内不会出现 </script>
             if (block.contains("</script")) continue;
 
-            List<String> eps = extractEpisodes(block, hrefStart, hrefEnd, titleBounds, sort);
+            List<String> eps = itemBounds == null
+                    ? extractEpisodes(block, hrefStart, hrefEnd, titleBounds, sort)
+                    : extractEpisodesByItem(block, itemBounds[0], itemBounds[1],
+                                            hrefStart, hrefEnd, titleBounds, sort);
+            if (eps.isEmpty() && !filterConfigured) {
+                eps = itemBounds == null
+                        ? extractEpisodes(block, hrefStart, hrefEnd, titleBounds, sort, true)
+                        : extractEpisodesByItem(block, itemBounds[0], itemBounds[1],
+                                                hrefStart, hrefEnd, titleBounds, sort, true);
+            }
             if (!eps.isEmpty()) {
                 tmpPlayUrl.add(TextUtils.join("#", eps));
             }
@@ -4779,6 +5185,76 @@ public class XBPQ extends Spider {
         return null;
     }
 
+    /** 选集链接兜底扫描的最大条数 */
+    private static final int MAX_FALLBACK_SCAN = 50;
+
+    /** 静态资源后缀：兜底扫描时剔除，避免把 favicon/CSS/JS 当成播放地址 */
+    private static final List<String> STATIC_RESOURCE_EXTS = Arrays.asList(
+            ".ico", ".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg",
+            ".webp", ".woff", ".woff2", ".ttf", ".eot", ".xml", ".txt");
+
+    /**
+     * 判断候选链接是否像一条选集链接。
+     * 用于「播放数组」未命中时的兜底扫描：剔除 favicon、样式表、脚本、图片等静态资源
+     * 以及页内锚点和 javascript: 伪协议。
+     */
+    private static boolean isPlausibleEpisodeUrl(String url) {
+        if (url == null) return false;
+        String u = url.trim();
+        if (u.isEmpty()) return false;
+        String lower = u.toLowerCase();
+        if (lower.startsWith("#") || lower.startsWith("javascript:")
+                || lower.startsWith("mailto:") || lower.contains("favicon")) {
+            return false;
+        }
+        int q = lower.indexOf('?');
+        String path = q > 0 ? lower.substring(0, q) : lower;
+        for (String ext : STATIC_RESOURCE_EXTS) {
+            if (path.endsWith(ext)) return false;
+        }
+        return true;
+    }
+
+    /**
+     * 选集解析兜底：规则提供了「播放数组」却没有「播放链接」(url_url) 时，
+     * 在每个播放块内按默认 {@code href=" && "} 抽取选集链接。
+     * <p>
+     * 仅在 {@link #tryPlayArrayMode} 未命中（即 url_url 缺失或不含 &&）时才会走到这里，
+     * 因此不会改变任何已配置播放链接的规则的行为。
+     *
+     * @return 解析出的线路列表；不适用时返回 null
+     */
+    private List<String> tryPlayArrayDefaultMode(String content, int sort) throws JSONException {
+        String playArrayRule = getRuleVal("play_array");
+        if (playArrayRule.isEmpty() || !playArrayRule.contains("&&")) return null;
+        // 显式配置了播放链接时交给主流程处理，这里只补“漏配”的场景
+        if (!getRuleVal("url_url").isEmpty()) return null;
+
+        String[] pa = applyPostProcessors(applyOrSelector(playArrayRule)).split("&&", 2);
+        String listStart = pa[0].trim();
+        String listEnd = pa.length > 1 ? pa[1].trim() : "</ul>";
+        String[] titleBounds = getTitleBounds();
+
+        List<String> lines = new ArrayList<>();
+        int listPos = 0;
+        while (lines.size() < 10) {
+            int ls = content.indexOf(listStart, listPos);
+            if (ls < 0) break;
+            int le = content.indexOf(listEnd, ls + listStart.length());
+            if (le < 0) break;
+            String block = content.substring(ls, le);
+            listPos = le + listEnd.length();
+            // 与 tryPlayArrayMode 一致：剔除横跨脚本的假块
+            if (block.contains("</script")) continue;
+            List<String> eps = extractEpisodes(block, "href=\"", "\"", titleBounds, sort);
+            if (!eps.isEmpty()) lines.add(TextUtils.join("#", eps));
+        }
+        if (lines.isEmpty()) return null;
+        SpiderDebug.log("播放链接(url_url) 未配置，已按默认 href 规则兜底解析 "
+                + lines.size() + " 条线路");
+        return lines;
+    }
+
     /**
      * 获取标题边界
      */
@@ -4791,10 +5267,85 @@ public class XBPQ extends Spider {
     }
 
     /**
+     * 解析「播放列表」(url_array) 的选集元素起止标记。
+     * <p>
+     * 形如 {@code "<a&&/a>[包含:magnet]"}：先切出每个 {@code <a ... /a>} 元素，
+     * 再在元素内套用「播放链接」与「播放标题」。后处理器（如 [包含:magnet]）已由
+     * {@link #applyPostProcessors} 剥离，此处只取起止标记。
+     *
+     * @return [起始标记, 结束标记]；未配置或无法解析返回 null
+     */
+    private String[] parseItemBounds(String urlArrayRule) {
+        if (urlArrayRule.isEmpty()) return null;
+        String[] up = applyPostProcessors(applyOrSelector(urlArrayRule)).split("&&", 2);
+        String itemStart = up[0].trim();
+        if (itemStart.isEmpty()) return null;
+        String itemEnd = up.length > 1 ? up[1].trim() : "";
+        if (itemEnd.isEmpty()) itemEnd = "</a>";
+        return new String[]{itemStart, itemEnd};
+    }
+
+    /**
+     * 按「选集元素」逐条提取剧集（播放列表 url_array 模式）。
+     */
+    private List<String> extractEpisodesByItem(String block, String itemStart, String itemEnd,
+                                               String hrefStart, String hrefEnd,
+                                               String[] titleBounds, int sort) {
+        return extractEpisodesByItem(block, itemStart, itemEnd, hrefStart, hrefEnd,
+                titleBounds, sort, false);
+    }
+
+    /**
+     * 按「选集元素」逐条提取剧集。
+     *
+     * @param ignoreFilter true 时跳过「剧集过滤」判定（放宽重试用）
+     */
+    private List<String> extractEpisodesByItem(String block, String itemStart, String itemEnd,
+                                               String hrefStart, String hrefEnd,
+                                               String[] titleBounds, int sort, boolean ignoreFilter) {
+        List<String> eps = new ArrayList<>();
+        int p = 0;
+        while (true) {
+            int s = block.indexOf(itemStart, p);
+            if (s < 0) break;
+            int e = block.indexOf(itemEnd, s + itemStart.length());
+            if (e < 0) break;
+            String item = block.substring(s, e);
+            p = e + itemEnd.length();
+
+            int hs = item.indexOf(hrefStart);
+            if (hs < 0) continue;
+            int he0 = hs + hrefStart.length();
+            int he = item.indexOf(hrefEnd, he0);
+            if (he < 0) continue;
+            String href = item.substring(he0, he).trim();
+            if (href.contains("&amp;")) href = href.replace("&amp;", "&");
+            if (!ignoreFilter && !matchEpisodeFilter(href)) continue;
+
+            String title = extractEpisodeTitle(item, he, titleBounds);
+            if (title.contains("展开全部")) continue;
+            if (title.isEmpty()) title = "第" + (eps.size() + 1) + "集";
+            eps.add(title + "$" + addHttpPrefix(href));
+        }
+        if (sort != 0) Collections.reverse(eps);
+        return eps;
+    }
+
+    /**
      * 提取剧集列表
      */
     private List<String> extractEpisodes(String block, String hrefStart, String hrefEnd,
                                           String[] titleBounds, int sort) {
+        return extractEpisodes(block, hrefStart, hrefEnd, titleBounds, sort, false);
+    }
+
+    /**
+     * 提取剧集列表
+     *
+     * @param ignoreFilter true 时跳过「剧集过滤」判定（放宽重试用）
+     */
+    private List<String> extractEpisodes(String block, String hrefStart, String hrefEnd,
+                                          String[] titleBounds, int sort, boolean ignoreFilter) {
         List<String> eps = new ArrayList<>();
         int hp = 0;
         while (true) {
@@ -4807,7 +5358,7 @@ public class XBPQ extends Spider {
             // HTML 实体还原：磁力等链接里的 &amp; 需还原为 &（首参数之外的参数才不被破坏）
             if (href.contains("&amp;")) href = href.replace("&amp;", "&");
             hp = he + hrefEnd.length();
-            if (!matchEpisodeFilter(href)) continue;
+            if (!ignoreFilter && !matchEpisodeFilter(href)) continue;
 
             String title = extractEpisodeTitle(block, he, titleBounds);
             if (title.contains("展开全部")) continue;
@@ -4914,6 +5465,12 @@ public class XBPQ extends Spider {
             String body = fetchUrl(detailUrl, detail.optJSONObject("header"));
             String content = RuleUtils.getRegion(body, detail);
 
+            // 详情二次截取
+            String detailTwice = getRuleVal("detail_twice");
+            if (!detailTwice.isEmpty()) {
+                content = applySecondCut(content, applyOrSelector(detailTwice));
+            }
+
             // ========== CSS 选择器模式（优先） ==========
             if (isCssModeEnabled(detail)) {
                 SpiderDebug.log("详情页使用 CSS/Jsoup 模式提取");
@@ -4956,6 +5513,11 @@ public class XBPQ extends Spider {
      * 构建详情页URL
      */
     private String buildDetailUrl(JSONObject detail, String vid) throws JSONException {
+        // 顶层「详情url」优先（标准模板字段）；未配置时沿用 detail.url 子对象写法
+        String flatUrl = getRuleVal("detail_url");
+        if (!flatUrl.isEmpty()) {
+            return addHttpPrefix(flatUrl.replace("${vid}", vid).replace("{vid}", vid));
+        }
         if (detail.has("url")) {
             return detail.getString("url").replace("${vid}", vid).replace("{vid}", vid);
         } else if (vid.startsWith("http://") || vid.startsWith("https://") || vid.startsWith("/")) {
@@ -5047,7 +5609,81 @@ public class XBPQ extends Spider {
         // 补充详情字段
         supplementDetailFields(vod, ctx);
 
+        // 详情分隔符：按 label 词从纯文本补缺（仅补空字段）
+        applyDetailSeparator(vod, ctx);
+        // 详情合并字段：把指定字段以「中文名：值」追加进简介
+        mergeDetailFields(vod);
+
         return vod;
+    }
+
+    /**
+     * 详情分隔符：从详情页纯文本中按 label 词提取字段，仅补缺、不覆盖已有值。
+     * <p>
+     * 配置形如 {@code "导演：|主演：|地区：|年份：|状态："}（| 分隔多个 label）。
+     * 自动映射：导演→vod_director、主演/演员→vod_actor、地区/国家→vod_area、
+     * 年份/年代→vod_year、状态/备注/更新→vod_remarks、类型/分类→type_name、
+     * 简介/剧情/介绍→vod_content。
+     */
+    private void applyDetailSeparator(JSONObject vod, DetailExtractionContext ctx) throws JSONException {
+        String sep = getRuleVal("detail_separator");
+        if (sep.isEmpty()) return;
+        // 与 guessSupplementDetailFields 一致：以 !!!! 作标签分隔哨兵
+        String text = HtmlNodeHelper.trimHtmlString(ctx.content, "!!!!");
+        String[] labels = sep.split("\\|");
+        for (int i = 0; i < labels.length; i++) {
+            String label = labels[i].trim();
+            if (label.isEmpty()) continue;
+            int at = text.indexOf(label);
+            if (at < 0) continue;
+            int from = at + label.length();
+            int to = text.length();
+            for (int j = i + 1; j < labels.length; j++) {
+                String next = labels[j].trim();
+                if (next.isEmpty()) continue;
+                int p = text.indexOf(next, from);
+                if (p >= 0 && p < to) to = p;
+            }
+            String value = text.substring(from, to).trim();
+            String field = mapDetailLabel(label);
+            if (field != null && !value.isEmpty() && value.length() < 500
+                    && vod.optString(field, "").isEmpty()) {
+                vod.put(field, value);
+            }
+        }
+    }
+
+    /** 详情 label 词 → 标准字段名；无法识别返回 null */
+    private static String mapDetailLabel(String label) {
+        if (label.contains("导演")) return "vod_director";
+        if (label.contains("主演") || label.contains("演员")) return "vod_actor";
+        if (label.contains("地区") || label.contains("国家")) return "vod_area";
+        if (label.contains("年份") || label.contains("年代")) return "vod_year";
+        if (label.contains("状态") || label.contains("备注") || label.contains("更新")) return "vod_remarks";
+        if (label.contains("类型") || label.contains("分类")) return "type_name";
+        if (label.contains("简介") || label.contains("剧情") || label.contains("介绍")) return "vod_content";
+        return null;
+    }
+
+    /**
+     * 详情合并字段：把逗号分隔的字段以「中文名：值」换行追加到简介尾部（只增量，不覆盖已有正文）。
+     * 字段可写中文 label（状态、类型、年份）或标准英文键（vod_year、type_name）。
+     */
+    private void mergeDetailFields(JSONObject vod) throws JSONException {
+        String merge = getRuleVal("detail_merge");
+        if (merge.isEmpty()) return;
+        StringBuilder sb = new StringBuilder(vod.optString("vod_content", ""));
+        for (String raw : merge.split("[,，]")) {
+            String f = raw.trim();
+            if (f.isEmpty()) continue;
+            String field = mapDetailLabel(f);
+            if (field == null) field = XBPQKey.norm(f);
+            String val = vod.optString(field, "");
+            if (val.isEmpty()) continue;
+            if (sb.length() > 0) sb.append('\n');
+            sb.append(XBPQKey.cn(field)).append("：").append(val);
+        }
+        vod.put("vod_content", sb.toString());
     }
 
     /**
@@ -5170,9 +5806,13 @@ public class XBPQ extends Spider {
      * 构建详情返回结果
      */
     private String buildDetailResult(JSONObject vod) throws JSONException {
-        JSONObject result = new JSONObject();
         JSONArray list = new JSONArray();
         list.put(vod);
+        JSONObject result = new JSONObject();
+        // 标准模板消费 data，影视仓/海螺/苹果消费 list；同时给出，互不干扰
+        result.put("code", CODE_OK);
+        result.put("msg", "ok");
+        result.put("data", vod);
         result.put("list", list);
         return result.toString();
     }
@@ -5854,7 +6494,7 @@ public class XBPQ extends Spider {
     /**
      * 解析搜索结果
      */
-    protected String parseSearchResult(String body) {
+    protected String parseSearchResult(String body, String page) {
         try {
             JSONObject obj = new JSONObject(body);
             Object info = parseJsonSearchResult(obj);
@@ -5868,7 +6508,7 @@ public class XBPQ extends Spider {
                 arr = (JSONArray) info;
             }
 
-            return buildSearchResults(arr);
+            return buildSearchResults(arr, page);
         } catch (Exception e) {
             // ignored
         }
@@ -5876,10 +6516,11 @@ public class XBPQ extends Spider {
     }
 
     /**
-     * 构建搜索结果
+     * 构建搜索结果（统一走标准列表信封，使 searchContent 与分类列表输出结构一致）
      */
-    private String buildSearchResults(JSONArray arr) throws JSONException {
+    private String buildSearchResults(JSONArray arr, String page) throws JSONException {
         JSONObject search = rule.optJSONObject("search");
+        if (search == null) return "";
         JSONArray videos = new JSONArray();
 
         for (int i = 0; i < arr.length(); ++i) {
@@ -5898,9 +6539,7 @@ public class XBPQ extends Spider {
             videos.put(v);
         }
 
-        JSONObject result = new JSONObject();
-        result.put("list", videos);
-        return result.toString();
+        return wrapList(videos, page).toString();
     }
 
     @Override
@@ -5941,6 +6580,15 @@ public class XBPQ extends Spider {
             String content = fetchResult.content;
             String url = fetchResult.url;
 
+            // ========== JSON 接口模式（标准模板「异步 JSON-API」） ==========
+            String searchJsonPath = getRuleVal("searchjsonlist");
+            if (!searchJsonPath.isEmpty()) {
+                JSONArray jsonVideos = extractVideosByJson(content, searchJsonPath,
+                        getRuleVal("searchjsonid"), getRuleVal("searchjsonname"),
+                        getRuleVal("searchjsonpic"), getRuleVal("searchjsonnote"));
+                if (jsonVideos.length() > 0) return wrapList(jsonVideos, page).toString();
+            }
+
             // 区域截取
             content = RuleUtils.getRegion(content, search);
 
@@ -5954,7 +6602,7 @@ public class XBPQ extends Spider {
             // 旧实现模式1 直接 return 原始 HTML，导致 mode-1 规则的搜索整体失效
             boolean htmlFirst = "1".equals(getRuleVal("search_mode", "0"));
             if (!htmlFirst) {
-                String jsonResult = parseSearchResult(content);
+                String jsonResult = parseSearchResult(content, page);
                 if (jsonResult != null && !jsonResult.isEmpty()) return jsonResult;
             }
 
@@ -5965,23 +6613,19 @@ public class XBPQ extends Spider {
             if (isCssModeEnabled(search)) {
                 SpiderDebug.log("搜索结果使用 CSS/Jsoup 模式提取");
                 JSONArray cssVideos = extractSearchResultsByCss(content, search);
-                if (cssVideos.length() > 0) {
-                    JSONObject result = new JSONObject();
-                    result.put("list", cssVideos);
-                    return result.toString();
-                }
+                if (cssVideos.length() > 0) return wrapList(cssVideos, page).toString();
                 SpiderDebug.log("CSS 提取无结果，回退到传统模式");
             }
 
             // HTML 解析
-            String htmlResult = parseHtmlSearchResults(content, search, url);
+            String htmlResult = parseHtmlSearchResults(content, search, url, page);
 
             // 模式1 网页解析无结果时，按文档语义回退 JSON 解析
             if (htmlFirst) {
                 try {
                     JSONArray arr = new JSONObject(htmlResult).optJSONArray("list");
                     if (arr == null || arr.length() == 0) {
-                        String jsonResult = parseSearchResult(content);
+                        String jsonResult = parseSearchResult(content, page);
                         if (jsonResult != null && !jsonResult.isEmpty()) return jsonResult;
                     }
                 } catch (Exception ignored) {
@@ -6015,7 +6659,7 @@ public class XBPQ extends Spider {
             result.content = unwrapJsonString(fetchUrl(result.url, headers));
         } else if (search != null && search.has("url")) {
             result.url = applySearchSuffix(addHttpPrefix(search.getString("url")
-                    .replace("{wd}", keyword).replace("{pg}", page)));
+                    .replace("{wd}", keyword).replace("{pg}", shiftSearchPage(page))));
             JSONObject headers = parseSearchHeaders(getRuleVal("search_header"));
             if (headers == null && search != null) headers = search.optJSONObject("header");
             result.content = unwrapJsonString(fetchUrl(result.url, headers));
@@ -6051,7 +6695,7 @@ public class XBPQ extends Spider {
     private String buildSearchUrl(String searchUrlFlat, String keyword, String page) throws Exception {
         return addHttpPrefix(applySearchSuffix(searchUrlFlat
                 .replace("{wd}", URLEncoder.encode(keyword, "UTF-8"))
-                .replace("{pg}", page)));
+                .replace("{pg}", shiftSearchPage(page))));
     }
 
     /**
@@ -6079,6 +6723,12 @@ public class XBPQ extends Spider {
      * 继承 vod_id 规则
      */
     private void inheritVodIdRuleIfNeeded(JSONObject search) throws JSONException {
+        // 仅配置「搜索url」而未生成 search 子对象时（如基础初始化被中断）search 为 null，
+        // 旧实现直接 search.has(...) 抛 NPE，整个搜索链路崩掉
+        if (search == null) {
+            SpiderDebug.log("搜索: 缺少 search 规则对象，跳过 vod_id 规则继承");
+            return;
+        }
         if (!search.has("vod_id")) {
             JSONObject list = rule.optJSONObject("list");
             if (list != null && list.has("vod_id")) {
@@ -6102,7 +6752,7 @@ public class XBPQ extends Spider {
     /**
      * 解析HTML搜索结果
      */
-    private String parseHtmlSearchResults(String content, JSONObject search, String url) throws JSONException {
+    private String parseHtmlSearchResults(String content, JSONObject search, String url, String page) throws JSONException {
         JSONArray videos = new JSONArray();
         Set<String> seenIds = new HashSet<>();
         int pos = 0;
@@ -6147,9 +6797,7 @@ public class XBPQ extends Spider {
         // 倒序
         if (reverseOrder) videos = reverseArray(videos);
 
-        JSONObject result = new JSONObject();
-        result.put("list", videos);
-        return result.toString();
+        return wrapList(videos, page).toString();
     }
 
     /**
@@ -6381,48 +7029,13 @@ public class XBPQ extends Spider {
     /**
      * 清理HTML标签
      */
-    protected String cleanHtml(String s) {
+    protected static String cleanHtml(String s) {
         if (s == null) return "";
         String r = P_HTML_TAG.matcher(s).replaceAll("");
         r = P_HTML_ENTITY.matcher(r).replaceAll("");
         r = P_RESIDUAL_SYMS.matcher(r).replaceAll("");
         r = P_WHITESPACE.matcher(r).replaceAll(" ");
         return r.trim();
-    }
-
-    /**
-     * 静态版本：清理HTML标签（供静态方法 getRV 使用）
-     */
-    public static String cleanHtmlStatic(String s) {
-        if (s == null) return "";
-        String r = P_HTML_TAG.matcher(s).replaceAll("");
-        r = P_HTML_ENTITY.matcher(r).replaceAll("");
-        r = P_RESIDUAL_SYMS.matcher(r).replaceAll("");
-        r = P_WHITESPACE.matcher(r).replaceAll(" ");
-        return r.trim();
-    }
-
-    /**
-     * 静态版本：二次截取（供静态方法 getRV 使用）
-     */
-    public static List<String> subContentStatic(String content, String startFlag, String endFlag) {
-        List<String> result = new ArrayList<>();
-        if (startFlag.isEmpty() && endFlag.isEmpty()) {
-            result.add(content);
-            return result;
-        }
-        try {
-            String escapedStart = escapeExprSpecialWord(startFlag);
-            String escapedEnd = escapeExprSpecialWord(endFlag);
-            Matcher matcher = getSubContentPattern(escapedStart, escapedEnd).matcher(content);
-            while (matcher.find()) {
-                result.add(matcher.group(1).trim());
-            }
-        } catch (Exception e) {
-            SpiderDebug.log(e);
-        }
-        if (result.isEmpty()) result.add("");
-        return result;
     }
 
     /**
@@ -7076,7 +7689,7 @@ public class XBPQ extends Spider {
             }
             JSONObject hdr = headerObject();
             String existingCookie = hdr.optString("cookie", "");
-            String merged = SliderVerifyUtils.mergeCookies(existingCookie, verifyCookie);
+            String merged = Util.mergeCookies(existingCookie, verifyCookie);
             hdr.put("cookie", merged);
 
             SpiderDebug.log("验证 Cookie 已合并到全局请求头");
@@ -7107,7 +7720,7 @@ public class XBPQ extends Spider {
             if (merged.length() > 0) {
                 JSONObject hdr = headerObject();
                 String existing = hdr.optString("cookie", "");
-                String result = SliderVerifyUtils.mergeCookies(existing, merged.toString());
+                String result = Util.mergeCookies(existing, merged.toString());
                 hdr.put("cookie", result);
             }
         } catch (Exception e) {
@@ -7193,31 +7806,6 @@ public class XBPQ extends Spider {
             sb.append(String.format("%02x", b & 0xff));
         }
         return sb.toString();
-    }
-    
-    /**
-     * 解码 Unicode 转义字符（\\uXXXX 格式）（借鉴 XYQHiker.decodeHexChars）
-     *
-     * @param str 包含 Unicode 转义的字符串
-     * @return 解码后的字符串
-     * @deprecated 逻辑已统一至 {@link #hexEscapeDecode(String)}，请改用该方法。
-     */
-    @Deprecated
-    protected String decodeHexChars(String str) {
-        return hexEscapeDecode(str);
-    }
-    
-    /**
-     * 移除 Unicode 转义序列（借鉴 XBiubiu.removeUnicode）
-     * 将 \\uXXXX 格式转换为中文字符
-     *
-     * @param str 输入字符串
-     * @return 转换后的字符串
-     * @deprecated 原实现正则错误（字面匹配 \\u 而非转义序列），已统一至 {@link #hexEscapeDecode(String)}。
-     */
-    @Deprecated
-    protected String removeUnicode(String str) {
-        return hexEscapeDecode(str);
     }
     
     /**
@@ -8451,8 +9039,8 @@ public class XBPQ extends Spider {
             }
             if (selector.contains("&&")) {
                 String[] se = selector.split("&&", 2);
-                List<String> r = subContentStatic(html, se[0], se[1]);
-                return r.isEmpty() ? "" : cleanHtmlStatic(r.get(0));
+                List<String> r = subContent(html, se[0], se[1]);
+                return r.isEmpty() ? "" : cleanHtml(r.get(0));
             }
             return JsoupExtractor.extractSingle(html, "css:" + selector, null);
         } catch (Exception e) {
