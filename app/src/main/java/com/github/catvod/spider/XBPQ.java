@@ -2837,7 +2837,21 @@ public class XBPQ extends Spider {
                     case "替换":
                         String[] kv = p[1].split(">>");
                         if (kv.length == 2 && !kv[0].trim().isEmpty()) {
-                            result = result.replace(kv[0].trim(), kv[1].trim());
+                            String oldStr = kv[0].trim();
+                            String newStr = kv[1].trim();
+                            if (oldStr.contains("*")) {
+                                // 兔爷系兼容：old 含 * 时按通配处理（* 匹配任意最短串），
+                                // 如 [替换:@*@>>] 清理资源站注入的 @广告词@；new 原样输出不做正则展开
+                                String[] segs = oldStr.split("\\*", -1);
+                                StringBuilder rx = new StringBuilder();
+                                for (int si = 0; si < segs.length; si++) {
+                                    if (si > 0) rx.append(".*?");
+                                    if (!segs[si].isEmpty()) rx.append(Pattern.quote(segs[si]));
+                                }
+                                result = result.replaceAll(rx.toString(), Matcher.quoteReplacement(newStr));
+                            } else {
+                                result = result.replace(oldStr, newStr);
+                            }
                         }
                         break;
                     case "包含":
@@ -6146,8 +6160,8 @@ public class XBPQ extends Spider {
                 resp.close();
             }
 
-            // 先给反爬/WAF 绕过一次恢复机会（错误页可能经 token 重放后恢复正常）
-            html = bypassBaoTaWaf(url, html, headers);
+            // 反爬/WAF 统一绕过（宝塔/等待重载盾/滑块/CF，含通用重试；正常页面原样返回）
+            html = handleAntiCrawler(url, html, headers);
 
             // 失败状态追踪：绕过后仍是反爬/错误页时才拦截，避免脏 HTML 流入解析链
             if (isFail(lastResponseCode) && isAntiCrawlerPage(html)) {
@@ -6355,6 +6369,8 @@ public class XBPQ extends Spider {
 
     /** 反爬检测间隔（毫秒） */
     private static final long ANTI_CRAWLER_DELAY_MS = 1500;
+    /** 「加载中」等待重载盾要求的间隔略大于页面标注的 2 秒 */
+    private static final long REFRESH_WAIT_DELAY_MS = 2300;
 
     /** Cloudflare 检测关键词 */
     private static final List<String> CF_DETECT_KEYWORDS = Arrays.asList(
@@ -6420,6 +6436,12 @@ public class XBPQ extends Spider {
                 }
             }
 
+            // 3.5 「加载中」等待重载盾：收 Cookie + 按页面要求间隔重试
+            if (isRefreshWaitPage(html)) {
+                html = bypassRefreshWait(webUrl, html, null);
+                if (!isAntiCrawlerPage(html)) return html;
+            }
+
             // 4. 通用重试机制
             for (int i = 0; i < MAX_ANTI_CRAWLER_RETRY; i++) {
                 Thread.sleep(ANTI_CRAWLER_DELAY_MS);
@@ -6449,6 +6471,8 @@ public class XBPQ extends Spider {
             } else if (isSliderVerifyPage(html)) {
                 handleSliderVerify(webUrl, html);
                 html = fetchUrl(webUrl, customHeaders);
+            } else if (isRefreshWaitPage(html)) {
+                html = bypassRefreshWait(webUrl, html, customHeaders);
             }
 
             if (isAntiCrawlerPage(html)) {
@@ -6468,7 +6492,52 @@ public class XBPQ extends Spider {
     protected boolean isAntiCrawlerPage(String html) {
         if (html == null || html.isEmpty()) return false;
         return isCloudflarePage(html) || isBaoTaWafPage(html)
-                || isSliderVerifyPage(html) || isGenericBlockPage(html);
+                || isSliderVerifyPage(html) || isGenericBlockPage(html)
+                || isRefreshWaitPage(html);
+    }
+
+    /**
+     * 检测「加载中」等待重载盾：首访返回 503 动画页 + Set-Cookie，页面要求
+     * setTimeout 重载后放行（雷池式等价行为）。特征 = 加载中文案 + 自动重载脚本
+     */
+    protected boolean isRefreshWaitPage(String html) {
+        if (html == null || html.isEmpty()) return false;
+        return html.contains("页面加载中") && html.contains("location.reload");
+    }
+
+    /**
+     * 「加载中」等待重载盾绕过
+     * <p>
+     * 策略：收取 503 响应下发的 Cookie（extractAllCookies 写入 rule.header，
+     * getHeaders 自动携带），等待页面要求的重载间隔后带 Cookie 重试
+     */
+    protected String bypassRefreshWait(String webUrl, String html, JSONObject customHeaders) {
+        try {
+            for (int i = 0; i < MAX_ANTI_CRAWLER_RETRY; i++) {
+                Thread.sleep(REFRESH_WAIT_DELAY_MS);
+                Map<String, String> headers = getHeaders(webUrl);
+                if (customHeaders != null && !customHeaders.isEmpty()) {
+                    headers = mergeHeaders(headers, customHeaders);
+                }
+                okhttp3.Response resp = OkHttp.newCall(webUrl, headers);
+                int code;
+                String body;
+                try {
+                    code = resp.code();
+                    extractAllCookies(resp);
+                    body = resp.body().string();
+                } finally {
+                    resp.close();
+                }
+                lastResponseCode = code;
+                html = body;
+                SpiderDebug.log(String.format("等待重载盾重试 %d/%d: %d", i + 1, MAX_ANTI_CRAWLER_RETRY, code));
+                if (!isRefreshWaitPage(html)) return html;
+            }
+        } catch (Exception e) {
+            SpiderDebug.log("等待重载盾绕过异常: " + e.getMessage());
+        }
+        return html;
     }
 
     /**
@@ -6531,6 +6600,7 @@ public class XBPQ extends Spider {
         if (isCloudflarePage(html)) return "Cloudflare";
         if (isBaoTaWafPage(html)) return "宝塔WAF";
         if (isSliderVerifyPage(html)) return "滑块验证";
+        if (isRefreshWaitPage(html)) return "等待重载盾";
         if (isGenericBlockPage(html)) return "通用拦截";
         return "未知";
     }
