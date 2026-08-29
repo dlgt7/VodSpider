@@ -132,6 +132,14 @@ public final class XBPQKey {
         k(Module.BASE, "js_key_url", "滑块Key接口");
         k(Module.BASE, "ocr_api", "打码接口");
         k(Module.BASE, "verify_type", "验证类型");
+        // —— 标准模板补齐（模板12/18/23/38/81/92/93）——
+        k(Module.BASE, "request_interval", "请求间隔", "requestInterval", "限流间隔");
+        k(Module.BASE, "mirror_hosts", "镜像域名", "mirrorHosts", "备用域名");
+        k(Module.BASE, "page_end_marker", "翻页终点标记", "pageEndMarker", "分页结束标记");
+        k(Module.BASE, "offset_paging", "偏移分页", "offsetPaging");
+        k(Module.BASE, "page_size", "每页条数", "pageSize", "pagesize");
+        // —— 标准模板补齐（模板30/97）——
+        k(Module.BASE, "url_append", "参数追加", "urlAppend", "全局参数", "追加参数");
 
         // ==================== 分类 ====================
         k(Module.CATEGORY, "class_url", "分类url", "cateUrl", "list_url");
@@ -167,6 +175,8 @@ public final class XBPQKey {
         k(Module.CATEGORY, "sort_value", "排序值", "sortValue");
         k(Module.CATEGORY, "hot_recommend", "热门推荐");
         k(Module.CATEGORY, "list_display", "列表显示");
+        // —— 标准模板补齐（模板90）——
+        k(Module.CATEGORY, "cate_whitelist", "分类白名单", "cateWhitelist");
 
         // ==================== 列表 ====================
         k(Module.LIST, "list_array", "数组");
@@ -205,6 +215,8 @@ public final class XBPQKey {
         k(Module.SEARCH, "searchjsonid", "搜索JSONID");
         k(Module.SEARCH, "searchjsonpic", "搜索JSON图片");
         k(Module.SEARCH, "searchjsonnote", "搜索JSON状态");
+        // —— 标准模板补齐（模板49）——
+        k(Module.SEARCH, "search_word_sep", "搜索词分隔符", "searchWordSep", "关键词分隔符");
 
         // ==================== 详情 ====================
         k(Module.DETAIL, "detail_url", "详情url");
@@ -249,6 +261,13 @@ public final class XBPQKey {
         k(Module.PLAY, "jump_url", "跳转播放链接");
         k(Module.PLAY, "Anal_MacPlayer", "分析MacPlayer");
         k(Module.PLAY, "auto_maccms", "自动Maccms");
+        // —— 标准模板补齐（模板39/41/46/54/62/63/88）——
+        k(Module.PLAY, "episode_sort", "剧集排序", "episodeSort", "选集排序");
+        k(Module.PLAY, "episode_dedup", "剧集去重", "episodeDedup", "选集去重");
+        k(Module.PLAY, "line_name_map", "线路重命名", "lineNameMap", "线路映射");
+        k(Module.PLAY, "play_strip_params", "播放去参数", "playStripParams", "剥离参数");
+        // —— 标准模板补齐（模板46）——
+        k(Module.PLAY, "episode_quality", "清晰度优先", "episodeQuality", "剧集清晰度", "画质优先");
 
         // ==================== 嗅探 ====================
         k(Module.SNIFF, "video_format", "嗅探词");

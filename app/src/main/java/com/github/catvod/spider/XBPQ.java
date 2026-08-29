@@ -179,7 +179,9 @@ public class XBPQ extends Spider {
     private static final Pattern P_BRACE_VAR = Pattern.compile("\\{(.*?)\\}");
     /** 分类 URL 已知花括号占位符白名单（仅这些未赋值时才被清除，其余 {xxx} 原样保留） */
     private static final Set<String> KNOWN_BRACE_KEYS = new HashSet<>(Arrays.asList(
-            "cateId", "catePg", "cateIdEn", "class", "area", "by", "year", "lang", "letter", "page", "pg"));
+            "cateId", "catePg", "cateIdEn", "class", "area", "by", "year", "lang", "letter", "page", "pg",
+            // 标准模板12/81：offset 偏移分页占位符
+            "offset", "limit"));
     /**
      * 播放器对象 var player_xxx = {...}
      * 平衡花括号匹配（支持 vod_data 等两层嵌套），结尾分号可有可无——
@@ -220,8 +222,12 @@ public class XBPQ extends Spider {
     private static final Pattern P_RESIDUAL_SYMS = Pattern.compile("[(/>)<]");
     /** cleanHtml: 连续空白 */
     private static final Pattern P_WHITESPACE = Pattern.compile("\\s+");
+    /** BOM 头与零宽字符（\uFEFF\u200B\u200C\u200D\u2060\u00AD，标准模板91：脏字符导致 JSON 解析失败与字段匹配错位） */
+    private static final Pattern P_INVISIBLE = Pattern.compile("[\uFEFF\u200B\u200C\u200D\u2060\u00AD]");
     /** cleanHtmlResponse: HTML 注释 <!--...--> */
     private static final Pattern P_HTML_COMMENT = Pattern.compile("<!--.+?-->");
+    /** 剧集名首个数字（标准模板63：EP01/第01集/1-1 统一提取排序编号） */
+    private static final Pattern P_EPISODE_NUM = Pattern.compile("(\\d+)");
 
     // ==================== 字段映射表（统一命名标准，见 XBPQKey） ====================
 
@@ -3818,7 +3824,7 @@ public class XBPQ extends Spider {
             fetchRule();
             initEnhancedConfig();
             JSONObject result = new JSONObject();
-            JSONArray classes = buildClassList(filter);
+            JSONArray classes = applyCateWhitelist(buildClassList(filter));
             // 插入「偏好设置」「源内搜索」action tab（配置 actionTabs=1 或 SSTop 开启）
             classes = insertActionTabs(classes);
             result.put("class", classes);
@@ -3835,6 +3841,26 @@ public class XBPQ extends Spider {
             SpiderDebug.log(e);
         }
         return "";
+    }
+
+    /**
+     * 标准模板90：分类白名单过滤。
+     * 规则配置「分类白名单」(cate_whitelist，逗号或 & 分隔) 后，仅保留列表中的分类，
+     * 接口/网页解析出的多余垃圾分类（广告位、专题等）直接丢弃。
+     */
+    private JSONArray applyCateWhitelist(JSONArray classes) throws JSONException {
+        String cfg = getRuleVal("cate_whitelist");
+        if (cfg.isEmpty() || classes == null) return classes;
+        Set<String> allow = new HashSet<>(Arrays.asList(cfg.split("[,&]")));
+        JSONArray filtered = new JSONArray();
+        for (int i = 0; i < classes.length(); i++) {
+            JSONObject item = classes.optJSONObject(i);
+            String name = item == null ? "" : item.optString("type_name", "");
+            if (allow.contains(name.trim())) filtered.put(item);
+        }
+        int dropped = classes.length() - filtered.length();
+        if (dropped > 0) SpiderDebug.log("分类白名单: 已过滤 " + dropped + " 个未登记分类");
+        return filtered;
     }
 
     /**
@@ -4325,6 +4351,12 @@ public class XBPQ extends Spider {
 
             // 替换占位符
             cateUrl = cateUrl.replace("{cateId}", tid).replace("{catePg}", shiftStartPage(pg));
+            // 标准模板12/81：offset 偏移分页——{offset}=(页码-1)*每页条数，{limit}=每页条数
+            int pageSize = parseIntSafely(getRuleVal("page_size"), 20);
+            if (pageSize <= 0) pageSize = 20;
+            int pageNum = parseIntSafely(shiftStartPage(pg), 1);
+            cateUrl = cateUrl.replace("{offset}", String.valueOf((pageNum - 1) * pageSize))
+                    .replace("{limit}", String.valueOf(pageSize));
             // 清除剩余花括号变量：仅处理已知占位符白名单，
             // 防止规则误写的 {xxx} 或 URL 中合法的花括号字符被通配正则误删
             Matcher matcher = P_BRACE_VAR.matcher(cateUrl);
@@ -4415,6 +4447,15 @@ public class XBPQ extends Spider {
             }
 
             String body = fetchUrl(url, list.optJSONObject("header"));
+
+            // 标准模板23/93：翻页终点标记——响应含指定标记（如 "no_more"/"没有更多"）时视为最后一页，
+            // 返回空列表让上层停止翻页（wrapList 对空列表会把 pagecount 置为当前页-1）
+            String endMarker = getRuleVal("page_end_marker");
+            if (!endMarker.isEmpty() && body != null && body.contains(endMarker)) {
+                SpiderDebug.log("翻页终点标记命中: " + endMarker + "，终止翻页");
+                return wrapList(new JSONArray(), pg).toString();
+            }
+
             String content = RuleUtils.getRegion(body, list);
 
             // ========== CSS选择器模式（优先） ==========
@@ -4497,8 +4538,14 @@ public class XBPQ extends Spider {
                 if (shouldFilter(result.node, vodId, list)) continue;
 
                 seenIds.add(vodId);
-                JSONObject video = buildVideoObject(result.node, vodId, list, url);
-                videos.put(video);
+                // 标准模板100：坏条目跳过（默认开启）——单条解析异常仅丢弃该条，不中断整个列表
+                try {
+                    JSONObject video = buildVideoObject(result.node, vodId, list, url);
+                    videos.put(video);
+                } catch (Exception itemEx) {
+                    if ("0".equals(getRuleVal("skip_bad_item"))) throw itemEx;
+                    SpiderDebug.log("坏条目跳过: vod_id=" + vodId + " err=" + itemEx.getMessage());
+                }
             }
         }
 
@@ -5864,6 +5911,12 @@ public class XBPQ extends Spider {
                 vodPlayUrl = applyEpiUrlAdjust(vodPlayUrl, epiPrefix, epiSuffix);
             }
 
+            // 标准模板41/46/54/63：剧集去重（按链接保序）与排序（按集名首个数字升序）
+            vodPlayUrl = processEpisodes(vodPlayUrl);
+
+            // 标准模板88：线路重命名（"原名:新名#原名2:新名2" 映射）
+            applyLineNameMap(vodPlayFrom);
+
             // 空播放兜底：解析不出任何选集时补一条占位线路，避免详情页无播放入口
             boolean noEpisodes = vodPlayUrl == null || vodPlayUrl.isEmpty()
                     || (vodPlayUrl.size() == 1 && vodPlayUrl.get(0).trim().isEmpty());
@@ -5901,6 +5954,144 @@ public class XBPQ extends Spider {
             vod.put("vod_play_from", TextUtils.join("$$$", vodPlayFrom));
         } catch (Exception e) {
             SpiderDebug.log(e);
+        }
+    }
+
+    /**
+     * 标准模板41/46/54/63：剧集清洗（逐线路处理）。
+     * <ul>
+     *   <li>「剧集去重」(episode_dedup=1)：按播放链接去重，保序保留首次出现</li>
+     *   <li>「清晰度优先」(episode_quality=蓝光,1080P,高清,标清)：同集（集号或集名相同）
+     *       存在多条不同清晰度时，取优先级列表中最先命中关键词的一条；全不命中保留首条</li>
+     *   <li>「剧集排序」(episode_sort=1)：按集名首个数字升序；仅当所有集名都含数字才执行，
+     *       避免打乱「先导片/花絮/独家」等无数字条目的原始顺序</li>
+     * </ul>
+     */
+    private List<String> processEpisodes(List<String> vodPlayUrl) {
+        if (vodPlayUrl == null || vodPlayUrl.isEmpty()) return vodPlayUrl;
+        boolean dedup = "1".equals(getRuleVal("episode_dedup"));
+        boolean sort = "1".equals(getRuleVal("episode_sort"));
+        List<String> qualityPriority = parseQualityPriority();
+        if (!dedup && !sort && qualityPriority.isEmpty()) return vodPlayUrl;
+        try {
+            List<String> result = new ArrayList<>(vodPlayUrl.size());
+            for (String line : vodPlayUrl) {
+                String[] eps = line.split("#");
+                List<String[]> kept = new ArrayList<>(eps.length);
+                Set<String> seenUrl = new HashSet<>();
+                for (String ep : eps) {
+                    int idx = ep.indexOf('$');
+                    String name = idx >= 0 ? ep.substring(0, idx) : ep;
+                    String url = idx >= 0 ? ep.substring(idx + 1) : "";
+                    if (dedup && !url.isEmpty() && !seenUrl.add(url)) continue;
+                    kept.add(new String[]{name, url});
+                }
+                // 标准模板46：清晰度择优（同集多条取优先级最高的一条，保序输出）
+                if (!qualityPriority.isEmpty() && kept.size() > 1) {
+                    kept = pickBestQuality(kept, qualityPriority);
+                }
+                if (sort && kept.size() > 1) {
+                    boolean allNumeric = true;
+                    for (String[] p : kept) {
+                        if (extractEpisodeNum(p[0]) == Integer.MAX_VALUE) {
+                            allNumeric = false;
+                            break;
+                        }
+                    }
+                    if (allNumeric) kept.sort(Comparator.comparingInt(p -> extractEpisodeNum(p[0])));
+                }
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < kept.size(); i++) {
+                    if (i > 0) sb.append('#');
+                    sb.append(kept.get(i)[0]).append('$').append(kept.get(i)[1]);
+                }
+                result.add(sb.toString());
+            }
+            SpiderDebug.log("剧集清洗完成: 去重=" + dedup + " 排序=" + sort
+                    + (qualityPriority.isEmpty() ? "" : " 清晰度优先=" + qualityPriority));
+            return result;
+        } catch (Exception e) {
+            SpiderDebug.log("processEpisodes error: " + e.getMessage());
+            return vodPlayUrl;
+        }
+    }
+
+    /**
+     * 标准模板46：解析「清晰度优先」配置。
+     * 逗号/顿号分隔的关键词列表，越靠前优先级越高（如 "蓝光,1080P,超清,高清,标清"）。
+     */
+    private List<String> parseQualityPriority() {
+        String cfg = getRuleVal("episode_quality");
+        List<String> list = new ArrayList<>();
+        if (cfg.isEmpty()) return list;
+        for (String s : cfg.split("[,，、]")) {
+            String t = s.trim().toLowerCase();
+            if (!t.isEmpty()) list.add(t);
+        }
+        return list;
+    }
+
+    /**
+     * 标准模板46：同集择优。按「集号（集名含数字时）否则集名」分组，
+     * 组内取清晰度优先级最高（{@link #qualityRank} 最小）的一条；全不命中保留首条。
+     * 输出保持各组首次出现的原始顺序。
+     */
+    private List<String[]> pickBestQuality(List<String[]> kept, List<String> priority) {
+        LinkedHashMap<String, String[]> best = new LinkedHashMap<>(kept.size() * 2);
+        for (String[] p : kept) {
+            int num = extractEpisodeNum(p[0]);
+            String key = num != Integer.MAX_VALUE ? "n:" + num : "s:" + p[0];
+            String[] cur = best.get(key);
+            if (cur == null || qualityRank(p, priority) < qualityRank(cur, priority)) {
+                best.put(key, p);
+            }
+        }
+        return new ArrayList<>(best.values());
+    }
+
+    /**
+     * 标准模板46：条目清晰度排名。集名+链接合并小写后匹配优先级关键词，
+     * 命中越靠前数值越小；全不命中返回 Integer.MAX_VALUE（最低优先级）。
+     */
+    private static int qualityRank(String[] ep, List<String> priority) {
+        String hay = (ep[0] + " " + ep[1]).toLowerCase();
+        for (int i = 0; i < priority.size(); i++) {
+            if (hay.contains(priority.get(i))) return i;
+        }
+        return Integer.MAX_VALUE;
+    }
+
+    /** 集名首个数字提取（标准模板63），无数字返回 Integer.MAX_VALUE（视为不可排序） */
+    private static int extractEpisodeNum(String epText) {
+        try {
+            Matcher m = P_EPISODE_NUM.matcher(epText == null ? "" : epText);
+            if (m.find()) return Integer.parseInt(m.group(1));
+        } catch (Exception ignored) {
+        }
+        return Integer.MAX_VALUE;
+    }
+
+    /**
+     * 标准模板88：线路重命名。
+     * 规则配置「线路重命名」(line_name_map，格式 "原名:新名#原名2:新名2") 后按映射替换线路名，
+     * 接口返回的英文代号（line1/slide 等）无需写 if-else 即可转为中文线路名。
+     */
+    private void applyLineNameMap(List<String> vodPlayFrom) {
+        if (vodPlayFrom == null || vodPlayFrom.isEmpty()) return;
+        String cfg = getRuleVal("line_name_map");
+        if (cfg.isEmpty()) return;
+        try {
+            Map<String, String> map = new HashMap<>();
+            for (String pair : cfg.split("#")) {
+                int idx = pair.indexOf(':');
+                if (idx > 0) map.put(pair.substring(0, idx).trim(), pair.substring(idx + 1).trim());
+            }
+            for (int i = 0; i < vodPlayFrom.size(); i++) {
+                String renamed = map.get(vodPlayFrom.get(i).trim());
+                if (renamed != null && !renamed.isEmpty()) vodPlayFrom.set(i, renamed);
+            }
+        } catch (Exception e) {
+            SpiderDebug.log("applyLineNameMap error: " + e.getMessage());
         }
     }
 
@@ -6248,15 +6439,61 @@ public class XBPQ extends Spider {
     private String appendDanmuParam(String playerResult) {
         if (playerResult == null || playerResult.isEmpty()) return playerResult;
         try {
-            String danmuUrl = getRuleVal("danmuUrl");
-            if (danmuUrl.isEmpty()) return playerResult;
             JSONObject result = new JSONObject(playerResult);
-            result.put("danmaku", "proxy://do=XBPQ&danmu_url="
-                    + URLEncoder.encode(danmuUrl, "UTF-8"));
+
+            // 标准模板39/62：播放链接剥离冗余追踪参数（utm/from/refer 等）——
+            // 仅对直链（parse=0）生效；嗅探页（parse=1）的页面 URL 参数可能必需，不动
+            String playUrl = result.optString("url", "");
+            if (!playUrl.isEmpty() && result.optInt("parse", 1) == 0) {
+                result.put("url", stripPlayUrlParams(playUrl));
+            }
+
+            String danmuUrl = getRuleVal("danmuUrl");
+            if (!danmuUrl.isEmpty()) {
+                result.put("danmaku", "proxy://do=XBPQ&danmu_url="
+                        + URLEncoder.encode(danmuUrl, "UTF-8"));
+            }
             return result.toString();
         } catch (Exception e) {
             SpiderDebug.log("appendDanmuParam error: " + e.getMessage());
             return playerResult;
+        }
+    }
+
+    /**
+     * 标准模板39/62：播放 URL 移除指定追踪参数。
+     * 规则配置「播放去参数」(play_strip_params，逗号分隔参数名，如 "utm_source,from,refer") 后，
+     * 从直链 query 中剔除这些参数，避免部分播放器识别异常。
+     */
+    private String stripPlayUrlParams(String playUrl) {
+        String cfg = getRuleVal("play_strip_params");
+        if (cfg.isEmpty()) return playUrl;
+        try {
+            Set<String> drop = new HashSet<>();
+            for (String p : cfg.split(",")) {
+                String t = p.trim();
+                if (!t.isEmpty()) drop.add(t);
+            }
+            if (drop.isEmpty()) return playUrl;
+            int hash = playUrl.indexOf('#');
+            String frag = hash >= 0 ? playUrl.substring(hash) : "";
+            String main = hash >= 0 ? playUrl.substring(0, hash) : playUrl;
+            int q = main.indexOf('?');
+            if (q < 0) return playUrl;
+            String[] pairs = main.substring(q + 1).split("&");
+            StringBuilder kept = new StringBuilder();
+            for (String pair : pairs) {
+                if (pair.isEmpty()) continue;
+                String key = pair.split("=", 2)[0];
+                if (drop.contains(key)) continue;
+                if (kept.length() > 0) kept.append('&');
+                kept.append(pair);
+            }
+            String result = kept.length() == 0 ? main.substring(0, q) : main.substring(0, q + 1) + kept;
+            return result + frag;
+        } catch (Exception e) {
+            SpiderDebug.log("stripPlayUrlParams error: " + e.getMessage());
+            return playUrl;
         }
     }
 
@@ -6699,6 +6936,9 @@ public class XBPQ extends Spider {
      * 构建搜索URL
      */
     private String buildSearchUrl(String searchUrlFlat, String keyword, String page) throws Exception {
+        // 标准模板49：搜索词分隔符——部分站点多关键词需要 + 或 , 分隔而非空格
+        String sep = getRuleVal("search_word_sep");
+        if (!sep.isEmpty()) keyword = keyword.replace(" ", sep);
         return addHttpPrefix(applySearchSuffix(searchUrlFlat
                 .replace("{wd}", URLEncoder.encode(keyword, "UTF-8"))
                 .replace("{pg}", shiftSearchPage(page))));
@@ -6938,9 +7178,23 @@ public class XBPQ extends Spider {
      * </ul>
      */
     protected String fetchUrl(String url, JSONObject headers) {
+        return fetchUrlInternal(url, headers, true);
+    }
+
+    /**
+     * fetchUrl 内部实现。
+     *
+     * @param allowMirror 是否允许镜像域名轮询（镜像重试内部置 false，防止递归）
+     */
+    private String fetchUrlInternal(String url, JSONObject headers, boolean allowMirror) {
         try {
+            // 标准模板38：请求间隔限流（按域名记录上次请求时间，配置「请求间隔」毫秒数）
+            applyRequestInterval(url);
+
             // 解析 {{变量}} 模板（{{主页url}} 等动态值）
             url = resolveVariables(url);
+            // 标准模板30/97：全局 URL 参数追加（{timestamp}/{random} 占位，防缓存/公共参数）
+            url = applyUrlAppend(url);
             // SSRF 防护：拦截内网/危险协议回源；allow_internal=1 时放行（调试用）
             if (isInternalUrl(url) && !"1".equals(getRuleVal("allow_internal"))) {
                 SpiderDebug.log(safeLog("fetchUrl SSRF blocked: " + url));
@@ -6967,7 +7221,7 @@ public class XBPQ extends Spider {
                 failMessage = "访问失败: " + lastResponseCode;
                 if (!requestFailed) Init.show(failMessage);
                 requestFailed = true;
-                return "";
+                return allowMirror ? tryMirrorHosts(url, headers) : "";
             }
             requestFailed = false;
             failMessage = "";
@@ -6979,15 +7233,100 @@ public class XBPQ extends Spider {
             if (!requestFailed) Init.show(failMessage);
             requestFailed = true;
             SpiderDebug.log(safeLog("fetchUrl error: " + failMessage));
-            return "";
+            // 标准模板18/92：主域名请求异常时自动轮询镜像域名
+            return allowMirror ? tryMirrorHosts(url, headers) : "";
         }
+    }
+
+    /** 每域名上次请求时间（请求间隔限流用） */
+    private static final Map<String, Long> LAST_REQUEST_MS = new ConcurrentHashMap<>();
+
+    /**
+     * 标准模板38：请求间隔限流。
+     * 规则配置「请求间隔」(request_interval，毫秒) 后，同域名两次请求之间自动休眠补足差值。
+     */
+    private void applyRequestInterval(String url) {
+        try {
+            long interval = Long.parseLong(getRuleVal("request_interval").trim());
+            if (interval <= 0) return;
+            String host = new java.net.URL(url).getHost();
+            long now = System.currentTimeMillis();
+            Long last = LAST_REQUEST_MS.get(host);
+            if (last != null) {
+                long wait = interval - (now - last);
+                if (wait > 0) {
+                    SpiderDebug.log(safeLog("请求限流: " + host + " 休眠 " + wait + "ms"));
+                    Thread.sleep(wait);
+                }
+            }
+            LAST_REQUEST_MS.put(host, System.currentTimeMillis());
+        } catch (Exception ignored) {
+            // 未配置/非法值/中断：不限流
+        }
+    }
+
+    /**
+     * 标准模板30/97：全局 URL 参数追加。
+     * 规则配置「参数追加」(url_append) 后，所有 GET 页面请求（首页/分类/详情/搜索/播放页）
+     * 统一在 URL 后拼接该参数（已含 ? 用 & 衔接），支持占位符：
+     * <ul>
+     *   <li>{@code {timestamp}}：当前毫秒时间戳（模板30 防缓存）</li>
+     *   <li>{@code {random}}：每次请求重新生成的随机数（绕过缓存/风控）</li>
+     * </ul>
+     * 示例：{@code "参数追加": "_t={timestamp}"} 或 {@code "参数追加": "token=xxx&r={random}"}。
+     */
+    private String applyUrlAppend(String url) {
+        String cfg = getRuleVal("url_append");
+        if (cfg.isEmpty() || url == null || url.isEmpty()) return url;
+        try {
+            if (!url.startsWith("http")) return url;
+            String params = cfg
+                    .replace("{timestamp}", String.valueOf(System.currentTimeMillis()))
+                    .replace("{random}", String.valueOf(
+                            java.util.concurrent.ThreadLocalRandom.current().nextInt(100000000)));
+            return url + (url.indexOf('?') >= 0 ? "&" : "?") + params;
+        } catch (Exception e) {
+            SpiderDebug.log(safeLog("applyUrlAppend error: " + e.getMessage()));
+            return url;
+        }
+    }
+
+    /**
+     * 标准模板18/92：镜像域名自动轮询。
+     * 规则配置「镜像域名」(mirror_hosts，分号或井号分隔的完整域名，可带协议) 后，
+     * 主域名请求失败（异常/反爬页）时依次用镜像域名替换 host 重试。
+     */
+    private String tryMirrorHosts(String url, JSONObject headers) {
+        String cfg = getRuleVal("mirror_hosts");
+        if (cfg.isEmpty() || url == null || url.isEmpty()) return "";
+        try {
+            java.net.URL original = new java.net.URL(url);
+            String oldHost = original.getHost();
+            for (String raw : cfg.split("[;#]")) {
+                String mirror = raw.trim();
+                if (mirror.isEmpty()) continue;
+                // 允许写 "example2.com" 或 "https://example2.com"
+                String host = mirror.replaceFirst("^https?://", "").split("/")[0];
+                if (host.equals(oldHost)) continue;
+                String scheme = mirror.startsWith("http") ? mirror.split("://")[0] : original.getProtocol();
+                String candidate = new java.net.URL(scheme, host, original.getPort(), original.getFile()).toString();
+                SpiderDebug.log(safeLog("镜像域名切换: " + host));
+                String result = fetchUrlInternal(candidate, headers, false);
+                if (!result.isEmpty()) return result;
+            }
+        } catch (Exception e) {
+            SpiderDebug.log(safeLog("tryMirrorHosts error: " + e.getMessage()));
+        }
+        return "";
     }
 
     /**
      * 清理HTML响应
      */
     private String cleanHtmlResponse(String html) {
-        return P_HTML_COMMENT.matcher(html).replaceAll("")
+        // 标准模板91：BOM 头/零宽字符剔除（默认开启，无副作用），再走注释与换行清洗
+        return P_HTML_COMMENT.matcher(P_INVISIBLE.matcher(html).replaceAll(""))
+                .replaceAll("")
                 .replace("\r\n", "")
                 .replace("\n", "");
     }
