@@ -1649,11 +1649,28 @@ public class XBPQ extends Spider {
     }
 
     /**
+     * 判断位置是否位于 style/script 块内部：内联 CSS/JS 里的类名、属性文本
+     * 会命中数组锚点（如 .article-list .article-item），这类命中不构成片单节点
+     */
+    private boolean insideNoParseBlock(String content, int pos) {
+        int styleStart = content.lastIndexOf("<style", pos);
+        if (styleStart >= 0) {
+            int styleEnd = content.indexOf("</style", styleStart);
+            if (styleEnd == -1 || styleEnd > pos) return true;
+        }
+        int scriptStart = content.lastIndexOf("<script", pos);
+        if (scriptStart >= 0) {
+            int scriptEnd = content.indexOf("</script", scriptStart);
+            if (scriptEnd == -1 || scriptEnd > pos) return true;
+        }
+        return false;
+    }
+
+    /**
      * 字段规则转 2 元素数组 [前缀, 后缀]：仅供 findSubString 消费，
      * 不带回看层级——避免与数组规则在 getLookbackArray 中竞争
      */
-    protected JSONArray stringCutPair(String rule) {
-        if (rule == null || rule.isEmpty()) return null;
+    protected JSONArray stringCutPair(String rule) {        if (rule == null || rule.isEmpty()) return null;
         String cutRule = applyPostProcessors(applyOrSelector(rule));
         if (!cutRule.contains("&&")) return null;
         String[] parts = cutRule.split("&&", 2);
@@ -4038,14 +4055,26 @@ public class XBPQ extends Spider {
         int pos = 0;
 
         while (lookback != null) {
-            pos = content.indexOf(lookback.getString(0), pos);
-            if (pos == -1) break;
+            int matchPos = content.indexOf(lookback.getString(0), pos);
+            if (matchPos == -1) break;
+
+            // 跳过 style/script 内的命中（如内联 CSS 里的类名），这类节点无片单内容
+            if (insideNoParseBlock(content, matchPos)) {
+                pos = matchPos + 1;
+                continue;
+            }
 
             // 使用 do-while 循环调整回看层级
-            NodeExtractionResult result = adjustAndExtractNode(content, pos, lookback, list);
+            NodeExtractionResult result = adjustAndExtractNode(content, matchPos, lookback, list);
             if (result == null) break;
 
-            pos = result.endPos;
+            // 防护：层级震荡导致提取失败时 endPos 不前进（可能为 0），
+            // 强制前移避免同一匹配点被无限重试
+            if (result.endPos <= matchPos) {
+                pos = matchPos + 1;
+            } else {
+                pos = result.endPos;
+            }
             String vodId = result.vodId;
 
             // 无链接的块（如首页页脚「友情链接」li、装饰元素）不构成片单，剔除，
@@ -6038,14 +6067,25 @@ public class XBPQ extends Spider {
         }
 
         while (lookback != null) {
-            pos = content.indexOf(lookback.getString(0), pos);
-            if (pos == -1) break;
+            int matchPos = content.indexOf(lookback.getString(0), pos);
+            if (matchPos == -1) break;
+
+            // 跳过 style/script 内的命中
+            if (insideNoParseBlock(content, matchPos)) {
+                pos = matchPos + 1;
+                continue;
+            }
 
             // 调整层级并提取
-            SearchNodeResult nodeResult = extractSearchNode(content, pos, lookback, search, url);
+            SearchNodeResult nodeResult = extractSearchNode(content, matchPos, lookback, search, url);
             if (nodeResult == null) break;
 
-            pos = nodeResult.endPos;
+            // 防护：提取失败时 endPos 不前进，强制前移避免死循环
+            if (nodeResult.endPos <= matchPos) {
+                pos = matchPos + 1;
+            } else {
+                pos = nodeResult.endPos;
+            }
             String vodId = nodeResult.vodId;
 
             if (!seenIds.contains(vodId)) {
