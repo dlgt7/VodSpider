@@ -320,6 +320,7 @@ public class XBPQ extends Spider {
         CHINESE_KEY_MAP.put("倒序", "reverse");
         CHINESE_KEY_MAP.put("倒序播放", "reverse");
         CHINESE_KEY_MAP.put("免嗅", "manualVideoCheck");
+        CHINESE_KEY_MAP.put("反爬超时", "antiCrawlTimeout");
 
         // CSS 选择器相关（新增）
         CHINESE_KEY_MAP.put("CSS 选择器", "css_selector");
@@ -503,7 +504,8 @@ public class XBPQ extends Spider {
     public static class HtmlNodeHelper {
         /** 非配对标签列表 */
         private static final List<String> UNPAIRED_TAGS = Arrays.asList(
-                "img", "br", "meta", "!--"
+                "img", "br", "meta", "!--", "input", "hr", "source", "embed",
+                "col", "wbr", "base", "area", "param", "track"
         );
 
         /**
@@ -525,6 +527,18 @@ public class XBPQ extends Spider {
         }
 
         /**
+         * 判断指定位置开始的标签是否为自闭合写法（以 /> 结束）
+         */
+        public static boolean isSelfClosedTag(String str, int startPos) {
+            for (int i = startPos + 1; i < str.length(); ++i) {
+                char c = str.charAt(i);
+                if (c == '>') return str.charAt(i - 1) == '/';
+                if (c == '<') return false;
+            }
+            return false;
+        }
+
+        /**
          * 获取从指定位置开始的完整HTML节点字符串
          * @param str HTML源码
          * @param pos 标签起始位置（必须是 '<'）
@@ -536,9 +550,9 @@ public class XBPQ extends Spider {
             for (int i = pos; i < str.length() - 1; ++i) {
                 switch (str.charAt(i)) {
                     case '/':
-                        if (str.charAt(i + 1) == '>') {
-                            depth--;
-                        } else if (str.charAt(i - 1) == '<') {
+                        // 仅闭合标签 </ 使深度减一；自闭合 /> 的开标签未配对增深度，此处保持中性
+                        // （旧实现 /> 也减一，含 <img/> 的节点会在该处被提前截断）
+                        if (str.charAt(i - 1) == '<') {
                             depth--;
                         }
                         break;
@@ -581,9 +595,14 @@ public class XBPQ extends Spider {
                     case '<':
                         if (depth == 0) {
                             nodes.add(i);
-                        } else if (isPairedHtmlTag(str, i)) {
-                            depth--;
-                            if (depth < 0) depth = 0;
+                        } else {
+                            // 配对标签的开标签、或已越过 /> 的自闭合标签，均抵消此前的深度自增；
+                            // 非自闭合的未配对标签（<br>）保持中性。旧实现漏算自闭合标签，
+                            // 反向扫描跨越 <img/> 等标签后深度恒大于 0，祖先节点定位失效
+                            if (isPairedHtmlTag(str, i) || isSelfClosedTag(str, i)) {
+                                depth--;
+                                if (depth < 0) depth = 0;
+                            }
                         }
                         break;
                     default:
@@ -625,6 +644,12 @@ public class XBPQ extends Spider {
                     .replaceAll("\\s+", " ")
                     .replace("&nbsp;", "")
                     .replace("&emsp;", "")
+                    .replace("&lt;", "<")
+                    .replace("&gt;", ">")
+                    .replace("&quot;", "\"")
+                    .replace("&apos;", "'")
+                    .replace("&#39;", "'")
+                    .replace("&amp;", "&")
                     .trim();
         }
 
@@ -1125,6 +1150,9 @@ public class XBPQ extends Spider {
          * 统计子串出现次数
          */
         public static int getSubStringCount(String str, String sub) {
+            // 空子串防护：indexOf("") 恒返回 pos 且 pos+=0，此循环将永不终止
+            // （空前缀规则如 "&&</div>" 经 stringCutToLookback 后即产生空匹配串）
+            if (sub == null || sub.isEmpty()) return 0;
             int pos = 0;
             int count = 0;
             while (pos < str.length()) {
@@ -1549,8 +1577,8 @@ public class XBPQ extends Spider {
         for (String[] pair : flatSearchFields) {
             String value = getRuleVal(pair[0]);
             if (!value.isEmpty()) {
-                JSONArray lookback = stringCutToLookback(applyOrSelector(value));
-                if (lookback != null) searchObj.put(pair[1], lookback);
+                JSONArray pairArr = stringCutPair(value);
+                if (pairArr != null) searchObj.put(pair[1], pairArr);
             }
         }
     }
@@ -3728,7 +3756,15 @@ public class XBPQ extends Spider {
         }
         byItem.put("value", listArr);
         filterObj.put("by", byItem);
-        result.put("filters", filterObj);
+        // 合并进已有筛选（规则 筛选 JSON 可能已按 tid 配置年份等），
+        // 旧实现整体覆盖导致 排序 与 筛选 互斥
+        JSONObject existingFilters = result.optJSONObject("filters");
+        if (existingFilters != null) {
+            existingFilters.put("by", byItem);
+            result.put("filters", existingFilters);
+        } else {
+            result.put("filters", filterObj);
+        }
     }
 
     // ==================== 首页推荐接口 ====================
@@ -6235,6 +6271,12 @@ public class XBPQ extends Spider {
         try {
             // 解析 {{变量}} 模板（{{主页url}} 等动态值）
             url = resolveVariables(url);
+            // SSRF 防护：拦截内网/危险协议回源；allow_internal=1 时放行（调试用）
+            if (isInternalUrl(url) && !"1".equals(getRuleVal("allow_internal"))) {
+                SpiderDebug.log(safeLog("fetchUrl SSRF blocked: " + url));
+                failMessage = "SSRF blocked";
+                return "";
+            }
             Map<String, String> h = getHeaders(url);
             if (headers != null) h = mergeHeaders(h, headers);
 
@@ -6308,7 +6350,7 @@ public class XBPQ extends Spider {
             return "";
         }
         String html = OkHttp.string(webUrl, getHeaders(webUrl));
-        html = bypassBaoTaWaf(webUrl, html);
+        html = handleAntiCrawler(webUrl, html, null);
         html = convertUnicodeToChinese(html);
         return cleanHtmlResponse(html);
     }
@@ -6454,6 +6496,9 @@ public class XBPQ extends Spider {
     /** 最大反爬重试次数 */
     private static final int MAX_ANTI_CRAWLER_RETRY = 5;
 
+    /** 反爬绕过总预算（毫秒），可由规则 反爬超时/antiCrawlTimeout 配置，[5000,60000] */
+    private long antiCrawlDeadline = 0;
+
     /** 反爬检测间隔（毫秒） */
     private static final long ANTI_CRAWLER_DELAY_MS = 1500;
     /** 「加载中」等待重载盾要求的间隔略大于页面标注的 2 秒 */
@@ -6462,7 +6507,7 @@ public class XBPQ extends Spider {
     /** Cloudflare 检测关键词 */
     private static final List<String> CF_DETECT_KEYWORDS = Arrays.asList(
             "cf-browser-verification", "cf-challenge", "cf_clearance",
-            "Just a moment...", "Checking your browser", "cloudflare",
+            "Just a moment...", "Checking your browser",
             "_cf_chl", "__cf_bm", "challenge-platform"
     );
 
@@ -6475,7 +6520,7 @@ public class XBPQ extends Spider {
     /** 滑块验证检测关键词 */
     private static final List<String> SLIDER_DETECT_KEYWORDS = Arrays.asList(
             "滑动验证", "滑块验证", "huadong_", "click_captcha",
-            "slider-verify", "geetest", "captcha", "verify"
+            "slider-verify", "geetest", "captcha"
     );
 
     /**
@@ -6493,12 +6538,25 @@ public class XBPQ extends Spider {
      * @param html    原始HTML响应
      * @return 处理后的HTML内容（可能已通过验证重新获取）
      */
+    /** 反爬总预算（毫秒）：规则 反爬超时/antiCrawlTimeout，缺省 20s，范围 [5s,60s] */
+    private long antiCrawlBudget() {
+        long budget = 0;
+        try {
+            budget = Long.parseLong(getRuleVal("antiCrawlTimeout", "0").trim());
+        } catch (Exception ignored) {
+        }
+        if (budget <= 0) budget = 20000;
+        return Math.max(5000, Math.min(60000, budget));
+    }
+
     protected String handleAntiCrawler(String webUrl, String html) {
         try {
             if (html == null || html.isEmpty()) return html;
 
             // 快速判断：如果页面正常（无反爬标记），直接返回
             if (!isAntiCrawlerPage(html)) return html;
+
+            antiCrawlDeadline = SystemClock.elapsedRealtime() + antiCrawlBudget();
 
             SpiderDebug.log(String.format("检测到反爬保护: %s", detectAntiCrawlerType(html)));
 
@@ -6531,6 +6589,10 @@ public class XBPQ extends Spider {
 
             // 4. 通用重试机制
             for (int i = 0; i < MAX_ANTI_CRAWLER_RETRY; i++) {
+                if (SystemClock.elapsedRealtime() > antiCrawlDeadline) {
+                    SpiderDebug.log("反爬重试超出总预算，提前结束");
+                    break;
+                }
                 Thread.sleep(ANTI_CRAWLER_DELAY_MS);
                 html = fetchUrlWithRetry(webUrl);
                 if (!isAntiCrawlerPage(html)) break;
@@ -6549,6 +6611,8 @@ public class XBPQ extends Spider {
         try {
             if (html == null || html.isEmpty()) return html;
             if (!isAntiCrawlerPage(html)) return html;
+
+            antiCrawlDeadline = SystemClock.elapsedRealtime() + antiCrawlBudget();
 
             // 使用自定义头部的版本优先
             if (isCloudflarePage(html)) {
@@ -6601,6 +6665,10 @@ public class XBPQ extends Spider {
     protected String bypassRefreshWait(String webUrl, String html, JSONObject customHeaders) {
         try {
             for (int i = 0; i < MAX_ANTI_CRAWLER_RETRY; i++) {
+                if (SystemClock.elapsedRealtime() > antiCrawlDeadline) {
+                    SpiderDebug.log("等待重载盾重试超出反爬总预算，提前结束");
+                    break;
+                }
                 Thread.sleep(REFRESH_WAIT_DELAY_MS);
                 Map<String, String> headers = getHeaders(webUrl);
                 if (customHeaders != null && customHeaders.length() > 0) {
@@ -7005,17 +7073,6 @@ public class XBPQ extends Spider {
         } catch (Exception e) {
             SpiderDebug.log(e);
         }
-    }
-
-    /**
-     * 尝试外部打码服务（已适配：当前 SliderVerifyUtils 不提供 verifyByExternalService，
-     * 外部打码逻辑已内置在 requestWithVerify 中，当配置了 ocr_api 时会自动使用）
-     */
-    @SuppressWarnings("unused")
-    private boolean tryExternalVerifyService(String webUrl, String html, SliderVerifyUtils verifier) {
-        // 当前版本的外部打码已在 requestWithVerify 内部处理
-        // 此方法保留为兼容桩，直接返回 false 表示需要上层用 requestWithVerify 重试
-        return false;
     }
 
     // ========== Cookie 管理 ==========
@@ -7793,15 +7850,21 @@ public class XBPQ extends Spider {
             StringBuilder sb = new StringBuilder();
             sb.append("<?xml version=\"1.0\" encoding=\"utf-8\"?><i>\n");
             for (int i = 0; i < array.length(); i++) {
-                JSONArray item = array.getJSONArray(i);
-                if (item.length() < 7) continue;
-                sb.append("<d p=\"").append(item.getString(DM_TIME))
-                        .append(",").append(item.getInt(DM_MODE))
-                        .append(",").append(item.getInt(DM_SIZE))
-                        .append(",").append(item.getInt(DM_COLOR))
-                        .append(",").append(item.getInt(DM_SOURCE))
-                        .append(",0,").append(item.getInt(DM_USER))
-                        .append("\">").append(escapeXml(item.getString(DM_CONTENT))).append("</d>\n");
+                // 逐行容错：单条脏数据不应清空整份弹幕
+                try {
+                    JSONArray item = array.getJSONArray(i);
+                    if (item.length() < 7) continue;
+                    sb.append("<d p=\"")
+                            .append(item.optString(DM_TIME))
+                            .append(",").append(item.optInt(DM_MODE))
+                            .append(",").append(item.optInt(DM_SIZE))
+                            .append(",").append(item.optInt(DM_COLOR))
+                            .append(",").append(item.optInt(DM_SOURCE))
+                            .append(",0,").append(item.optString(DM_USER))
+                            .append("\">").append(escapeXml(item.optString(DM_CONTENT))).append("</d>\n");
+                } catch (Exception rowEx) {
+                    SpiderDebug.log("jsonArray2xml 跳过第 " + i + " 条: " + rowEx.getMessage());
+                }
             }
             sb.append("</i>");
             return sb.toString();
@@ -7914,6 +7977,15 @@ public class XBPQ extends Spider {
         }
         if (params.containsKey("danmu_url") || params.containsKey("danmuUrl")) return loadDanmu(params);
         if (params.containsKey("m3u8")) return loadM3u8(params);
+        // url 以 .m3u8 结尾时走流解析（loadPic 会把文本流当图片回源）
+        String pu = params.get("url");
+        if (pu != null) {
+            try {
+                String decoded = java.net.URLDecoder.decode(pu, "UTF-8").toLowerCase();
+                if (decoded.contains(".m3u8")) return loadM3u8(params);
+            } catch (Exception ignored) {
+            }
+        }
         return loadPic(params);
     }
 
@@ -7957,28 +8029,32 @@ public class XBPQ extends Spider {
                 secretKey = getRuleVal("secretKey");
                 staticHomeUrl = rule.optString("homeUrl", "");
 
-                // 类级公共请求头表填充（JSON 对象串或 Key$Value#Key$Value 格式）
-                headerMap.clear();
+                // 类级公共请求头表填充（JSON 对象串或 Key$Value#Key$Value 格式）。
+                // 仅在本源确实配置了公共头时才清空重填——无配置的源清表会把
+                // 他源共享的 Cookie/Token 泼掉（多源串扰修复）
                 String headerJsonStr = getRuleVal("headerJson");
-                if (!headerJsonStr.isEmpty()) {
-                    try {
-                        JSONObject headerObj = headerJsonStr.startsWith("{")
-                                ? new JSONObject(headerJsonStr)
-                                : parseHeader(headerJsonStr);
-                        Iterator<String> keys = headerObj.keys();
-                        while (keys.hasNext()) {
-                            String k = keys.next();
-                            headerMap.put(k, headerObj.optString(k));
-                        }
-                    } catch (Exception e) {
-                        SpiderDebug.log("headerMap parse error: " + e.getMessage());
-                    }
-                }
-
-                // User：独立请求头（Key:Value 形式，支持 # 分隔多行），注入类级公共请求头
                 String userHeaderStr = getRuleVal("userHeader");
-                if (!userHeaderStr.isEmpty()) {
-                    injectUserHeader(userHeaderStr);
+                if (!headerJsonStr.isEmpty() || !userHeaderStr.isEmpty()) {
+                    headerMap.clear();
+                    if (!headerJsonStr.isEmpty()) {
+                        try {
+                            JSONObject headerObj = headerJsonStr.startsWith("{")
+                                    ? new JSONObject(headerJsonStr)
+                                    : parseHeader(headerJsonStr);
+                            Iterator<String> keys = headerObj.keys();
+                            while (keys.hasNext()) {
+                                String k = keys.next();
+                                headerMap.put(k, headerObj.optString(k));
+                            }
+                        } catch (Exception e) {
+                            SpiderDebug.log("headerMap parse error: " + e.getMessage());
+                        }
+                    }
+
+                    // User：独立请求头（Key:Value 形式，支持 # 分隔多行），注入类级公共请求头
+                    if (!userHeaderStr.isEmpty()) {
+                        injectUserHeader(userHeaderStr);
+                    }
                 }
             }
         } catch (Exception e) {
