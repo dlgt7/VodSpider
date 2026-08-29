@@ -162,7 +162,16 @@ public class XBPQ extends Spider {
         synchronized (this) {
             if (rule != null && rule.length() > 0) return;
             try {
+                // ext 双格式支持（与原版 XBPQ 一致）：
+                // 1) 远程规则：{"ext": "https://...json"}（gh-proxy 等镜像同样按 http 处理）
+                // 2) 内联规则：{"ext": {...}} 或 {"ext": "{\"搜索url\":...}"} —— 宿主把
+                //    JSON 对象序列化成字符串传入，直接解析，中文键经 convertChineseKeys 映射
                 String content = ext.startsWith("http") ? fetchUrl(ext, null) : ext;
+                if (content != null) {
+                    content = content.trim();
+                    // 去 UTF-8 BOM：远程文件/Windows 编辑器常带 BOM，JSONTokener 会解析失败
+                    if (content.startsWith("\uFEFF")) content = content.substring(1).trim();
+                }
                 if (content == null || content.isEmpty()) {
                     SpiderDebug.log("规则内容为空: " + ext);
                     return;
@@ -337,10 +346,13 @@ public class XBPQ extends Spider {
             if (re < ri) break;
             String replaceContent = sb.substring(ri + 4, re);
             String result = sb.substring(0, ri);
-            for (String pair : replaceContent.split("#")) {
+            // `\#` 为转义的字面量 #（与 StringCutRule 后处理器语义一致）
+            for (String pair : replaceContent.split("(?<!\\\\)#")) {
                 int idx = pair.indexOf(">>");
                 if (idx > 0) {
-                    result = result.replace(pair.substring(0, idx).trim(), pair.substring(idx + 2).trim());
+                    String from = pair.substring(0, idx).trim().replace("\\#", "#");
+                    String to = pair.substring(idx + 2).trim().replace("\\#", "#");
+                    result = result.replace(from, to);
                 }
             }
             sb = new StringBuilder(result).append(sb.substring(re + 1));
@@ -906,6 +918,30 @@ public class XBPQ extends Spider {
             String flang_value = getVal("flang_value");
             String fsort_name = getVal("fsort_name");
             String fsort_value = getVal("fsort_value");
+            // 原版 XBPQ 动态筛选写法（旺旺影视等）：类型/类型值、地区/地区值、
+            // 年份/年份值、排序/排序值 与 筛选XX名称/替换词（f*_name/f*_value）同功能，
+            // 此处等价回填，不新增键。含 "&&" 的值是详情页截取规则（如 "类型" 被用作
+            // detail_type），不是筛选列表，必须排除。
+            String[] pairFallbacks = {
+                    "类型", "类型值", "fcatelog_name", "fcatelog_value",
+                    "地区", "地区值", "farea_name", "farea_value",
+                    "年份", "年份值", "fyear_name", "fyear_value",
+                    "排序", "排序值", "fsort_name", "fsort_value"
+            };
+            for (int i = 0; i < pairFallbacks.length; i += 4) {
+                if (getVal(pairFallbacks[i + 2]).isEmpty() && getVal(pairFallbacks[i + 3]).isEmpty()) {
+                    String n = RuleConfig.getRuleVal(rule, pairFallbacks[i]);
+                    String v = RuleConfig.getRuleVal(rule, pairFallbacks[i + 1]);
+                    if (!n.isEmpty() && !v.isEmpty() && !n.contains("&&") && !v.contains("&&")) {
+                        rule.put(pairFallbacks[i + 2], n);
+                        rule.put(pairFallbacks[i + 3], v);
+                        if (pairFallbacks[i + 2].equals("fcatelog_name")) { fcatelog_name = n; fcatelog_value = v; }
+                        else if (pairFallbacks[i + 2].equals("farea_name")) { farea_name = n; farea_value = v; }
+                        else if (pairFallbacks[i + 2].equals("fyear_name")) { fyear_name = n; fyear_value = v; }
+                        else if (pairFallbacks[i + 2].equals("fsort_name")) { fsort_name = n; fsort_value = v; }
+                    }
+                }
+            }
             // 修复：原先无条件注入 Maccms 排序默认值，导致任何含 {by} 占位符的规则
             // 都会凭空生成一个 by 筛选组，并进一步顶掉规则内联配置的 筛选 JSON。
             // 现仅在用户显式配置了任一 f*_name/f*_value 时（即选择 EXT 动态筛选）才注入。
@@ -944,6 +980,18 @@ public class XBPQ extends Spider {
                 }
             }
 
+            // 动态筛选的分类值：优先 分类值(class_value)；未配置时用实际分类的 type_id
+            //（旺旺影视等仅配 分类 "电影$1#..." 的规则，筛选组须按这些 id 逐分类生成）
+            String categoryValues = classValuesCfg;
+            if (categoryValues.isEmpty() && !classes.isEmpty()) {
+                StringBuilder sb = new StringBuilder();
+                for (Class c : classes) {
+                    if (sb.length() > 0) sb.append("&");
+                    sb.append(c.getTypeId());
+                }
+                categoryValues = sb.toString();
+            }
+
             // 筛选处理（filterdata 远程/EXT/内置）
             JSONObject filters = null;
             if (filter) {
@@ -962,7 +1010,7 @@ public class XBPQ extends Spider {
                 } else if ("EXT".equalsIgnoreCase(filterdata)) {
                     // 动态构建筛选（借鉴 XYQHiker buildFilter）
                     LinkedHashMap<String, List<Filter>> filterMap = buildFilter(
-                            classValuesCfg, getVal("class_url"),
+                            categoryValues, getVal("class_url"),
                             fclass_name, fclass_value,
                             fcatelog_name, fcatelog_value,
                             farea_name, farea_value,
@@ -993,7 +1041,7 @@ public class XBPQ extends Spider {
                         filters = (JSONObject) raw;
                     } else if (hasPlaceholders) {
                         LinkedHashMap<String, List<Filter>> filterMap = buildFilter(
-                                classValuesCfg, classUrlTpl,
+                                categoryValues, classUrlTpl,
                                 fclass_name, fclass_value,
                                 fcatelog_name, fcatelog_value,
                                 farea_name, farea_value,
@@ -1055,6 +1103,7 @@ public class XBPQ extends Spider {
      * <p>兼容规则中实际出现的多种写法（字段同名但格式不同，视为同一功能，不新增键）：
      * <ol>
      *   <li>{@code 特殊分类链接="name$url#name$url"} —— name$id 用 # 串联（最常见，优先）</li>
+     *   <li>{@code 分类数组+分类标题+分类ID} —— 从主页动态抓取分类（LiteApple/BTT 写法）</li>
      *   <li>{@code 分类="电影$1#剧集$2#..."} —— name$id 用 # 串联（次常见）</li>
      *   <li>{@code 分类url} 含 {class} —— 分类名即作为 type_id</li>
      *   <li>{@code 分类名称 + 分类值} 两个 & 分隔的并行数组</li>
@@ -1115,6 +1164,13 @@ public class XBPQ extends Spider {
             return classes;
         }
 
+        // 0.5) 分类数组/分类标题/分类ID：从主页动态抓取分类（LiteApple/BTT 写法）
+        String catArray = getVal("cat_array");
+        if (!catArray.isEmpty()) {
+            JSONArray dynamic = buildDynamicCategories(catArray);
+            if (dynamic.length() > 0) return dynamic;
+        }
+
         // 1) name$id#name$id 格式（最常见，约 1/3 规则使用）
         if (fenlei.contains("$")) {
             for (String pair : fenlei.split("[#&]")) {
@@ -1161,6 +1217,47 @@ public class XBPQ extends Spider {
             if (classes.length() > 0) return classes;
         }
 
+        return classes;
+    }
+
+    /**
+     * 分类数组/分类标题/分类ID 动态抓取分类（写法说明 §二，LiteApple/BTT 写法）。
+     * <p>抓主页（可先按 分类二次截取 cat_twice 截取区域），按 分类数组 切块，
+     * 逐块提取 分类标题/分类ID。分类ID 提取出的相对路径（如 /vodlist/6.html）
+     * 补全为绝对 URL 直接作为 type_id，走 buildCategoryUrl 的"tid 即链接"分支。</p>
+     */
+    private JSONArray buildDynamicCategories(String catArray) {
+        JSONArray classes = new JSONArray();
+        try {
+            String homeUrl = getHomeUrl();
+            if (homeUrl.isEmpty()) return classes;
+            String body = fetchUrl(homeUrl, buildHeaders(null));
+            if (body.isEmpty()) return classes;
+            String catTwice = getVal("cat_twice");
+            if (!catTwice.isEmpty()) {
+                if (CssRule.isCssRule(catTwice)) {
+                    String cut = CssRule.cutRegion(body, catTwice);
+                    if (!cut.isEmpty()) body = cut;
+                } else {
+                    body = StringCutRule.applySecondCut(body, catTwice);
+                }
+            }
+            // 未配置字段时的默认规则（与写法说明默认值一致）；
+            // ">&&</a>" 兜底取锚点文本（末对截取缺失后缀时贪婪取到块尾）
+            String titleRule = getVal("cat_title");
+            if (titleRule.isEmpty()) titleRule = "title=\"&&\"||alt=\"&&\"||>&&</a>";
+            String idRule = getVal("cat_id");
+            if (idRule.isEmpty()) idRule = "href=\"&&\"";
+            for (String item : RegexFieldHelper.splitItems(body, catArray)) {
+                String id = RegexFieldHelper.extract(item, idRule).trim();
+                if (id.isEmpty()) continue;
+                String name = RegexFieldHelper.extract(item, titleRule).trim();
+                if (id.startsWith("/")) id = absUrl(id);
+                addClass(classes, id, name.isEmpty() ? id : name);
+            }
+        } catch (Exception e) {
+            SpiderDebug.log("分类数组动态抓取失败: " + e.getMessage());
+        }
         return classes;
     }
 
@@ -1415,11 +1512,41 @@ public class XBPQ extends Spider {
         }
     }
 
-    /** 网页截取模式提取视频列表（CSS 规则自动分流） */
+    /**
+     * 网页截取模式提取视频列表（CSS 规则自动分流）。
+     * <p>规则未配 数组（list_array）但配了 搜索数组（search_array）时，
+     * 分类页回退用搜索规则提取——foxjun 等站点分类页与搜索页结构完全同构
+     * （实测均为 class="media" 块），原版 XBPQ 即依赖该回退。</p>
+     */
     private JSONArray extractVideoListByWeb(String body) throws Exception {
+        String listArray = getVal("list_array");
+        JSONObject ruleForExtract = rule;
+        if (listArray.isEmpty()) {
+            String searchArray = getVal("search_array");
+            if (searchArray.isEmpty()) return new JSONArray();
+            // 同功能字段替换：搜索数组/搜索标题/搜索图片/搜索链接/搜索副标题 → 列表字段
+            ruleForExtract = new JSONObject(rule.toString());
+            copyIfEmpty(ruleForExtract, "search_array", "list_array");
+            copyIfEmpty(ruleForExtract, "search_name", "list_name");
+            copyIfEmpty(ruleForExtract, "search_pic", "list_pic");
+            copyIfEmpty(ruleForExtract, "search_id", "list_id");
+            copyIfEmpty(ruleForExtract, "search_remarks", "list_remarks");
+            copyIfEmpty(ruleForExtract, "search_twice", "list_twice");
+            copyIfEmpty(ruleForExtract, "search_prefix", "list_prefix");
+            copyIfEmpty(ruleForExtract, "search_suffix", "list_suffix");
+            listArray = searchArray;
+        }
         return ExtractorFactory
-                .createVideoListExtractor(CssRule.isCssRule(getVal("list_array")))
-                .extract(body, rule);
+                .createVideoListExtractor(CssRule.isCssRule(listArray))
+                .extract(body, ruleForExtract);
+    }
+
+    /** 目标键为空时从源键复制值（同功能字段替换用） */
+    private static void copyIfEmpty(JSONObject ruleObj, String fromKey, String toKey) {
+        String to = ruleObj.optString(toKey, "");
+        if (!to.isEmpty()) return;
+        String from = ruleObj.optString(fromKey, "");
+        if (!from.isEmpty()) ruleObj.put(toKey, from);
     }
 
     /**
@@ -1591,7 +1718,12 @@ public class XBPQ extends Spider {
             } else {
                 String key = m.group(1);
                 val = extend != null ? extend.get(key) : null;
-                if (val == null) val = "class".equals(key) ? tid : "";
+                if (val == null) {
+                    // {class} 回退为 tid 仅限"分类名即ID"的模板（不含 {cateId}）；
+                    // Maccms 横杠模板（含 {cateId}，如 /vodshow/{cateId}---{class}-----{catePg}---{year}/）
+                    // 中 {class} 是类型筛选槽位，回退 tid 会把分类 ID 污染进类型槽
+                    val = "class".equals(key) && !classUrl.contains("{cateId}") ? tid : "";
+                }
                 // 筛选类占位符（来自用户输入的 extend 参数）做最小化编码：
                 // 仅转义非 ASCII 与空格，保留 / ? = & : 等 URL 结构字符。
                 // 修复：全量 URLEncoder.encode 会把 "/class/喜剧" 变成
@@ -2230,9 +2362,11 @@ public class XBPQ extends Spider {
      * <p>剧集条目格式为 {@code "标题$链接"}，前后缀只能作用于 {@code $} 之后的链接部分；
      * 若直接作用于整条，{@code $} 分隔符会被污染，TVBox 会把 "前缀标题" 当集名、
      * "链接后缀" 当播放地址，导致整条线路不可播。</p>
+     * <p>修复：相对链接（如 stui/skr 站点的 {@code /play/xx-1-1.html}）原先原样输出，
+     * 播放器无法加载，现统一补全主机；magnet:/thunder:/ed2k: 等协议链接原样保留。</p>
      */
-    private static List<String> toEpisodeList(JSONArray episodes, String epiPrefix,
-                                              String epiSuffix, List<String> epFilters) {
+    private List<String> toEpisodeList(JSONArray episodes, String epiPrefix,
+                                       String epiSuffix, List<String> epFilters) {
         List<String> epList = new ArrayList<>();
         if (episodes == null) return epList;
         for (int j = 0; j < episodes.length(); j++) {
@@ -2243,9 +2377,27 @@ public class XBPQ extends Spider {
                 if (ep.contains(w)) { blocked = true; break; }
             }
             if (blocked) continue;
-            epList.add(applyEpiAffix(ep, epiPrefix, epiSuffix));
+            epList.add(applyEpiAffix(absolveEpisodeLink(ep), epiPrefix, epiSuffix));
         }
         return epList;
+    }
+
+    /** 剧集条目 "标题$链接" 的链接部分补全主机（P2P 协议链接原样保留） */
+    private String absolveEpisodeLink(String ep) {
+        if (ep == null) return ep;
+        int sep = ep.indexOf('$');
+        if (sep < 0) return absolveEpisodeUrl(ep);
+        return ep.substring(0, sep + 1) + absolveEpisodeUrl(ep.substring(sep + 1));
+    }
+
+    /** 带协议头的链接（magnet: / thunder: / ed2k: / ftp: 等）不参与主机补全 */
+    private static final Pattern P_HAS_SCHEME = Pattern.compile("^[a-zA-Z][a-zA-Z0-9+.-]*:");
+
+    private String absolveEpisodeUrl(String link) {
+        if (link == null || link.isEmpty()) return link;
+        if (link.startsWith("http://") || link.startsWith("https://")) return link;
+        if (P_HAS_SCHEME.matcher(link).find()) return link;
+        return absUrl(link);
     }
 
     /** 给剧集条目的链接部分加前后缀 */
