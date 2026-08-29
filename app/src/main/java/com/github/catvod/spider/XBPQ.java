@@ -2644,6 +2644,12 @@ public class XBPQ extends Spider {
         try {
             if (url.isEmpty()) return "";
             if (url.startsWith("http")) return url;
+            // P2P 协议 URI（磁力/迅雷/ed2k）不是相对路径，补主页前缀会生成无法播放的链接
+            String lower = url.toLowerCase();
+            if (lower.startsWith("magnet:") || lower.startsWith("thunder:")
+                    || lower.startsWith("ed2k:") || lower.startsWith("mailto:")) {
+                return url;
+            }
             String result = rule.getString("homeUrl");
             if (result.endsWith("/")) {
                 result = result.substring(0, result.length() - 1);
@@ -3464,6 +3470,7 @@ public class XBPQ extends Spider {
     public String homeContent(boolean filter) {
         try {
             fetchRule();
+            initEnhancedConfig();
             JSONObject result = new JSONObject();
             JSONArray classes = buildClassList(filter);
             // 插入「偏好设置」「源内搜索」action tab（配置 actionTabs=1 或 SSTop 开启）
@@ -4797,6 +4804,8 @@ public class XBPQ extends Spider {
             int he = block.indexOf(hrefEnd, he0);
             if (he < 0) break;
             String href = block.substring(he0, he).trim();
+            // HTML 实体还原：磁力等链接里的 &amp; 需还原为 &（首参数之外的参数才不被破坏）
+            if (href.contains("&amp;")) href = href.replace("&amp;", "&");
             hp = he + hrefEnd.length();
             if (!matchEpisodeFilter(href)) continue;
 
@@ -5181,7 +5190,8 @@ public class XBPQ extends Spider {
 
             // 可能需要单独请求播放列表
             if (playlist.has("url")) {
-                String detailUrl = rule.getJSONObject("detail").optString("url", "");
+                JSONObject detailRule = rule.optJSONObject("detail");
+                String detailUrl = (detailRule == null) ? "" : detailRule.optString("url", "");
                 String playListUrl = playlist.getString("url");
                 if (!detailUrl.equals(playListUrl)) {
                     String url = playListUrl.replace("{vid}", vinfo.getString("vod_id"));
@@ -6073,9 +6083,9 @@ public class XBPQ extends Spider {
             JSONObject list = rule.optJSONObject("list");
             if (list != null && list.has("vod_id")) {
                 search.put("vod_id", list.getJSONArray("vod_id"));
-            } else {
+            } else if (list != null) {
                 guessVodIdIfNeeded(list);
-                if (list != null && list.has("vod_id")) {
+                if (list.has("vod_id")) {
                     search.put("vod_id", list.getJSONArray("vod_id"));
                 }
             }
