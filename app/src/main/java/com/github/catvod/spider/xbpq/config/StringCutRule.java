@@ -55,27 +55,61 @@ public class StringCutRule {
      * <ul>
      *   <li>支持 || 备用选择器：逐个尝试，返回首个非空结果</li>
      *   <li>支持 && 多级链式截取：a&&b&&c 表示先按a&&b截取，再用结果按c截取（递归）</li>
+     *   <li>支持尾部后处理器标记（[替换:a>>b] / [包含:x] / [不包含:x]）：
+     *       标记先从截取规则中剥离再执行截取，截取结果统一过一遍后处理器。
+     *       真实规则（旺旺影视等）在 播放二次截取 中用 [替换:']>>组头...] 做分词，
+     *       原先标记既不剥离也不应用，end 标记带字面量 "[替换:...]" 永远匹配失败。</li>
      *   <li>null/空输入安全保护</li>
      * </ul>
      *
      * @param content 原始内容
-     * @param cutRule 截取规则（前缀&&后缀 或 规则1||规则2）
+     * @param cutRule 截取规则（前缀&&后缀 或 规则1||规则2，可带尾部后处理器标记）
      * @return 截取后的内容，失败返回空字符串
      */
     public static String applySecondCut(String content, String cutRule) {
         if (content == null || cutRule == null || cutRule.isEmpty()) return content != null ? content : "";
+
+        // 剥离尾部后处理器标记（[替换:...]/[包含:...]/[不包含:...]），截取只作用于干净规则
+        String marks = "";
+        int markIdx = firstProcMarkIndex(cutRule);
+        if (markIdx >= 0) {
+            marks = cutRule.substring(markIdx);
+            cutRule = cutRule.substring(0, markIdx);
+        }
 
         // 备用选择器处理（|| 分隔，逐个尝试返回首个非空结果）
         if (cutRule.contains("||")) {
             String[] selectors = cutRule.split(OR_SEPARATOR);
             for (String selector : selectors) {
                 String result = doSecondCut(content, selector.trim());
-                if (result != null && !result.isEmpty()) return result;
+                if (result != null && !result.isEmpty()) return applyPostProcessors(result + marks);
             }
             return "";
         }
 
-        return doSecondCut(content, cutRule);
+        String result = doSecondCut(content, cutRule);
+        // 标记拼接在结果之后统一处理：applyPostProcessors 只对标记之前的正文生效
+        return (result == null || marks.isEmpty()) ? result : applyPostProcessors(result + marks);
+    }
+
+    /** 首个后处理器标记（[替换:/[包含:/[不包含:] 的位置，无则返回 -1 */
+    private static int firstProcMarkIndex(String rule) {
+        int idx = rule.indexOf("[替换:");
+        int a = rule.indexOf("[包含:");
+        if (a >= 0 && (idx < 0 || a < idx)) idx = a;
+        int b = rule.indexOf("[不包含:");
+        if (b >= 0 && (idx < 0 || b < idx)) idx = b;
+        return idx;
+    }
+
+    /** 按 # 切分替换组，\# 视为字面量 #（转义） */
+    private static String[] splitReplacePairs(String value) {
+        return value.split("(?<!\\\\)#");
+    }
+
+    /** 还原 \# 转义为字面量 # */
+    private static String unescapeSep(String s) {
+        return s.replace("\\#", "#");
     }
 
     /**
@@ -103,22 +137,50 @@ public class StringCutRule {
         String end = cutRule.substring(idx + CUT_SEPARATOR.length()).trim();
 
         // 空前缀匹配整个内容开头，空后缀匹配到内容末尾
-        int startPos = start.isEmpty() ? 0 : content.indexOf(start);
-        if (startPos < 0) return "";  // 前缀未找到
-        startPos += start.length();
+        int[] startPos = start.isEmpty() ? new int[]{0, 0} : findWithWildcard(content, start, 0);
+        if (startPos == null) return "";  // 前缀未找到
+        int afterStart = startPos[1];
 
         if (end.isEmpty()) {
             // 空后缀：返回从 startPos 到末尾的全部内容
-            return content.substring(startPos);
+            return content.substring(afterStart);
         }
 
-        int endPos = content.indexOf(end, startPos);
-        if (endPos < 0) {
+        int[] endPos = findWithWildcard(content, end, afterStart);
+        if (endPos == null) {
             // 后缀未找到：返回前缀之后的全部内容（贪婪模式）
-            return content.substring(startPos);
+            return content.substring(afterStart);
         }
 
-        return content.substring(startPos, endPos);
+        return content.substring(afterStart, endPos[0]);
+    }
+
+    /**
+     * 字面量查找，支持把 '*' 当作"任意文本"（非贪婪）：
+     * 真实规则常用形态如 分类标题 "subs\"href=\"/vodlist/*.html\">&&</a>"、
+     * 简介 "<p>简*介：&&</p>"，'*' 用于跳过不确定的中间字符。
+     *
+     * @return int[2]{匹配起始位置, 匹配结束位置（末段之后）}；未命中返回 null
+     */
+    public static int[] findWithWildcard(String content, String pattern, int from) {
+        if (content == null || pattern == null || pattern.isEmpty()) return null;
+        int star = pattern.indexOf('*');
+        if (star < 0) {
+            int i = content.indexOf(pattern, from);
+            return i < 0 ? null : new int[]{i, i + pattern.length()};
+        }
+        // 按 '*' 切段，顺序查找各段；indexOf 取最早命中即非贪婪语义
+        String[] segs = pattern.split("\\*", -1);
+        int pos = from;
+        int matchStart = -1;
+        for (String seg : segs) {
+            if (seg.isEmpty()) continue;
+            int i = content.indexOf(seg, pos);
+            if (i < 0) return null;
+            if (matchStart < 0) matchStart = i;
+            pos = i + seg.length();
+        }
+        return new int[]{matchStart, pos};
     }
 
     // ==================== 后处理器 ====================
@@ -152,12 +214,13 @@ public class StringCutRule {
             String value = m.group(2);
 
             if (REPLACE_TAG.equals(type)) {
-                // 替换: a>>b，可多组 a>>b#x>>y
-                for (String pair : value.split("#")) {
+                // 替换: a>>b，可多组 a>>b#x>>y；`\#` 为转义的字面量 #（真实规则
+                // 旺旺影视 [替换:...] 用 # 分隔多组、\# 表示内容中的 # 字符本身）
+                for (String pair : splitReplacePairs(value)) {
                     int sep = pair.indexOf(">>");
                     if (sep <= 0) continue;
-                    String from = pair.substring(0, sep);
-                    String to = pair.substring(sep + 2);
+                    String from = unescapeSep(pair.substring(0, sep));
+                    String to = unescapeSep(pair.substring(sep + 2));
                     if (from.isEmpty()) continue;
                     int idx = text.indexOf(from);
                     while (idx >= 0) {
