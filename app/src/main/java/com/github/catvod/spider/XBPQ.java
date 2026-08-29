@@ -1610,8 +1610,8 @@ public class XBPQ extends Spider {
         for (String[] pair : flatListFields) {
             String value = getRuleVal(pair[0]);
             if (!value.isEmpty() && !list.has(pair[1])) {
-                JSONArray lookback = stringCutToLookback(applyOrSelector(value));
-                if (lookback != null) list.put(pair[1], lookback);
+                JSONArray pairArr = stringCutPair(value);
+                if (pairArr != null) list.put(pair[1], pairArr);
             }
         }
 
@@ -1621,8 +1621,8 @@ public class XBPQ extends Spider {
             for (String[] pair : flatListFields) {
                 String value = getRuleVal(pair[0].replace("list_", "search_"));
                 if (!value.isEmpty() && !search.has(pair[1])) {
-                    JSONArray lookback = stringCutToLookback(applyOrSelector(value));
-                    if (lookback != null) search.put(pair[1], lookback);
+                    JSONArray pairArr = stringCutPair(value);
+                    if (pairArr != null) search.put(pair[1], pairArr);
                 }
             }
         }
@@ -1632,11 +1632,35 @@ public class XBPQ extends Spider {
      * 应用所有字符串截取规则
      */
     private void applyAllStringCutRules(JSONObject list) throws JSONException {
-        applyStringCutRules(list, "list_array");
+        // 数组规则必须存入 list.vod：extractVideoList 经 getLookbackArray 取节点级数组规则，
+        // 且依赖「5 元素数组唯一属于数组规则」的约定（字段规则为 2 元素，见 stringCutPair）。
+        // 旧实现存为 list.list，键序不定时 getLookbackArray 会误选字段数组，列表解析静默为空
+        if (list != null && !list.has("vod")) {
+            String listArray = getRuleVal("list_array");
+            if (!listArray.isEmpty()) {
+                JSONArray lookback = stringCutToLookback(applyOrSelector(listArray));
+                if (lookback != null) list.put("vod", lookback);
+            }
+        }
         applyStringCutRules(rule.optJSONObject("search"), "search_array");
         applyStringCutRules(rule.optJSONObject("playlist"), "play_array");
         applyStringCutRules(rule.optJSONObject("playlist"), "from_array");
         applyStringCutRules(rule.optJSONObject("detail"), "detail_array");
+    }
+
+    /**
+     * 字段规则转 2 元素数组 [前缀, 后缀]：仅供 findSubString 消费，
+     * 不带回看层级——避免与数组规则在 getLookbackArray 中竞争
+     */
+    protected JSONArray stringCutPair(String rule) {
+        if (rule == null || rule.isEmpty()) return null;
+        String cutRule = applyPostProcessors(applyOrSelector(rule));
+        if (!cutRule.contains("&&")) return null;
+        String[] parts = cutRule.split("&&", 2);
+        JSONArray arr = new JSONArray();
+        arr.put(parts[0].trim());
+        arr.put(parts.length > 1 ? parts[1].trim() : "");
+        return arr;
     }
 
     /**
@@ -1648,22 +1672,22 @@ public class XBPQ extends Spider {
         // url_url / url_array → vod_play_url
         String urlUrl = getRuleVal("url_url");
         if (!urlUrl.isEmpty() && !playlist.has("vod_play_url")) {
-            JSONArray lookback = stringCutToLookback(applyOrSelector(urlUrl));
-            if (lookback != null) playlist.put("vod_play_url", lookback);
+            JSONArray pairArr = stringCutPair(urlUrl);
+            if (pairArr != null) playlist.put("vod_play_url", pairArr);
         }
         if (!playlist.has("vod_play_url")) {
             String urlArray = getRuleVal("url_array");
             if (!urlArray.isEmpty()) {
-                JSONArray lookback = stringCutToLookback(applyOrSelector(urlArray));
-                if (lookback != null) playlist.put("vod_play_url", lookback);
+                JSONArray pairArr = stringCutPair(urlArray);
+                if (pairArr != null) playlist.put("vod_play_url", pairArr);
             }
         }
 
         // url_title → vod_play_url_title
         String urlTitle = getRuleVal("url_title");
         if (!urlTitle.isEmpty() && !playlist.has("vod_play_url_title")) {
-            JSONArray lookback = stringCutToLookback(applyOrSelector(urlTitle));
-            if (lookback != null) playlist.put("vod_play_url_title", lookback);
+            JSONArray pairArr = stringCutPair(urlTitle);
+            if (pairArr != null) playlist.put("vod_play_url_title", pairArr);
         }
     }
 
@@ -1694,8 +1718,8 @@ public class XBPQ extends Spider {
                 SpiderDebug.log("XBPQ 详情字段 " + pair[0] + " 未包含 && 截取语法，已忽略");
                 continue;
             }
-            JSONArray lookback = stringCutToLookback(applyOrSelector(value));
-            if (lookback != null) detail.put(pair[1], lookback);
+            JSONArray pairArr = stringCutPair(value);
+            if (pairArr != null) detail.put(pair[1], pairArr);
         }
     }
 
@@ -2674,12 +2698,12 @@ public class XBPQ extends Spider {
             }
             // 内置UA简写支持
             String normalized = headerStr.trim();
-            if ("手机".equals(normalized)) {
+            if ("手机".equals(normalized) || "MOBILE_UA".equals(normalized)) {
                 JSONObject hdr = new JSONObject();
                 hdr.put("User-Agent", UA_MOBILE);
                 return hdr;
             }
-            if ("电脑".equals(normalized)) {
+            if ("电脑".equals(normalized) || "PC_UA".equals(normalized)) {
                 JSONObject hdr = new JSONObject();
                 hdr.put("User-Agent", UA_PC);
                 return hdr;
@@ -4900,7 +4924,9 @@ public class XBPQ extends Spider {
             ctx.nodeString = guessDetailContentRegion(body);
         }
 
-        if (ctx.nodeString != null && ctx.nodeString.length() != content.length()) {
+        // 猜测失败（空串）时保留完整页面作为区域——旧判断把空串也当成有效区域，
+        // 导致详情字段全部截空
+        if (ctx.nodeString != null && !ctx.nodeString.isEmpty() && ctx.nodeString.length() != content.length()) {
             ctx.content = ctx.nodeString;
             ctx.startPos = 0;
         }
@@ -5849,12 +5875,13 @@ public class XBPQ extends Spider {
                 content = applySecondCut(content, applyOrSelector(searchTwice));
             }
 
-            // 搜索模式1：直接返回
-            if ("1".equals(getRuleVal("search_mode", "0"))) return content;
-
-            // 尝试JSON解析
-            String jsonResult = parseSearchResult(content);
-            if (jsonResult != null && !jsonResult.isEmpty()) return jsonResult;
+            // 模式0：优先 JSON 解析；模式1：优先网页截取（互为兜底）。
+            // 旧实现模式1 直接 return 原始 HTML，导致 mode-1 规则的搜索整体失效
+            boolean htmlFirst = "1".equals(getRuleVal("search_mode", "0"));
+            if (!htmlFirst) {
+                String jsonResult = parseSearchResult(content);
+                if (jsonResult != null && !jsonResult.isEmpty()) return jsonResult;
+            }
 
             // 继承 list 的 vod_id 规则
             inheritVodIdRuleIfNeeded(search);
@@ -5872,7 +5899,20 @@ public class XBPQ extends Spider {
             }
 
             // HTML 解析
-            return parseHtmlSearchResults(content, search, url);
+            String htmlResult = parseHtmlSearchResults(content, search, url);
+
+            // 模式1 网页解析无结果时，按文档语义回退 JSON 解析
+            if (htmlFirst) {
+                try {
+                    JSONArray arr = new JSONObject(htmlResult).optJSONArray("list");
+                    if (arr == null || arr.length() == 0) {
+                        String jsonResult = parseSearchResult(content);
+                        if (jsonResult != null && !jsonResult.isEmpty()) return jsonResult;
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+            return htmlResult;
         } catch (Exception e) {
             SpiderDebug.log(e);
         }
@@ -6916,7 +6956,7 @@ public class XBPQ extends Spider {
             if (!rule.has("header")) {
                 rule.put("header", new JSONObject());
             }
-            JSONObject hdr = rule.getJSONObject("header");
+            JSONObject hdr = headerObject();
             String existingCookie = hdr.optString("cookie", "");
             String merged = SliderVerifyUtils.mergeCookies(existingCookie, verifyCookie);
             hdr.put("cookie", merged);
@@ -6958,14 +6998,27 @@ public class XBPQ extends Spider {
             }
 
             if (merged.length() > 0) {
-                if (!rule.has("header")) rule.put("header", new JSONObject());
-                String existing = rule.getJSONObject("header").optString("cookie", "");
+                JSONObject hdr = headerObject();
+                String existing = hdr.optString("cookie", "");
                 String result = SliderVerifyUtils.mergeCookies(existing, merged.toString());
-                rule.getJSONObject("header").put("cookie", result);
+                hdr.put("cookie", result);
             }
         } catch (Exception e) {
             SpiderDebug.log(e);
         }
+    }
+
+    /**
+     * 取可写的 rule.header 对象：header 配置可能是字符串（简写UA / Key:Value 复合），
+     * 直接 getJSONObject 会抛「not a JSONObject」导致 Cookie 附加静默失败——
+     * 统一解析成 JSONObject 后写回
+     */
+    private JSONObject headerObject() throws JSONException {
+        Object obj = rule.opt("header");
+        if (obj instanceof JSONObject) return (JSONObject) obj;
+        JSONObject hdr = parseHeader(obj == null ? "" : obj.toString());
+        rule.put("header", hdr);
+        return hdr;
     }
 
     /**
