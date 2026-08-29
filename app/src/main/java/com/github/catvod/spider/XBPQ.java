@@ -1179,6 +1179,11 @@ public class XBPQ extends Spider {
      */
     protected JSONObject convertChineseKeys(JSONObject json) {
         try {
+            // 转换前的原始键集合：中文键与英文键同时存在时，中文键值优先（见 使用说明 注意事项）
+            Set<String> originalKeys = new HashSet<>();
+            Iterator<String> originIt = json.keys();
+            while (originIt.hasNext()) originalKeys.add(originIt.next());
+
             // 收集要重命名的键（避免边遍历边修改）
             List<String> toRename = new ArrayList<>();
             Iterator<String> keys = json.keys();
@@ -1194,8 +1199,11 @@ public class XBPQ extends Spider {
                 Object val = json.get(key);
                 json.remove(key);
                 // 防覆盖：多个中文键别名映射到同一英文键时（如「搜索后缀」「搜索链接后缀」→search_suffix）。
-                // org.json 键序不确定，不能简单「保留首个」：已有值为空占位（空串/空/&&）而新值有效时用新值补位
-                if (!json.has(enKey) || (isEmptyRuleVal(json.opt(enKey)) && !isEmptyRuleVal(val))) {
+                // org.json 键序不确定，不能简单「保留首个」：已有值为空占位（空串/空/&&）而新值有效时用新值补位；
+                // 中文键与原始英文键同时配置且中文值有效时，中文键优先（对齐使用说明约定）
+                if (!json.has(enKey)
+                        || (isEmptyRuleVal(json.opt(enKey)) && !isEmptyRuleVal(val))
+                        || (originalKeys.contains(enKey) && !isEmptyRuleVal(val))) {
                     json.put(enKey, val);
                 }
             }
@@ -1665,7 +1673,7 @@ public class XBPQ extends Spider {
      * 供 extractDetailFields 的 findSubString 消费。此前这些中文键只有映射、
      * 无任何消费点，配置后在真机上静默失效。
      */
-    private void processDetailFlatFields() {
+    private void processDetailFlatFields() throws JSONException {
         JSONObject detail = rule.optJSONObject("detail");
         if (detail == null) return;
         String[][] flatDetailFields = {
