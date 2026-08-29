@@ -2835,18 +2835,25 @@ public class XBPQ extends Spider {
             for (String[] p : procs) {
                 switch (p[0]) {
                     case "替换":
-                        String[] kv = p[1].split(">>");
-                        if (kv.length == 2 && !kv[0].trim().isEmpty()) {
+                        // 多对写法以 # 分隔（[替换:a>>b#c>>d]），单对为直写（[替换:a>>b]）；
+                        // 旧实现只认单对，多对规则静默失效
+                        for (String pair : p[1].split("#")) {
+                            String[] kv = pair.split(">>", 2);
+                            if (kv.length != 2 || kv[0].trim().isEmpty()) continue;
                             String oldStr = kv[0].trim();
                             String newStr = kv[1].trim();
                             if (oldStr.contains("*")) {
                                 // 兔爷系兼容：old 含 * 时按通配处理（* 匹配任意最短串），
-                                // 如 [替换:@*@>>] 清理资源站注入的 @广告词@；new 原样输出不做正则展开
+                                // 如 [替换:@*@>>] 清理资源站注入的 @广告词@；尾通配（old 以 * 结尾）
+                                // 匹配到串尾，如 [替换:@*>>] 去掉无闭合的尾部注入；new 原样输出不做正则展开
                                 String[] segs = oldStr.split("\\*", -1);
                                 StringBuilder rx = new StringBuilder();
                                 for (int si = 0; si < segs.length; si++) {
-                                    if (si > 0) rx.append(".*?");
                                     if (!segs[si].isEmpty()) rx.append(Pattern.quote(segs[si]));
+                                    if (si < segs.length - 1) {
+                                        boolean trailingWildcard = (si == segs.length - 2) && segs[segs.length - 1].isEmpty();
+                                        rx.append(trailingWildcard ? ".*" : ".*?");
+                                    }
                                 }
                                 result = result.replaceAll(rx.toString(), Matcher.quoteReplacement(newStr));
                             } else {
@@ -6516,7 +6523,7 @@ public class XBPQ extends Spider {
             for (int i = 0; i < MAX_ANTI_CRAWLER_RETRY; i++) {
                 Thread.sleep(REFRESH_WAIT_DELAY_MS);
                 Map<String, String> headers = getHeaders(webUrl);
-                if (customHeaders != null && !customHeaders.isEmpty()) {
+                if (customHeaders != null && customHeaders.length() > 0) {
                     headers = mergeHeaders(headers, customHeaders);
                 }
                 okhttp3.Response resp = OkHttp.newCall(webUrl, headers);
