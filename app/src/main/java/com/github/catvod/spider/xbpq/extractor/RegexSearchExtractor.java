@@ -40,9 +40,13 @@ public class RegexSearchExtractor implements ExtractorFactory.SearchExtractor {
                 content = StringCutRule.applySecondCut(content, twiceRule);
             }
 
+            // 未配置字段的默认规则（与写法说明一致）：alt 兜底覆盖 vodlist_thumb 型站点
             String nameRule = config.optString("search_name", "");
+            if (nameRule.isEmpty()) nameRule = "title=\"&&\"||alt=\"&&\"";
             String idRule = config.optString("search_id", "");
+            if (idRule.isEmpty()) idRule = "href=\"&&\"";
             String picRule = config.optString("search_pic", "");
+            if (picRule.isEmpty()) picRule = "src=\"&&\"||data-original=\"&&\"";
             String remarksRule = config.optString("search_remarks", "");
             String prefix = config.optString("search_prefix", "");
             String suffix = config.optString("search_suffix", "");

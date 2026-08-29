@@ -40,9 +40,15 @@ public class RegexVideoListExtractor implements ExtractorFactory.VideoListExtrac
                 content = StringCutRule.applySecondCut(content, twiceRule);
             }
 
+            // 未配置字段的默认规则（与写法说明一致）：skr2 等规则不配 标题/图片，
+            // 依赖默认规则在条目内提取。alt 兜底覆盖 vodlist_thumb 型站点
+            //（实测 skr2 列表项无 title 属性，标题在 alt= 上）
             String nameRule = config.optString("list_name", "");
+            if (nameRule.isEmpty()) nameRule = "title=\"&&\"||alt=\"&&\"";
             String idRule = config.optString("list_id", "");
+            if (idRule.isEmpty()) idRule = "href=\"&&\"";
             String picRule = config.optString("list_pic", "");
+            if (picRule.isEmpty()) picRule = "src=\"&&\"||data-original=\"&&\"";
             String remarksRule = config.optString("list_remarks", "");
             String prefix = config.optString("list_prefix", "");
             String suffix = config.optString("list_suffix", "");

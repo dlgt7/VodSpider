@@ -34,9 +34,13 @@ public class CssVideoListExtractor implements ExtractorFactory.VideoListExtracto
                 return videos;
             }
 
+            // 未配置字段的默认规则（与正则提取器一致，alt 兜底 vodlist_thumb 型站点）
             String nameRule = config.optString("list_name", "");
+            if (nameRule.isEmpty()) nameRule = "title=\"&&\"||alt=\"&&\"";
             String idRule = config.optString("list_id", "");
+            if (idRule.isEmpty()) idRule = "href=\"&&\"";
             String picRule = config.optString("list_pic", "");
+            if (picRule.isEmpty()) picRule = "src=\"&&\"||data-original=\"&&\"";
             String remarksRule = config.optString("list_remarks", "");
             String prefix = config.optString("list_prefix", "");
             String suffix = config.optString("list_suffix", "");

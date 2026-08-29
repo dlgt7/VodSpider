@@ -152,6 +152,8 @@ public class CssPlayListExtractor implements ExtractorFactory.PlayListExtractor 
 
         String titleRule = config.optString("url_title", "");
         String urlRule = config.optString("url_url", "");
+        // 播放链接未配置时默认 href="&&"（写法说明默认值，与正则提取器一致）
+        if (urlRule.isEmpty()) urlRule = "href=\"&&\"";
         String prefix = config.optString("play_prefix", "");
         String suffix = config.optString("play_suffix", "");
 

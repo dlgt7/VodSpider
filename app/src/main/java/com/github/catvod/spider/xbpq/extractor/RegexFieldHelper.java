@@ -151,13 +151,26 @@ public final class RegexFieldHelper {
         return extractCssSingle(scope, rule);
     }
 
-    /** String 版单段提取：后处理器前置 → CSS / && 截取 / 正则 三分流 */
+    /** String 版单段提取：后处理器前置 → "+"前缀拼接 → CSS / && 截取 / 正则 三分流 */
     private static String extractCssSingle(String scope, String rule) {
         // 从规则中提取并剥离后处理器（[替换]、[不含]、[序号]、分割）。
         // 修复：原先该步骤在 CSS 分支之后，p:xxx->text[含序号:3] 的标记会混入
         // 选择器使其非法（真实规则大量使用此形态）。
         PostProcess pp = extractPostProcessors(rule);
         String rawRule = pp.rule;
+
+        // "+" 前缀拼接（XBPQ 常用写法）：固定文字 + 截取规则，
+        // 如 线路标题 "分享者在线+</i>&nbsp;&&</a>"、副标题 "分享者在线+<span ...>&&</span>"、
+        // skr2 的 "分享者在线+>&nbsp;线路</a>"。截取为空时回退为固定文字。
+        String[] plus = splitPlusPrefix(rawRule);
+        if (plus != null) {
+            String rest = plus[1].trim();
+            if (rest.isEmpty()) return applyPostProcessors(plus[0], pp);
+            // 尾部剥好的后处理器作用于拼接结果整体（替换/包含等语义不变）
+            String val = extractCssSingle(scope, rest);
+            if (val.isEmpty()) return applyPostProcessors(plus[0], pp);
+            return applyPostProcessors(plus[0] + val, pp);
+        }
 
         // CSS 提取：[含序号:n]/[序号:n] 映射为第 n 个匹配元素（1-based）
         if (CssRule.isCssRule(rawRule)) {
@@ -175,6 +188,26 @@ public final class RegexFieldHelper {
         // 正则提取
         String val = regexExtract(scope, rawRule);
         return applyPostProcessors(val, pp);
+    }
+
+    /**
+     * 解析 "固定前缀+截取规则" 形态。
+     * <p>仅当 '+' 出现在规则中且前缀部分为纯文字（不含正则元字符/&amp;、不以 p:/css: 开头）时生效，
+     * 避免误拆正则量词（如 <code>[^"]+</code>）、含 &amp;&amp; 的截取规则与 CSS 简写拼接。</p>
+     *
+     * @return String[2]{前缀, 剩余规则}；不符合形态返回 null
+     */
+    private static String[] splitPlusPrefix(String rule) {
+        if (rule == null) return null;
+        int plus = rule.indexOf('+');
+        if (plus <= 0) return null;
+        String prefix = rule.substring(0, plus);
+        if (prefix.isEmpty()) return null;
+        if (prefix.startsWith("p:") || prefix.startsWith("css:")) return null;
+        for (int i = 0; i < prefix.length(); i++) {
+            if ("\\^$.|?*+()[]{}&".indexOf(prefix.charAt(i)) >= 0) return null;
+        }
+        return new String[]{prefix, rule.substring(plus + 1)};
     }
 
     /**
@@ -370,13 +403,14 @@ public final class RegexFieldHelper {
             return "";
         }
 
-        // [替换:a>>b#x>>y]：多个替换（"空" 为删除语义，见真实规则 [替换:导演：>>空]）
+        // [替换:a>>b#x>>y]：多个替换（"空" 为删除语义，见真实规则 [替换:导演：>>空]）；
+        // `\#` 为转义的字面量 #（旺旺影视分词规则使用）
         if (!pp.replacements.isEmpty()) {
-            for (String pair : pp.replacements.split("#")) {
+            for (String pair : pp.replacements.split("(?<!\\\\)#")) {
                 String[] parts = pair.split(">>", 2);
                 if (parts.length == 2) {
-                    String from = parts[0].trim();
-                    String to = parts[1].trim();
+                    String from = parts[0].trim().replace("\\#", "#");
+                    String to = parts[1].trim().replace("\\#", "#");
                     if ("空".equals(to)) to = "";
                     if (!from.isEmpty()) {
                         result = result.replace(from, to);
@@ -467,11 +501,14 @@ public final class RegexFieldHelper {
     /**
      * 按数组规则循环切分出所有列表项。
      * <p>
-     * 支持两种规则格式：
+     * 支持的规则格式：
      * <ol>
-     *   <li>{@code 前缀&&后缀} 前后缀截取格式：以"前缀"起始、"后缀"结束的文本块逐段提取（含交叉匹配）</li>
+     *   <li>{@code 前缀&&后缀} 前后缀截取格式：以"前缀"起始、"后缀"结束的文本块逐段提取（含交叉匹配），
+     *       前后缀支持 '*' 通配任意文本</li>
      *   <li>普通正则格式：直接编译为正则，捕获组1优先，无捕获组则 group(0)</li>
      *   <li>捕获组引用格式：{@code $1}、{@code $2} 等引用正则捕获组（当 list_array 含捕获组时使用）</li>
+     *   <li>数组级过滤标记：{@code [包含:关键词]}（仅保留命中项）与 {@code [不包含:关键词]}（剔除命中项），
+     *       如 foxjun 的 {@code <a&&/a>[包含:magnet]} —— 只保留含磁力链接的条目</li>
      * </ol>
      *
      * @return 列表项集合，规则非法返回空
@@ -480,20 +517,26 @@ public final class RegexFieldHelper {
         List<String> items = new ArrayList<>();
         if (content == null || content.isEmpty() || arrayRule == null || arrayRule.isEmpty()) return items;
 
+        // 数组级过滤标记剥离（[包含:x] / [不包含:x]），截取只作用于干净规则
+        List<String> includeKeys = new ArrayList<>();
+        List<String> excludeKeys = new ArrayList<>();
+        String cleaned = stripArrayFilters(arrayRule, includeKeys, excludeKeys);
+        if (cleaned.isEmpty()) return items;
+
         // 优先尝试 && 前后缀截取格式（兼容 XBPQ 常见写法如 <li class="x"&&</li>）
-        if (arrayRule.contains("&&")) {
-            items = splitByCutRule(content, arrayRule);
-            if (!items.isEmpty()) return items;
+        if (cleaned.contains("&&")) {
+            items = splitByCutRule(content, cleaned);
+            if (!items.isEmpty()) return filterArrayItems(items, includeKeys, excludeKeys);
         }
 
         // 检查是否为捕获组引用格式（$1, $2, ...）
-        if (arrayRule.matches("\\$\\d+(,\\s*\\$\\d+)*")) {
+        if (cleaned.matches("\\$\\d+(,\\s*\\$\\d+)*")) {
             // 这是字段规则，不是数组规则，回退到正则匹配
         } else {
             // 尝试作为正则匹配（支持捕获组）
             // 修复：改用 PATTERN_CACHE 缓存预编译 Pattern（原实现每次调用都 compile）
             try {
-                Matcher m = getOrCreatePattern(arrayRule).matcher(content);
+                Matcher m = getOrCreatePattern(cleaned).matcher(content);
                 while (m.find()) {
                     // 尝试使用捕获组（group(1) 优先）
                     if (m.groupCount() >= 1) {
@@ -511,7 +554,56 @@ public final class RegexFieldHelper {
                 // 非法正则
             }
         }
-        return items;
+        return filterArrayItems(items, includeKeys, excludeKeys);
+    }
+
+    /** 剥离数组级过滤标记，收集 [包含:x] 与 [不包含:x] 关键词 */
+    private static String stripArrayFilters(String rule, List<String> includeKeys, List<String> excludeKeys) {
+        String out = rule;
+        int guard = 0;
+        while (guard++ < 10) {
+            int i = out.indexOf("[包含:");
+            if (i >= 0) {
+                int e = out.indexOf("]", i);
+                if (e > i) {
+                    String key = out.substring(i + 4, e).trim();
+                    if (!key.isEmpty()) includeKeys.add(key);
+                    out = out.substring(0, i) + out.substring(e + 1);
+                    continue;
+                }
+            }
+            int j = out.indexOf("[不包含:");
+            if (j >= 0) {
+                int e = out.indexOf("]", j);
+                if (e > j) {
+                    String key = out.substring(j + 5, e).trim();
+                    if (!key.isEmpty()) excludeKeys.add(key);
+                    out = out.substring(0, j) + out.substring(e + 1);
+                    continue;
+                }
+            }
+            break;
+        }
+        return out.trim();
+    }
+
+    /** 对切分出的数组项应用 [包含:]/[不包含:] 过滤（多关键词为 AND 关系） */
+    private static List<String> filterArrayItems(List<String> items, List<String> includeKeys, List<String> excludeKeys) {
+        if (items.isEmpty() || (includeKeys.isEmpty() && excludeKeys.isEmpty())) return items;
+        List<String> kept = new ArrayList<>();
+        for (String item : items) {
+            boolean ok = true;
+            for (String key : includeKeys) {
+                if (!item.contains(key)) { ok = false; break; }
+            }
+            if (ok) {
+                for (String key : excludeKeys) {
+                    if (item.contains(key)) { ok = false; break; }
+                }
+            }
+            if (ok) kept.add(item);
+        }
+        return kept;
     }
 
     /**
@@ -533,17 +625,16 @@ public final class RegexFieldHelper {
             // 无后缀格式：只截取前缀后的所有内容（直到下一个前缀）
             int pos = 0;
             while (pos <= content.length()) {
-                int startIdx = content.indexOf(start, pos);
-                if (startIdx < 0) break;
-                int afterStart = startIdx + start.length();
-                // 找下一个前缀的位置作为结束
-                int nextStart = content.indexOf(start, afterStart);
-                if (nextStart < 0) {
+                int[] hit = StringCutRule.findWithWildcard(content, start, pos);
+                if (hit == null) break;
+                int afterStart = hit[1];
+                int[] next = StringCutRule.findWithWildcard(content, start, afterStart);
+                if (next == null) {
                     items.add(content.substring(afterStart));
                     break;
                 } else {
-                    items.add(content.substring(afterStart, nextStart));
-                    pos = nextStart;
+                    items.add(content.substring(afterStart, next[0]));
+                    pos = next[0];
                 }
             }
             return items;
@@ -551,14 +642,14 @@ public final class RegexFieldHelper {
 
         int pos = 0;
         while (pos <= content.length()) {
-            int startIdx = content.indexOf(start, pos);
-            if (startIdx < 0) break;
-            int afterStart = startIdx + start.length();
+            int[] hit = StringCutRule.findWithWildcard(content, start, pos);
+            if (hit == null) break;
+            int afterStart = hit[1];
             // 找最近的闭合后缀（非贪婪），避免跨块匹配
-            int endIdx = content.indexOf(end, afterStart);
-            if (endIdx < 0) break;
-            items.add(content.substring(afterStart, endIdx));
-            pos = endIdx + end.length();
+            int[] endHit = StringCutRule.findWithWildcard(content, end, afterStart);
+            if (endHit == null) break;
+            items.add(content.substring(afterStart, endHit[0]));
+            pos = endHit[1];
         }
         return items;
     }
@@ -599,58 +690,49 @@ public final class RegexFieldHelper {
             int pairs = parts.size() / 2;
             String current = scope;
             for (int i = 0; i < pairs; i++) {
-                String start = parts.get(i * 2).trim();
-                String end = parts.get(i * 2 + 1).trim();
-                if (start.isEmpty() && end.isEmpty()) {
-                    // 两端都为空，跳过
-                    continue;
-                }
-                if (start.isEmpty()) {
-                    // 空起始：从开头截取到 end
-                    int endIdx = current.indexOf(end);
-                    if (endIdx < 0) return null;
-                    current = current.substring(0, endIdx);
-                } else if (end.isEmpty()) {
-                    // 空后缀：截到末尾
-                    int startIdx = current.indexOf(start);
-                    if (startIdx < 0) return null;
-                    current = current.substring(startIdx + start.length());
-                } else {
-                    int startIdx = current.indexOf(start);
-                    if (startIdx < 0) return null;
-                    int afterStart = startIdx + start.length();
-                    int endIdx = current.indexOf(end, afterStart);
-                    if (endIdx < 0) return null;
-                    current = current.substring(afterStart, endIdx);
-                }
+                // 仅最后一对允许"后缀未命中时取到末尾"（截到末尾语义的延伸），非末对保持严格失败
+                current = cutOnce(current, parts.get(i * 2).trim(), parts.get(i * 2 + 1).trim(), i == pairs - 1);
+                if (current == null) return null;
             }
             return current.isEmpty() ? null : current;
         }
 
         // 标准模式：交替查找 start/end（空部分视为"不限"）
         String current = scope;
+        int lastPair = (parts.size() - 2) / 2 * 2;
         for (int i = 0; i + 1 < parts.size(); i += 2) {
-            String start = parts.get(i).trim();
-            String end = parts.get(i + 1).trim();
-            if (start.isEmpty() && end.isEmpty()) continue;
-            if (start.isEmpty()) {
-                int endIdx = current.indexOf(end);
-                if (endIdx < 0) return null;
-                current = current.substring(0, endIdx);
-            } else if (end.isEmpty()) {
-                int startIdx = current.indexOf(start);
-                if (startIdx < 0) return null;
-                current = current.substring(startIdx + start.length());
-            } else {
-                int startIdx = current.indexOf(start);
-                if (startIdx < 0) return null;
-                int afterStart = startIdx + start.length();
-                int endIdx = current.indexOf(end, afterStart);
-                if (endIdx < 0) return null;
-                current = current.substring(afterStart, endIdx);
-            }
+            current = cutOnce(current, parts.get(i).trim(), parts.get(i + 1).trim(), i >= lastPair);
+            if (current == null) return null;
         }
         return current.isEmpty() ? null : current;
+    }
+
+    /**
+     * 单对 (start, end) 截取，start/end 支持 '*' 通配任意文本。
+     *
+     * @param greedyOnMissingEnd 后缀未命中时是否"贪婪"取到末尾（true 仅用于末对截取）
+     * @return 截取结果；前缀未命中返回 null
+     */
+    private static String cutOnce(String current, String start, String end, boolean greedyOnMissingEnd) {
+        if (start.isEmpty() && end.isEmpty()) return current;
+        if (start.isEmpty()) {
+            int[] endHit = StringCutRule.findWithWildcard(current, end, 0);
+            if (endHit == null) return null;
+            return current.substring(0, endHit[0]);
+        }
+        int[] startHit = StringCutRule.findWithWildcard(current, start, 0);
+        if (startHit == null) return null;
+        int afterStart = startHit[1];
+        if (end.isEmpty()) {
+            return current.substring(afterStart);
+        }
+        int[] endHit = StringCutRule.findWithWildcard(current, end, afterStart);
+        if (endHit == null) {
+            // 后缀未命中：末对截取贪婪取到末尾（与 StringCutRule.doSecondCut 语义一致），
+            // 非末对保持原语义返回 null 交由备用路径处理
+            return greedyOnMissingEnd ? current.substring(afterStart) : null;
+        }
+        return current.substring(afterStart, endHit[0]);
     }
 
     /**
