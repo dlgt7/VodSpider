@@ -177,10 +177,14 @@ public class XBPQ extends Spider {
     /** 分类 URL 已知花括号占位符白名单（仅这些未赋值时才被清除，其余 {xxx} 原样保留） */
     private static final Set<String> KNOWN_BRACE_KEYS = new HashSet<>(Arrays.asList(
             "cateId", "catePg", "cateIdEn", "class", "area", "by", "year", "lang", "letter", "page", "pg"));
-    /** 播放器对象 var player_xxx = {...} */
-    private static final Pattern P_PLAYER_OBJ = Pattern.compile("var player_\\w+\\s*=\\s*(\\{.+?\\});");
-    /** 播放器 url 字段提取 */
-    private static final Pattern P_PLAYER_URL = Pattern.compile("var player_\\w+\\s*=\\s*\\{[^}]*?\"url\"\\s*:\\s*\"([^\"]+)\"");
+    /**
+     * 播放器对象 var player_xxx = {...}
+     * 平衡花括号匹配（支持 vod_data 等两层嵌套），结尾分号可有可无——
+     * 旧写法 (\{.+?\}); 要求 "\};" 收尾，无分号站点（如热剧TV网）整段匹配失败
+     */
+    private static final Pattern P_PLAYER_OBJ = Pattern.compile("var player_\\w+\\s*=\\s*(\\{(?:[^{}]|\\{(?:[^{}]|\\{[^{}]*\\})*\\})*\\})");
+    /** 播放器 url 字段提取（[\s\S] 跨越嵌套对象，旧 [^}]*? 遇 vod_data 的 } 即断） */
+    private static final Pattern P_PLAYER_URL = Pattern.compile("var player_\\w+\\s*=\\s*\\{[\\s\\S]*?\"url\"\\s*:\\s*\"([^\"]+)\"");
     /** encrypt 标志提取 */
     private static final Pattern P_ENCRYPT = Pattern.compile("\"encrypt\"\\s*:\\s*(\\d+)");
     /** Unicode 转义 \\uXXXX 解码（convertUnicodeToChinese，外层分组 group(2)=十六进制） */
@@ -278,6 +282,13 @@ public class XBPQ extends Spider {
         CHINESE_KEY_MAP.put("播放标题", "url_title");
         CHINESE_KEY_MAP.put("播放链接", "url_url");
         CHINESE_KEY_MAP.put("跳转播放链接", "jump_url");
+        CHINESE_KEY_MAP.put("分析MacPlayer", "Anal_MacPlayer");
+        CHINESE_KEY_MAP.put("空播放兜底", "empty_play_url");
+        CHINESE_KEY_MAP.put("空播放线路名", "empty_play_from");
+        CHINESE_KEY_MAP.put("选集链接加前缀", "epiurl_prefix");
+        CHINESE_KEY_MAP.put("选集链接加后缀", "epiurl_suffix");
+        // 详情标题覆盖（&& 截取规则，注入 detail.vod_name，优先于列表标题回填）
+        CHINESE_KEY_MAP.put("影片名称", "detail_name");
         CHINESE_KEY_MAP.put("直接播放", "force_play");
         CHINESE_KEY_MAP.put("播放请求头", "play_header");
         CHINESE_KEY_MAP.put("嗅探词", "video_format");
@@ -1182,11 +1193,21 @@ public class XBPQ extends Spider {
                 String enKey = CHINESE_KEY_MAP.get(key);
                 Object val = json.get(key);
                 json.remove(key);
-                // 防覆盖：多个中文键别名映射到同一英文键时（如「搜索后缀」「搜索链接后缀」→search_suffix），
-                // 仅保留首个，避免后写入把先写入的有效值冲掉导致数据丢失
-                if (!json.has(enKey)) {
+                // 防覆盖：多个中文键别名映射到同一英文键时（如「搜索后缀」「搜索链接后缀」→search_suffix）。
+                // org.json 键序不确定，不能简单「保留首个」：已有值为空占位（空串/空/&&）而新值有效时用新值补位
+                if (!json.has(enKey) || (isEmptyRuleVal(json.opt(enKey)) && !isEmptyRuleVal(val))) {
                     json.put(enKey, val);
                 }
+            }
+            // 未映射中文键告警：文档宣称但未实现的键、或拼写错误都会走到这里，避免规则静默失效
+            List<String> unknownKeys = new ArrayList<>();
+            Iterator<String> allIt = json.keys();
+            while (allIt.hasNext()) {
+                String key = allIt.next();
+                if (!CHINESE_KEY_MAP.containsKey(key) && containsCjk(key)) unknownKeys.add(key);
+            }
+            if (!unknownKeys.isEmpty()) {
+                SpiderDebug.log("XBPQ 未识别的中文键(已按原样保留): " + TextUtils.join(", ", unknownKeys));
             }
             // 递归处理嵌套对象
             List<String> allKeys = new ArrayList<>();
@@ -1209,6 +1230,23 @@ public class XBPQ extends Spider {
             SpiderDebug.log(e);
         }
         return json;
+    }
+
+    /** 规则空占位值判断（与 getRuleVal 的「空」语义一致） */
+    private static boolean isEmptyRuleVal(Object val) {
+        if (!(val instanceof String)) return false;
+        String s = (String) val;
+        return s.isEmpty() || "空".equals(s) || "&&".equals(s);
+    }
+
+    /** 是否含中日韩统一表意文字（用于识别未映射的中文键） */
+    private static boolean containsCjk(String s) {
+        if (s == null) return false;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c >= 0x4E00 && c <= 0x9FFF) return true;
+        }
+        return false;
     }
 
     /**
@@ -1360,6 +1398,9 @@ public class XBPQ extends Spider {
 
         // 处理 playlist 扁平字段
         processPlaylistFlatFields();
+
+        // 处理详情扁平字段（影片名称/类型/年份/地区/状态/主演/导演/简介）
+        processDetailFlatFields();
 
         // 处理线路二次截取和多线字段
         processLineConfigs();
@@ -1514,11 +1555,14 @@ public class XBPQ extends Spider {
             JSONObject play = new JSONObject();
             JSONArray region = new JSONArray();
             region.put("var player_aaaa=");
-            region.put(0);
+            // 结束标记必须是字符串：数字等非字符串值经 getString() 变成字面量结束标记，
+            // 会把 player JSON 在第一个 "0" 字符处（如 "trysee":0）截断
+            region.put("</script>");
 
             JSONArray vodUrl = new JSONArray();
             vodUrl.put("\"url\":\"");
-            vodUrl.put("");
+            // 结束标记不能为空串：findSubString 对空后缀恒返回空串，直链永远取不到
+            vodUrl.put("\"");
 
             play.put("region", region);
             play.put("vod_url", vodUrl);
@@ -1612,6 +1656,38 @@ public class XBPQ extends Spider {
         if (!urlTitle.isEmpty() && !playlist.has("vod_play_url_title")) {
             JSONArray lookback = stringCutToLookback(applyOrSelector(urlTitle));
             if (lookback != null) playlist.put("vod_play_url_title", lookback);
+        }
+    }
+
+    /**
+     * 处理详情扁平字段：把 影片名称/类型/年份/地区/状态/主演/导演/简介 等
+     * 顶层 && 截取规则注入 detail 对象（vod_name/type_name/vod_year/...），
+     * 供 extractDetailFields 的 findSubString 消费。此前这些中文键只有映射、
+     * 无任何消费点，配置后在真机上静默失效。
+     */
+    private void processDetailFlatFields() {
+        JSONObject detail = rule.optJSONObject("detail");
+        if (detail == null) return;
+        String[][] flatDetailFields = {
+                {"detail_name", "vod_name"},
+                {"detail_type", "type_name"},
+                {"detail_year", "vod_year"},
+                {"detail_area", "vod_area"},
+                {"detail_remarks", "vod_remarks"},
+                {"detail_actor", "vod_actor"},
+                {"detail_director", "vod_director"},
+                {"detail_content", "vod_content"}
+        };
+        for (String[] pair : flatDetailFields) {
+            String value = getRuleVal(pair[0]);
+            // 详情字段依赖 前缀&&后缀 截取，非 && 写法无法构成规则数组，跳过并告警
+            if (value.isEmpty() || detail.has(pair[1])) continue;
+            if (!value.contains("&&")) {
+                SpiderDebug.log("XBPQ 详情字段 " + pair[0] + " 未包含 && 截取语法，已忽略");
+                continue;
+            }
+            JSONArray lookback = stringCutToLookback(applyOrSelector(value));
+            if (lookback != null) detail.put(pair[1], lookback);
         }
     }
 
@@ -3776,13 +3852,13 @@ public class XBPQ extends Spider {
                 cateUrl = cateUrl.substring(0, cateUrl.indexOf(";;")).trim();
             }
 
-            // 应用筛选参数
+            // 应用筛选参数（URLEncoder 的空格是 +，站点路由普遍期望 %20）
             if (filter && extend != null && !extend.isEmpty()) {
                 for (Iterator<String> it = extend.keySet().iterator(); it.hasNext();) {
                     String key = it.next();
                     String value = extend.get(key);
                     if (!value.isEmpty()) {
-                        cateUrl = cateUrl.replace("{" + key + "}", URLEncoder.encode(value));
+                        cateUrl = cateUrl.replace("{" + key + "}", URLEncoder.encode(value, "UTF-8").replace("+", "%20"));
                     }
                 }
             }
@@ -3919,6 +3995,10 @@ public class XBPQ extends Spider {
             pos = result.endPos;
             String vodId = result.vodId;
 
+            // 无链接的块（如首页页脚「友情链接」li、装饰元素）不构成片单，剔除，
+            // 否则会以猜测名称产出一条无法打开的脏条目
+            if (vodId.isEmpty()) continue;
+
             if (!seenIds.contains(vodId)) {
                 // 过滤词检查
                 if (shouldFilter(result.node, vodId, list)) continue;
@@ -3983,6 +4063,12 @@ public class XBPQ extends Spider {
         NodeExtractionResult result = new NodeExtractionResult();
         result.node = node;
         result.vodId = RuleUtils.findSubString(node, 0, list.optJSONArray("vod_id"));
+        // 与 CSS 模式（extractVideoListByCss）对齐：&& 模式同样套用 链接前缀/链接后缀
+        String listPrefix = getRuleVal("list_prefix");
+        String listSuffix = getRuleVal("list_suffix");
+        if (!result.vodId.isEmpty() && (!listPrefix.isEmpty() || !listSuffix.isEmpty())) {
+            result.vodId = listPrefix + result.vodId + listSuffix;
+        }
         result.endPos = blockPos + node.length();
         return result;
     }
@@ -4547,6 +4633,10 @@ public class XBPQ extends Spider {
             listPos = le + listEnd.length();
             blockCount++;
 
+            // 脚本噪声块：JS 里引用同名选择器（如 $(".hl-plays-list")）会切出横跨 </script> 的假块，
+            // 混入后面的真实选集造成重复线路；真实选集 UL 内不会出现 </script>
+            if (block.contains("</script")) continue;
+
             List<String> eps = extractEpisodes(block, hrefStart, hrefEnd, titleBounds, sort);
             if (!eps.isEmpty()) {
                 tmpPlayUrl.add(TextUtils.join("#", eps));
@@ -4989,7 +5079,28 @@ public class XBPQ extends Spider {
 
             // 获取播放URL列表
             List<String> vodPlayUrl = obtainPlayUrlList(content, playlist, vinfo);
-            List<String> vodPlayFrom = findVodPlayFrom(content, vodPlayUrl.size());
+            List<String> vodPlayFrom = findVodPlayFrom(content, vodPlayUrl == null ? 0 : vodPlayUrl.size());
+
+            // 选集链接加前缀/后缀：值可含 && 规则（对详情页源码截取）与 PG_URL 占位（=当前详情页地址）
+            String epiPrefix = resolveEpiUrlVal(getRuleVal("epiurl_prefix"), body, currentDetailUrl(vinfo));
+            String epiSuffix = resolveEpiUrlVal(getRuleVal("epiurl_suffix"), body, currentDetailUrl(vinfo));
+            if (!epiPrefix.isEmpty() || !epiSuffix.isEmpty()) {
+                vodPlayUrl = applyEpiUrlAdjust(vodPlayUrl, epiPrefix, epiSuffix);
+            }
+
+            // 空播放兜底：解析不出任何选集时补一条占位线路，避免详情页无播放入口
+            boolean noEpisodes = vodPlayUrl == null || vodPlayUrl.isEmpty()
+                    || (vodPlayUrl.size() == 1 && vodPlayUrl.get(0).trim().isEmpty());
+            String emptyPlayUrl = getRuleVal("empty_play_url");
+            if (noEpisodes && !emptyPlayUrl.isEmpty()) {
+                String lineName = getRuleVal("empty_play_from");
+                if (lineName.isEmpty()) lineName = "空播放";
+                vodPlayUrl = new ArrayList<>(1);
+                vodPlayUrl.add(emptyPlayUrl.contains("$") ? emptyPlayUrl : "第1集$" + emptyPlayUrl);
+                vodPlayFrom = new ArrayList<>(1);
+                vodPlayFrom.add(lineName);
+                SpiderDebug.log("空播放兜底：已补占位线路 " + lineName);
+            }
 
             // 排序线路
             reorderPlaySources(playlist, vodPlayUrl, vodPlayFrom);
@@ -5042,6 +5153,59 @@ public class XBPQ extends Spider {
             }
         }
         return vodPlayUrl;
+    }
+
+    /** 当前详情页地址（选集链接前缀/后缀的 PG_URL 占位用） */
+    private String currentDetailUrl(JSONObject vinfo) {
+        try {
+            return buildDetailUrl(rule.getJSONObject("detail"), vinfo.optString("vod_id", ""));
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /**
+     * 选集链接前缀/后缀取值：普通字符串直接用；含 "&&" 时按规则从详情页源码截取；
+     * 含 PG_URL 占位时替换为当前详情页地址（对齐 XYQHiker 同名键语义）
+     */
+    private String resolveEpiUrlVal(String cfg, String html, String pageUrl) {
+        if (cfg.isEmpty()) return "";
+        String val = applyPostProcessors(applyOrSelector(cfg));
+        if (val.contains("&&")) {
+            val = extractField(html, val);
+        }
+        if (val.contains("PG_URL")) {
+            val = val.replace("PG_URL", pageUrl).replaceAll("'", "");
+        }
+        return val.trim();
+    }
+
+    /**
+     * 对每条线路的选集链接套用前缀/后缀。
+     * 条目格式为 标题$链接（# 分隔多集）；配置了前缀时不再自动补主页地址，相对路径由规则作者接管
+     */
+    private List<String> applyEpiUrlAdjust(List<String> lines, String prefix, String suffix) {
+        if (lines == null || lines.isEmpty()) return lines;
+        List<String> adjusted = new ArrayList<>(lines.size());
+        for (String line : lines) {
+            if (line == null || line.isEmpty()) {
+                adjusted.add(line);
+                continue;
+            }
+            StringBuilder sb = new StringBuilder();
+            for (String seg : line.split("#")) {
+                int d = seg.indexOf('$');
+                String title = d >= 0 ? seg.substring(0, d) : seg;
+                String url = d >= 0 ? seg.substring(d + 1) : "";
+                if (url.isEmpty()) continue;
+                String newUrl = prefix.isEmpty() ? addHttpPrefix(url) : prefix + url;
+                if (!suffix.isEmpty()) newUrl = newUrl + suffix;
+                if (sb.length() > 0) sb.append('#');
+                sb.append(title).append('$').append(newUrl);
+            }
+            adjusted.add(sb.toString());
+        }
+        return adjusted;
     }
 
     /**
@@ -5225,12 +5389,11 @@ public class XBPQ extends Spider {
     /**
      * 从播放页解析播放URL
      */
-    protected String parsePlayUrl(String flag, String url, List<String> list) {
+    protected String parsePlayUrl(String flag, String url, String html, List<String> list) {
         try {
             JSONObject play = rule.optJSONObject("play");
             if (play == null) return "";
 
-            String html = fetchUrl(url, play.optJSONObject("header"));
             String body = RuleUtils.getRegion(html, play);
             int startPos = 0;
 
@@ -5251,6 +5414,8 @@ public class XBPQ extends Spider {
             vodUrl = vodUrl.replace("\\/", "/");
             // hexEscapeDecode 清理敏感词（\\uXXXX Unicode 转义还原 + 多余换行/反斜杠清理）
             vodUrl = hexEscapeDecode(vodUrl);
+            // player JSON 的 url 常经 encrypt=1 百分号编码 / =2 Base64 处理，按页内 encrypt 字段还原真实直链
+            vodUrl = tryDecryptParsedUrl(body, vodUrl);
             if (vodUrl.isEmpty() || !isVideoFormat(vodUrl)) return "";
 
             JSONObject result = new JSONObject();
@@ -5274,16 +5439,21 @@ public class XBPQ extends Spider {
             String forcePlayResult = tryForcePlay(url);
             if (forcePlayResult != null) return appendDanmuParam(forcePlayResult);
 
+            // 统一抓取一次播放页（带播放请求头），供脚本块解析/直链解析/跳转链接三条链路共用，
+            // 旧实现各链路各自 fetchUrl，一次选集点击最多重复请求同一页面 3 次
+            JSONObject play = rule.optJSONObject("play");
+            String html = fetchUrl(url, play == null ? null : play.optJSONObject("header"));
+
             // MacPlayer 模式
-            String macPlayerResult = tryMacPlayer(url);
+            String macPlayerResult = tryMacPlayer(html);
             if (macPlayerResult != null) return appendDanmuParam(macPlayerResult);
 
             // 尝试解析直链
-            String directResult = parsePlayUrl(flag, url, vipFlags);
+            String directResult = parsePlayUrl(flag, url, html, vipFlags);
             if (!directResult.isEmpty()) return appendDanmuParam(directResult);
 
             // 跳转播放链接
-            String jumpResult = tryJumpUrl(url);
+            String jumpResult = tryJumpUrl(url, html);
             if (jumpResult != null) return appendDanmuParam(jumpResult);
 
             // 返回嗅探
@@ -5369,10 +5539,11 @@ public class XBPQ extends Spider {
     /**
      * 尝试 MacPlayer 解析
      */
-    private String tryMacPlayer(String webUrl) throws Exception {
-        if (!"1".equals(rule.optString("Anal_MacPlayer", "0"))) return null;
+    private String tryMacPlayer(String html) throws Exception {
+        // "1"/"2" 均启用（说明文档曾写 "2"=正则解析模式，与代码不一致，此处统一）
+        String mode = rule.optString("Anal_MacPlayer", "0");
+        if (!"1".equals(mode) && !"2".equals(mode)) return null;
 
-        String html = fetchUrl(webUrl, null);
         Pattern scriptPattern = P_PLAYER_OBJ;
         Matcher scriptMatcher = scriptPattern.matcher(html);
         if (!scriptMatcher.find()) return null;
@@ -5424,11 +5595,10 @@ public class XBPQ extends Spider {
     /**
      * 尝试跳转播放链接
      */
-    private String tryJumpUrl(String webUrl) throws Exception {
+    private String tryJumpUrl(String webUrl, String html) throws Exception {
         String jumpUrl = rule.optString("jump_url", "");
         if (jumpUrl.isEmpty()) return null;
 
-        String html = fetchUrl(webUrl, null);
         jumpUrl = applyPostProcessors(jumpUrl);
         String[] parts = jumpUrl.split("&&", 2);
         String startFlag = parts[0];
@@ -5465,9 +5635,18 @@ public class XBPQ extends Spider {
      */
     private String extractJumpUrl(String html, String startFlag, String endFlag) {
         if (startFlag.contains("*")) {
-            Pattern p = P_PLAYER_URL;
-            Matcher m = p.matcher(html);
-            if (m.find()) return m.group(1);
+            // 优先按平衡花括号截出 player 对象再解析 JSON，可跨过嵌套的 vod_data；
+            // 旧 P_PLAYER_URL 的 [^}]*? 遇嵌套对象的 } 即断，取不到 url
+            Matcher m = P_PLAYER_OBJ.matcher(html);
+            if (m.find()) {
+                try {
+                    return new JSONObject(m.group(1)).optString("url", "");
+                } catch (JSONException e) {
+                    SpiderDebug.log(e);
+                }
+            }
+            Matcher um = P_PLAYER_URL.matcher(html);
+            if (um.find()) return um.group(1);
         } else {
             List<String> results = subContent(html, startFlag, endFlag);
             if (!results.isEmpty()) return results.get(0);
