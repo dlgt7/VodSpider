@@ -1541,12 +1541,15 @@ public class XBPQ extends Spider {
                 .extract(body, ruleForExtract);
     }
 
-    /** 目标键为空时从源键复制值（同功能字段替换用） */
+    /** 目标键为空时从源键复制值（同功能字段替换用）；Android org.json 的 put 抛受检 JSONException */
     private static void copyIfEmpty(JSONObject ruleObj, String fromKey, String toKey) {
-        String to = ruleObj.optString(toKey, "");
-        if (!to.isEmpty()) return;
-        String from = ruleObj.optString(fromKey, "");
-        if (!from.isEmpty()) ruleObj.put(toKey, from);
+        try {
+            String to = ruleObj.optString(toKey, "");
+            if (!to.isEmpty()) return;
+            String from = ruleObj.optString(fromKey, "");
+            if (!from.isEmpty()) ruleObj.put(toKey, from);
+        } catch (Exception ignored) {
+        }
     }
 
     /**
