@@ -1376,7 +1376,10 @@ public class XBPQ extends Spider {
                 JSONObject v = new JSONObject();
                 v.put("vod_id", applyIdAffix(id));
                 v.put("vod_name", name);
-                v.put("vod_pic", addHttpPrefix(jsonPick(o, picKey)));
+                String pic = addHttpPrefix(jsonPick(o, picKey));
+                // 标准模板84：JSON 模式空封面回退「默认封面」
+                if (pic.isEmpty()) pic = addHttpPrefix(getRuleVal("default_pic").trim());
+                v.put("vod_pic", pic);
                 v.put("vod_remarks", jsonPick(o, noteKey));
                 v.put("vod_id", encodeVodId(v));
                 videos.put(v);
@@ -2971,6 +2974,18 @@ public class XBPQ extends Spider {
             if (result.endsWith("/")) {
                 result = result.substring(0, result.length() - 1);
             }
+            // 标准模板47：../ 与 ./ 相对路径解析（../../ 逐级上跳，不越过主机根）
+            int hostRoot = result.indexOf("://");
+            if (hostRoot >= 0) hostRoot += 3;
+            while (url.startsWith("../") || url.startsWith("./")) {
+                if (url.startsWith("../")) {
+                    url = url.substring(3);
+                    int slash = result.lastIndexOf('/');
+                    if (hostRoot >= 0 && slash > hostRoot) result = result.substring(0, slash);
+                } else {
+                    url = url.substring(2);
+                }
+            }
             result += url.startsWith("/") ? url : "/" + url;
             return result;
         } catch (JSONException e) {
@@ -4349,14 +4364,19 @@ public class XBPQ extends Spider {
                 }
             }
 
-            // 替换占位符
-            cateUrl = cateUrl.replace("{cateId}", tid).replace("{catePg}", shiftStartPage(pg));
             // 标准模板12/81：offset 偏移分页——{offset}=(页码-1)*每页条数，{limit}=每页条数
             int pageSize = parseIntSafely(getRuleVal("page_size"), 20);
             if (pageSize <= 0) pageSize = 20;
             int pageNum = parseIntSafely(shiftStartPage(pg), 1);
             cateUrl = cateUrl.replace("{offset}", String.valueOf((pageNum - 1) * pageSize))
                     .replace("{limit}", String.valueOf(pageSize));
+            // 替换占位符
+            String pgVal = shiftStartPage(pg);
+            // 标准模板81：「偏移分页」=1 且 URL 未写 {offset} 时，{catePg} 直接替换为偏移值
+            if ("1".equals(getRuleVal("offset_paging")) && !cateUrl.contains("{offset}")) {
+                pgVal = String.valueOf((pageNum - 1) * pageSize);
+            }
+            cateUrl = cateUrl.replace("{cateId}", tid).replace("{catePg}", pgVal);
             // 清除剩余花括号变量：仅处理已知占位符白名单，
             // 防止规则误写的 {xxx} 或 URL 中合法的花括号字符被通配正则误删
             Matcher matcher = P_BRACE_VAR.matcher(cateUrl);
@@ -7208,7 +7228,7 @@ public class XBPQ extends Spider {
             String html;
             try {
                 lastResponseCode = resp.code();
-                html = resp.body().string();
+                html = decodeResponseBody(resp);
             } finally {
                 resp.close();
             }
@@ -7235,6 +7255,30 @@ public class XBPQ extends Spider {
             SpiderDebug.log(safeLog("fetchUrl error: " + failMessage));
             // 标准模板18/92：主域名请求异常时自动轮询镜像域名
             return allowMirror ? tryMirrorHosts(url, headers) : "";
+        }
+    }
+
+    /**
+     * 标准模板48：响应编码强制矫正。
+     * 规则配置「编码」(encoding，如 GBK/GB2312) 时按指定字符集解码原始字节，
+     * 修复站点未在 Content-Type 声明字符集（或声明错误）导致的中文乱码；
+     * 未配置或字符集非法时走 OkHttp 默认解码（Content-Type charset，缺省 UTF-8）。
+     */
+    private String decodeResponseBody(okhttp3.Response resp) throws java.io.IOException {
+        okhttp3.ResponseBody body = resp.body();
+        if (body == null) return "";
+        String charset = getRuleVal("encoding").trim();
+        if (charset.isEmpty()) return body.string();
+        try {
+            return new String(body.bytes(), java.nio.charset.Charset.forName(charset));
+        } catch (Exception e) {
+            // 非法字符集名时 body 未被消费，仍可走默认解码；bytes() 已消费则只能返回空
+            SpiderDebug.log(safeLog("「编码」配置无效(" + charset + ")，回退默认解码: " + e.getMessage()));
+            try {
+                return body.string();
+            } catch (Exception ignored) {
+                return "";
+            }
         }
     }
 
@@ -7298,6 +7342,10 @@ public class XBPQ extends Spider {
      */
     private String tryMirrorHosts(String url, JSONObject headers) {
         String cfg = getRuleVal("mirror_hosts");
+        // 标准模板55：备用主页（主页url-c）作为最后回退域名追加到镜像链
+        String fallback = variableMap.getOrDefault("主页url-c", "");
+        if (fallback.isEmpty()) fallback = getRuleVal("home_url_c");
+        if (!fallback.isEmpty()) cfg = cfg.isEmpty() ? fallback : cfg + ";" + fallback;
         if (cfg.isEmpty() || url == null || url.isEmpty()) return "";
         try {
             java.net.URL original = new java.net.URL(url);
@@ -8503,7 +8551,13 @@ public class XBPQ extends Spider {
      */
     protected String fixCover(String cover, String site) {
         try {
-            if (cover == null || cover.isEmpty()) return cover;
+            if (cover == null || cover.isEmpty()) {
+                // 标准模板84：封面为空时回退「默认封面」配置
+                String fallback = getRuleVal("default_pic").trim();
+                if (fallback.isEmpty()) return cover;
+                log("fixCover 空封面回退默认图: " + fallback);
+                return addHttpPrefix(fallback);
+            }
             log("fixCover site=" + site + " cover=" + cover);
 
             // 模式1：远端 base64 代理（防盗链图床中转）
@@ -8971,6 +9025,10 @@ public class XBPQ extends Spider {
             variableMap.put("后缀", rule.optString("domainSuffix", ""));
             variableMap.put("密钥", getRuleVal("secretKey"));
 
+            // 标准模板55：动态域名链——域名-c 优先级最高（整规则替换旧域名），
+            // 主页url-c 作为请求失败时的回退域名（挂入镜像轮询链）
+            applyDynamicDomain();
+
             // 类级共享状态：加锁串行化写入，避免多源并发初始化互相覆盖（P0-3 线程安全）
             synchronized (GLOBAL_STATE_LOCK) {
                 debug = debug || isDebug;
@@ -9009,6 +9067,68 @@ public class XBPQ extends Spider {
         } catch (Exception e) {
             SpiderDebug.log("initEnhancedConfig error: " + e.getMessage());
         }
+    }
+
+    /**
+     * 标准模板55：动态域名链。
+     * <ul>
+     *   <li>「域名-c」(dynamic_domain)：优先级最高。值支持 {@code {{主页url-c}}} 等模板变量与
+     *       {@code [替换:]} 后处理（文档示例：{@code "{{主页url-c}}[替换:https://>>https://666.]"}），
+     *       解析出有效 http(s) 源后，整规则内旧主页源字符串统一替换为新源
+     *       （主页/分类/搜索/详情 URL 及截取锚点中的旧域名同步切换）。</li>
+     *   <li>「主页url-c」(home_url_c)：备用主页。域名-c 未配置或切换后主域名仍请求失败时，
+     *       作为回退域名挂入镜像轮询链（见 {@link #tryMirrorHosts}）。</li>
+     * </ul>
+     * 两值解析后回填 variableMap，规则任意位置可用 {@code {{域名-c}}} / {@code {{主页url-c}}} 取用；
+     * 未配置时回退为主页url，保证变量展开始终得到可用源。
+     */
+    private void applyDynamicDomain() {
+        String fallbackRaw = getRuleVal("home_url_c");
+        String dynRaw = getRuleVal("dynamic_domain");
+        String fallback = applyPostProcessors(resolveVariables(fallbackRaw)).trim();
+        String dyn = applyPostProcessors(resolveVariables(dynRaw)).trim();
+        String home = rule.optString("homeUrl", "");
+        if (!isValidOrigin(fallback)) fallback = fallbackRaw.trim();
+        variableMap.put("域名-c", isValidOrigin(dyn) ? dyn : home);
+        variableMap.put("主页url-c", isValidOrigin(fallback) ? fallback : home);
+
+        // 域名-c 有效且与当前主页不同源：整规则替换旧源
+        if (isValidOrigin(dyn)) {
+            String oldOrigin = originOf(home);
+            String newOrigin = originOf(dyn);
+            if (!oldOrigin.isEmpty() && !newOrigin.isEmpty()
+                    && !oldOrigin.equalsIgnoreCase(newOrigin)) {
+                try {
+                    String json = rule.toString();
+                    rule = new JSONObject(json.replace(oldOrigin, newOrigin));
+                    SpiderDebug.log(safeLog("动态域名已切换: " + oldOrigin + " -> " + newOrigin));
+                } catch (Exception e) {
+                    SpiderDebug.log(safeLog("动态域名切换失败: " + e.getMessage()));
+                }
+            }
+        }
+    }
+
+    /** 提取 URL 的源（scheme://host:port）；解析失败返回空串 */
+    private static String originOf(String url) {
+        if (url == null) return "";
+        String u = url.trim();
+        int sep = u.indexOf(";;");
+        if (sep >= 0) u = u.substring(0, sep);
+        if (!u.startsWith("http")) return "";
+        try {
+            java.net.URL parsed = new java.net.URL(u);
+            if (parsed.getHost() == null || parsed.getHost().isEmpty()) return "";
+            int port = parsed.getPort();
+            return parsed.getProtocol() + "://" + parsed.getHost() + (port > 0 ? ":" + port : "");
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /** 是否为有效 http(s) 源（scheme://host 形式，可带路径） */
+    private static boolean isValidOrigin(String url) {
+        return !originOf(url).isEmpty();
     }
 
     /**

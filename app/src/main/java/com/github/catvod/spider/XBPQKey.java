@@ -107,7 +107,7 @@ public final class XBPQKey {
         k(Module.BASE, "header", "请求头", "headers");
         k(Module.BASE, "headerJson", "公共请求头", "公共头");
         k(Module.BASE, "userHeader", "User", "user");
-        k(Module.BASE, "encoding", "编码", "charset");
+        k(Module.BASE, "encoding", "编码", "charset"); // 标准模板48：响应编码强制矫正（GBK/GB2312）
         k(Module.BASE, "timeout", "超时");
         k(Module.BASE, "retries", "重试", "retry");
         k(Module.BASE, "startpage", "起始页", "startPage");
@@ -119,8 +119,8 @@ public final class XBPQKey {
         k(Module.BASE, "siteName", "站名");
         k(Module.BASE, "author", "作者");
         k(Module.BASE, "domainSuffix", "后缀", "域名后缀");
-        k(Module.BASE, "dynamic_domain", "域名-c", "动态域名");
-        k(Module.BASE, "home_url_c", "主页url-c", "备用主页");
+        k(Module.BASE, "dynamic_domain", "域名-c", "动态域名"); // 标准模板55：动态域名链，优先级最高
+        k(Module.BASE, "home_url_c", "主页url-c", "备用主页"); // 标准模板55：动态域名失败回退
         k(Module.BASE, "openDebug", "打开调试", "debug");
         k(Module.BASE, "prefMenu", "偏好菜单");
         k(Module.BASE, "actionTabs", "功能入口");
@@ -140,6 +140,8 @@ public final class XBPQKey {
         k(Module.BASE, "page_size", "每页条数", "pageSize", "pagesize");
         // —— 标准模板补齐（模板30/97）——
         k(Module.BASE, "url_append", "参数追加", "urlAppend", "全局参数", "追加参数");
+        // —— 标准模板补齐（模板84）——
+        k(Module.BASE, "default_pic", "默认封面", "defaultPic");
 
         // ==================== 分类 ====================
         k(Module.CATEGORY, "class_url", "分类url", "cateUrl", "list_url");
@@ -195,6 +197,8 @@ public final class XBPQKey {
         k(Module.LIST, "listjsonid", "列表JSONID");
         k(Module.LIST, "listjsonpic", "列表JSON图片");
         k(Module.LIST, "listjsonnote", "列表JSON状态");
+        // —— 标准模板补齐（模板100）——
+        k(Module.LIST, "skip_bad_item", "坏条目跳过", "skipBadItem");
 
         // ==================== 搜索 ====================
         k(Module.SEARCH, "search_url", "搜索url");
