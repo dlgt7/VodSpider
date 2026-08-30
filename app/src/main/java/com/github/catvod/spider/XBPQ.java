@@ -1252,7 +1252,7 @@ public class XBPQ extends Spider {
      * 有内容时维持 Integer.MAX_VALUE（引擎无法预知真实总页数）。
      * 瞬时请求失败导致的误判代价仅是少翻一页，重新进入分类即可恢复。
      */
-    protected JSONObject wrapList(JSONArray videos, String pg) throws JSONException {
+    protected JSONObject wrapList(JSONArray videos, String body, String pg) throws JSONException {
         int size = videos == null ? 0 : videos.length();
         JSONObject result = new JSONObject();
         result.put("code", CODE_OK);
@@ -1268,8 +1268,30 @@ public class XBPQ extends Spider {
             result.put("pagecount", Math.max(0, page - 1));
             result.put("total", 0);
         } else {
-            result.put("pagecount", Integer.MAX_VALUE);
-            result.put("total", Integer.MAX_VALUE);
+            // 优先尝试解析配置中显式指定的总条数/总页数
+            String lt = getRuleVal("list_total");
+            if (!lt.isEmpty()) {
+                try {
+                    int total = Integer.parseInt(lt);
+                    result.put("total", total);
+                    int perPage = Math.max(1, size);
+                    result.put("pagecount", (total + perPage - 1) / perPage);
+                } catch (Exception ignored) {}
+            } else if (body != null && !body.isEmpty()) {
+                // 自动从 HTML 解析：mac_total / mac_page / <li class="page">N</li> / data-total 等常见标记
+                int autoTotal = parseTotalFromHtml(body);
+                if (autoTotal > 0) {
+                    result.put("total", autoTotal);
+                    int perPage = Math.max(1, size);
+                    result.put("pagecount", (autoTotal + perPage - 1) / perPage);
+                } else {
+                    result.put("pagecount", Integer.MAX_VALUE);
+                    result.put("total", Integer.MAX_VALUE);
+                }
+            } else {
+                result.put("pagecount", Integer.MAX_VALUE);
+                result.put("total", Integer.MAX_VALUE);
+            }
         }
         result.put("limit", Math.max(90, size));
         result.put("list", videos == null ? new JSONArray() : videos);
@@ -1279,6 +1301,105 @@ public class XBPQ extends Spider {
     // ------------------------------------------------------------------
     // 标准模板的 http 工具（全部复用既有链路，不另建 OkHttp 客户端）
     // ------------------------------------------------------------------
+
+    /**
+     * 从 HTML 内容中自动解析总条数/总页数。
+     * 支持常见标记：mac_total=N、mac_page=N、data-total="N"、<li class="page">N</li>、分页链接数量等。
+     * 返回 0 表示未解析到有效值。
+     */
+    private int parseTotalFromHtml(String html) {
+        if (html == null || html.isEmpty()) return 0;
+        try {
+            // 1. mac_total / mac_page 等 JS 变量（韩剧在线等网站常见）
+            int total = parseIntFromScript(html, "mac_total");
+            if (total > 0) return total;
+            total = parseIntFromScript(html, "mac_page");
+            if (total > 0) return total * 20; // mac_page 是页码，乘以每页条数估算总数
+
+            // 2. data-total 属性
+            total = parseIntFromAttr(html, "data-total");
+            if (total > 0) return total;
+
+            // 3. 分页链接计数：<li class="page">N</li> 或 <a href="*page*N*">
+            int pageCount = countPageLinks(html);
+            if (pageCount > 0) return pageCount * 30; // 每页约30条估算
+
+            // 4. 页码数字范围最大值
+            int maxPage = extractMaxPageNumber(html);
+            if (maxPage > 0) return maxPage * 30;
+        } catch (Exception e) {
+            SpiderDebug.log("parseTotalFromHtml error: " + e.getMessage());
+        }
+        return 0;
+    }
+
+    /** 从 JS 变量中解析整数：var mac_total=1234; */
+    private int parseIntFromScript(String html, String varName) {
+        try {
+            int idx = html.indexOf(varName + "=");
+            if (idx < 0) return 0;
+            int start = html.indexOf('=', idx) + 1;
+            int end = start;
+            while (end < html.length() && Character.isDigit(html.charAt(end))) end++;
+            if (end > start) {
+                return Integer.parseInt(html.substring(start, end));
+            }
+        } catch (Exception ignored) {}
+        return 0;
+    }
+
+    /** 从 HTML 属性中解析整数：data-total="1234" */
+    private int parseIntFromAttr(String html, String attrName) {
+        try {
+            int idx = html.indexOf(attrName + "=\"");
+            if (idx < 0) return 0;
+            int start = html.indexOf('"', idx + attrName.length() + 2) + 1;
+            int end = start;
+            while (end < html.length() && Character.isDigit(html.charAt(end))) end++;
+            if (end > start) {
+                return Integer.parseInt(html.substring(start, end));
+            }
+        } catch (Exception ignored) {}
+        return 0;
+    }
+
+    /** 统计分页链接数量：匹配 <li class="page">N</li> 或 <a href="*page*N*" */
+    private int countPageLinks(String html) {
+        int count = 0;
+        try {
+            // 匹配 <li class="page">数字</li>
+            java.util.regex.Pattern p = java.util.regex.Pattern.compile("<li[^>]*class=[\"'][^\"']*page[^\"']*[\"'][^>]*>\\s*(\\d+)\\s*</li>", java.util.regex.Pattern.CASE_INSENSITIVE);
+            java.util.regex.Matcher m = p.matcher(html);
+            while (m.find()) count++;
+            // 匹配 <a href="*page*N*"
+            p = java.util.regex.Pattern.compile("[?&]page=(\\d+)", java.util.regex.Pattern.CASE_INSENSITIVE);
+            m = p.matcher(html);
+            java.util.Set<String> pages = new java.util.HashSet<>();
+            while (m.find()) pages.add(m.group(1));
+            count = Math.max(count, pages.size());
+        } catch (Exception ignored) {}
+        return count;
+    }
+
+    /** 提取分页链接中的最大页码 */
+    private int extractMaxPageNumber(String html) {
+        int maxPage = 0;
+        try {
+            java.util.regex.Pattern p = java.util.regex.Pattern.compile("[?&]page=(\\d+)", java.util.regex.Pattern.CASE_INSENSITIVE);
+            java.util.regex.Matcher m = p.matcher(html);
+            while (m.find()) {
+                int page = Integer.parseInt(m.group(1));
+                if (page > maxPage) maxPage = page;
+            }
+            p = java.util.regex.Pattern.compile("<li[^>]*class=[\"'][^\"']*page[^\"']*[\"'][^>]*>\\s*(\\d+)\\s*</li>", java.util.regex.Pattern.CASE_INSENSITIVE);
+            m = p.matcher(html);
+            while (m.find()) {
+                int page = Integer.parseInt(m.group(1));
+                if (page > maxPage) maxPage = page;
+            }
+        } catch (Exception ignored) {}
+        return maxPage;
+    }
 
     /**
      * 【标准模板】GET 请求。
@@ -4236,7 +4357,7 @@ public class XBPQ extends Spider {
                 }
             }
 
-            JSONObject result = wrapList(allVideos, "1");
+            JSONObject result = wrapList(allVideos, null, "1");
             // 列表显示：通过 ext 透传列表展示偏好（框架扩展字段，向后兼容）
             if (listDisplay) {
                 JSONObject ext = new JSONObject();
@@ -4462,7 +4583,7 @@ public class XBPQ extends Spider {
                         getRuleVal("listjsonlist"), getRuleVal("listjsonid"),
                         getRuleVal("listjsonname"), getRuleVal("listjsonpic"),
                         getRuleVal("listjsonnote"));
-                if (jsonVideos.length() > 0) return wrapList(jsonVideos, pg).toString();
+                if (jsonVideos.length() > 0) return wrapList(jsonVideos, null, pg).toString();
                 SpiderDebug.log("列表 JSON 模式无结果，回退到网页解析");
             }
 
@@ -4473,7 +4594,7 @@ public class XBPQ extends Spider {
             String endMarker = getRuleVal("page_end_marker");
             if (!endMarker.isEmpty() && body != null && body.contains(endMarker)) {
                 SpiderDebug.log("翻页终点标记命中: " + endMarker + "，终止翻页");
-                return wrapList(new JSONArray(), pg).toString();
+                return wrapList(new JSONArray(), null, pg).toString();
             }
 
             String content = RuleUtils.getRegion(body, list);
@@ -4490,7 +4611,7 @@ public class XBPQ extends Spider {
                 }
                 JSONArray cssVideos = extractVideoListByCss(content, list);
                 if (cssVideos.length() > 0) {
-                    return buildCategoryResult(cssVideos, pg);
+                    return buildCategoryResult(cssVideos, content, pg);
                 }
                 SpiderDebug.log("CSS提取无结果，回退到正则模式");
             }
@@ -4505,7 +4626,7 @@ public class XBPQ extends Spider {
             JSONArray videos = extractVideoList(content, list, url);
 
             // 构建返回结果
-            return buildCategoryResult(videos, pg);
+            return buildCategoryResult(videos, body, pg);
         } catch (Exception e) {
             SpiderDebug.log(e);
             return "";
@@ -4819,8 +4940,8 @@ public class XBPQ extends Spider {
      * 有内容时维持 Integer.MAX_VALUE（引擎无法预知真实总页数）。
      * 瞬时请求失败导致的误判代价仅是少翻一页，重新进入分类即可恢复。
      */
-    private String buildCategoryResult(JSONArray videos, String pg) throws JSONException {
-        return wrapList(videos, pg).toString();
+    private String buildCategoryResult(JSONArray videos, String body, String pg) throws JSONException {
+        return wrapList(videos, body, pg).toString();
     }
 
     // ==================== 播放列表相关 ====================
@@ -6802,7 +6923,7 @@ public class XBPQ extends Spider {
             videos.put(v);
         }
 
-        return wrapList(videos, page).toString();
+        return wrapList(videos, null, page).toString();
     }
 
     @Override
@@ -6849,7 +6970,7 @@ public class XBPQ extends Spider {
                 JSONArray jsonVideos = extractVideosByJson(content, searchJsonPath,
                         getRuleVal("searchjsonid"), getRuleVal("searchjsonname"),
                         getRuleVal("searchjsonpic"), getRuleVal("searchjsonnote"));
-                if (jsonVideos.length() > 0) return wrapList(jsonVideos, page).toString();
+                if (jsonVideos.length() > 0) return wrapList(jsonVideos, null, page).toString();
             }
 
             // 区域截取
@@ -6876,7 +6997,7 @@ public class XBPQ extends Spider {
             if (isCssModeEnabled(search)) {
                 SpiderDebug.log("搜索结果使用 CSS/Jsoup 模式提取");
                 JSONArray cssVideos = extractSearchResultsByCss(content, search);
-                if (cssVideos.length() > 0) return wrapList(cssVideos, page).toString();
+                if (cssVideos.length() > 0) return wrapList(cssVideos, content, page).toString();
                 SpiderDebug.log("CSS 提取无结果，回退到传统模式");
             }
 
@@ -7063,7 +7184,7 @@ public class XBPQ extends Spider {
         // 倒序
         if (reverseOrder) videos = reverseArray(videos);
 
-        return wrapList(videos, page).toString();
+        return wrapList(videos, null, page).toString();
     }
 
     /**
