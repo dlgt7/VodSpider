@@ -6571,7 +6571,13 @@ public class XBPQ extends Spider {
                             long delay = 800L + (long)(Math.random() * 600);
                             Thread.sleep(delay);
                             Map<String, String> retryHeaders = new HashMap<>(getHeaders(url));
-                            if (headers != null) retryHeaders.putAll(headers);
+                            if (headers != null) {
+                                java.util.Iterator<String> it = headers.keys();
+                                while (it.hasNext()) {
+                                    String k = it.next();
+                                    retryHeaders.put(k, headers.getString(k));
+                                }
+                            }
                             okhttp3.Response retryResp = OkHttp.newCall(url, retryHeaders);
                             int retryCode;
                             String retryHtml;
