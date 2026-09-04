@@ -57,6 +57,8 @@ public class XBPQ extends Spider {
 
     private static final int MAX_MATCH_COUNT = 30;
 
+    private static final int MAX_PAGE_ITEMS = 100;
+
     private static final int CATEGORY_ID_THRESHOLD = 100;
 
     private static final int DEFAULT_UNKNOWN_PAGE_COUNT = 50;
@@ -138,6 +140,8 @@ public class XBPQ extends Spider {
     private static final Pattern P_BTWAF_TOKEN_JSON = Pattern.compile("btwaf[\"'=]\\s*:\\s*[\"']([^\"']+)[\"']");
     
     private static final Pattern P_BTWAF_TOKEN_QUERY = Pattern.compile("[?&]btwaf=([^&\"'\\s>]+)");
+
+    private static final Pattern P_BTWAF_COOKIE = Pattern.compile("(?:^|[;\\s])btwaf=([^;\\s&\"']+)");
     
     private static final Pattern P_META_REFRESH = Pattern.compile("content\\s*=\\s*[\"']\\d+;\\s*url=([^\"']+)[\"']", Pattern.CASE_INSENSITIVE);
     
@@ -168,6 +172,64 @@ public class XBPQ extends Spider {
     private static final Pattern P_HTML_COMMENT = Pattern.compile("<!--.+?-->");
     
     private static final Pattern P_EPISODE_NUM = Pattern.compile("(\\d+)");
+
+    private static final List<String> LAZY_IMG_ATTRS = Collections.unmodifiableList(Arrays.asList(
+            "data-original", "data-src", "data-lazy", "data-lazy-src", "data-original-src",
+            "data-img", "exposuresrc", "_src", "lazy-src", "data-bg", "src"
+    ));
+
+    private static final Set<String> SSRF_BLOCKED_SCHEMES = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
+            "file", "ftp", "gopher", "dict", "jar", "netdoc", "globalfile", "javascript", "vbscript", "data"
+    )));
+
+    private static final Pattern P_INTERNAL_IP = Pattern.compile(
+            "^(127\\.|10\\.|192\\.168\\.|169\\.254\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.)"
+    );
+
+    private static final List<String> TOTAL_VAR_NAMES = Collections.unmodifiableList(Arrays.asList(
+            "mac_total", "mac_page", "pagecount", "total", "totalCount",
+            "pages", "count", "limit", "recordCount", "rowCount"
+    ));
+
+    private static final List<String> SEARCH_PATH_PROBES = Collections.unmodifiableList(Arrays.asList(
+            "/search/", "/index.php?s=", "/vod/search/", "/index.php/ajax/suggest", "/search.php", "/api/search"
+    ));
+
+    private static final Pattern P_SETTIMEOUT_LOCATION = Pattern.compile(
+            "(?:setTimeout\\s*\\(\\s*function\\s*\\([^)]*\\)\\s*\\{\\s*location(?:\\.href)?\\s*=\\s*|window\\.location\\.href\\s*=\\s*|location\\.replace\\s*\\(\\s*)[\"']([^\"']+)[\"']"
+    );
+
+    private static final Pattern P_DETAIL_FIELD_FUZZY = Pattern.compile(
+            "(导演|演员|主演|年份|地区|类型|简介|影片导演|主要演员|上映年份|出品地区|影片主演|影片类型|出品时间|更新状态)[^:：]*[:：]"
+    );
+
+    private static final Pattern P_DATA_URL_ATTR = Pattern.compile(
+            "<a[^>]*\\sdata-(?:url|href)\\s*=\\s*[\"']([^\"']+)[\"'][^>]*>([^<]*)</a>"
+    );
+
+    private static final Pattern P_JS_PLAYER_CALL = Pattern.compile(
+            "(?:javascript:)?player\\s*\\(\\s*[\"']([^\"']+)[\"']\\s*\\)"
+    );
+
+    private static final Pattern P_ONCLICK_PLAYER = Pattern.compile(
+            "onclick\\s*=\\s*[\"']\\s*(?:javascript:)?player\\s*\\(\\s*[\"']([^\"']+)[\"']\\s*\\)\\s*[\"']"
+    );
+
+    private static final Pattern P_TOTAL_VAR_ASSIGN = Pattern.compile(
+            "(?:var\\s+|let\\s+|const\\s+|\\$)?(\\w+)\\s*=\\s*(\\d+)"
+    );
+
+    private static final Pattern P_TOTAL_JSON = Pattern.compile(
+            "[\"'](total|pagecount|totalCount|recordCount|rowCount|count|pages|limit)[\"']\\s*:\\s*(\\d+)"
+    );
+
+    private static final Pattern P_META_CHARSET = Pattern.compile(
+            "<meta[^>]+charset\\s*=\\s*[\"']?([\\w-]+)", Pattern.CASE_INSENSITIVE
+    );
+
+    private static final Set<String> SPECIAL_URL_SCHEMES = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
+            "magnet", "thunder", "ed2k", "mailto", "javascript"
+    )));
 
     private static final Map<String, String> CHINESE_KEY_MAP = XBPQKey.aliasMap();
 
@@ -907,20 +969,67 @@ public class XBPQ extends Spider {
         return result;
     }
 
+    private int parseTotalUniversal(String html) {
+        if (html == null || html.isEmpty()) return -1;
+        try {
+            String lt = getRuleVal("list_total");
+            if (!lt.isEmpty()) {
+                try {
+                    int total = Integer.parseInt(lt);
+                    if (total > 0) return total;
+                } catch (Exception ignored) {}
+            }
+            Matcher mJson = P_TOTAL_JSON.matcher(html);
+            if (mJson.find()) {
+                int total = Integer.parseInt(mJson.group(2));
+                if (total > 0) return total;
+            }
+            for (String varName : TOTAL_VAR_NAMES) {
+                int total = parseIntFromScript(html, varName);
+                if (total > 0) {
+                    if (varName.equals("mac_page") || varName.equals("pages") || varName.equals("pagecount")) {
+                        return total * 20;
+                    }
+                    return total;
+                }
+            }
+            Matcher mVar = P_TOTAL_VAR_ASSIGN.matcher(html);
+            int maxVal = 0;
+            while (mVar.find()) {
+                String name = mVar.group(1);
+                int val = Integer.parseInt(mVar.group(2));
+                for (String varName : TOTAL_VAR_NAMES) {
+                    if (name.equalsIgnoreCase(varName) || name.toLowerCase().contains(varName.toLowerCase())) {
+                        if (val > maxVal) maxVal = val;
+                        break;
+                    }
+                }
+            }
+            if (maxVal > 0) return maxVal;
+            int pageCount = countPageLinks(html);
+            if (pageCount > 0) return pageCount * 30;
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+        }
+        return -1;
+    }
+
     private int parseTotalFromHtml(String html) {
         if (html == null || html.isEmpty()) return 0;
         try {
+            int universalTotal = parseTotalUniversal(html);
+            if (universalTotal > 0) return universalTotal;
             
             int total = parseIntFromScript(html, "mac_total");
             if (total > 0) return total;
             total = parseIntFromScript(html, "mac_page");
-            if (total > 0) return total * 20; 
+            if (total > 0) return total * 20;
 
             total = parseIntFromAttr(html, "data-total");
             if (total > 0) return total;
 
             int pageCount = countPageLinks(html);
-            if (pageCount > 0) return pageCount * 30; 
+            if (pageCount > 0) return pageCount * 30;
 
             int maxPage = extractMaxPageNumber(html);
             if (maxPage > 0) return maxPage * 30;
@@ -1049,6 +1158,10 @@ public class XBPQ extends Spider {
             Set<String> seen = new HashSet<>();
             for (JsonElement item : el.getAsJsonArray()) {
                 if (!item.isJsonObject()) continue;
+                if (videos.length() >= MAX_PAGE_ITEMS) {
+                    SpiderDebug.log("JSON 列表条目已达单页上限 " + MAX_PAGE_ITEMS + "，截断");
+                    break;
+                }
                 JsonObject o = item.getAsJsonObject();
                 String id = jsonPick(o, idKey);
                 String name = jsonPick(o, nameKey);
@@ -1745,7 +1858,8 @@ public class XBPQ extends Spider {
         try {
             if (!rule.has("search")) {
                 String body = fetchOrCacheHomePageBody();
-                String url = guessRuleSearchUrl(body);
+                String url = guessSearchUrlUniversal(body);
+                if (url.isEmpty()) url = guessRuleSearchUrl(body);
                 if (!url.isEmpty()) {
                     JSONObject searchRule = new JSONObject();
                     searchRule.put("url", url);
@@ -1990,6 +2104,10 @@ public class XBPQ extends Spider {
         JSONArray items = JsoupExtractor.extractItems(html, containerRule, fieldRules);
 
         for (int i = 0; i < items.length(); i++) {
+            if (videos.length() >= MAX_PAGE_ITEMS) {
+                SpiderDebug.log("CSS 列表条目已达单页上限 " + MAX_PAGE_ITEMS + "，截断");
+                break;
+            }
             JSONObject item = items.getJSONObject(i);
             String vodId = item.optString("vod_id", "");
             if (!vodId.isEmpty()) {
@@ -2100,6 +2218,10 @@ public class XBPQ extends Spider {
         JSONArray items = JsoupExtractor.extractItems(html, containerRule, fieldRules);
 
         for (int i = 0; i < items.length(); i++) {
+            if (videos.length() >= MAX_PAGE_ITEMS) {
+                SpiderDebug.log("CSS 列表条目已达单页上限 " + MAX_PAGE_ITEMS + "，截断");
+                break;
+            }
             JSONObject item = items.getJSONObject(i);
             String vodId = item.optString("vod_id", "");
             if (!vodId.isEmpty()) {
@@ -2367,38 +2489,73 @@ public class XBPQ extends Spider {
         }
     }
 
-    public String addHttpPrefix(String url) {
+    private String resolveLazyImage(String imgHtml) {
+        if (imgHtml == null || imgHtml.isEmpty()) return "";
         try {
-            if (url.isEmpty()) return "";
-            if (url.startsWith("http")) return url;
-            
-            String lower = url.toLowerCase();
-            if (lower.startsWith("magnet:") || lower.startsWith("thunder:")
-                    || lower.startsWith("ed2k:") || lower.startsWith("mailto:")) {
-                return url;
+            Document doc = Jsoup.parse(imgHtml);
+            Element img = doc.selectFirst("img");
+            if (img == null) {
+                img = doc.selectFirst("[data-original],[data-src],[data-lazy],[data-lazy-src],[data-original-src],[data-img],[exposuresrc],[_src],[lazy-src],[data-bg]");
             }
-            String result = rule.getString("homeUrl");
-            if (result.endsWith("/")) {
-                result = result.substring(0, result.length() - 1);
+            if (img == null) return "";
+            String configuredAttr = getRuleVal("img_attr");
+            if (!configuredAttr.isEmpty()) {
+                String val = img.attr(configuredAttr);
+                if (val != null && !val.isEmpty()) return val.trim();
             }
-            
-            int hostRoot = result.indexOf("://");
+            for (String attr : LAZY_IMG_ATTRS) {
+                String val = img.attr(attr);
+                if (val != null && !val.isEmpty()) return val.trim();
+            }
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+        }
+        return "";
+    }
+
+    private String completeImageUrlUniversal(String raw, String baseUrl) {
+        if (raw == null || raw.isEmpty()) return "";
+        try {
+            String lower = raw.toLowerCase();
+            for (String scheme : SPECIAL_URL_SCHEMES) {
+                if (lower.startsWith(scheme + ":")) return raw;
+            }
+            if (raw.startsWith("http://") || raw.startsWith("https://")) return raw;
+            if (raw.startsWith("//")) {
+                boolean https = baseUrl != null && baseUrl.startsWith("https");
+                if (baseUrl == null || baseUrl.isEmpty()) {
+                    try { https = rule.getString("homeUrl").startsWith("https"); } catch (Exception ignored) { }
+                }
+                return (https ? "https:" : "http:") + raw;
+            }
+            String base = baseUrl != null && !baseUrl.isEmpty() ? baseUrl : "";
+            if (base.isEmpty()) {
+                try { base = rule.getString("homeUrl"); } catch (Exception e) { base = ""; }
+            }
+            if (base.isEmpty()) return raw;
+            if (base.endsWith("/")) base = base.substring(0, base.length() - 1);
+            int hostRoot = base.indexOf("://");
             if (hostRoot >= 0) hostRoot += 3;
+            String url = raw;
             while (url.startsWith("../") || url.startsWith("./")) {
                 if (url.startsWith("../")) {
                     url = url.substring(3);
-                    int slash = result.lastIndexOf('/');
-                    if (hostRoot >= 0 && slash > hostRoot) result = result.substring(0, slash);
+                    int slash = base.lastIndexOf('/');
+                    if (hostRoot >= 0 && slash > hostRoot) base = base.substring(0, slash);
                 } else {
                     url = url.substring(2);
                 }
             }
-            result += url.startsWith("/") ? url : "/" + url;
-            return result;
-        } catch (JSONException e) {
+            return base + (url.startsWith("/") ? url : "/" + url);
+        } catch (Exception e) {
             SpiderDebug.log(e);
         }
-        return url;
+        return raw;
+    }
+
+    public String addHttpPrefix(String url) {
+        if (url == null || url.isEmpty()) return "";
+        return completeImageUrlUniversal(url, "");
     }
 
     protected Map<String, String> getHeaders(String url) {
@@ -2800,6 +2957,47 @@ public class XBPQ extends Spider {
         return cateManual;
     }
 
+    private String guessSearchUrlUniversal(String homeHtml) {
+        if (homeHtml == null || homeHtml.isEmpty()) return "";
+        try {
+            Matcher mAction = P_ACTION_ATTR.matcher(homeHtml);
+            if (mAction.find()) {
+                String url = mAction.group(1);
+                Pattern pInput = Pattern.compile("<input[^>]+name=[\"']([^\"']+)[\"']", Pattern.CASE_INSENSITIVE);
+                Matcher mInput = pInput.matcher(homeHtml);
+                if (mInput.find()) {
+                    String wd = mInput.group(1);
+                    char sep = url.indexOf('?') == -1 ? '?' : '&';
+                    return addHttpPrefix(url + sep + wd + "={wd}");
+                }
+            }
+            Pattern pDataUrl = Pattern.compile("<input[^>]+data-url=[\"']([^\"']+)[\"']", Pattern.CASE_INSENSITIVE);
+            Matcher mDataUrl = pDataUrl.matcher(homeHtml);
+            if (mDataUrl.find()) {
+                String url = mDataUrl.group(1);
+                char sep = url.indexOf('?') == -1 ? '?' : '&';
+                return addHttpPrefix(url + sep + "wd={wd}");
+            }
+            Pattern pJsSearch = Pattern.compile("(?:search|searchkey)\\s*\\(\\s*[\"']([^\"']+)[\"']", Pattern.CASE_INSENSITIVE);
+            Matcher mJs = pJsSearch.matcher(homeHtml);
+            if (mJs.find()) {
+                String url = mJs.group(1);
+                if (url.startsWith("http") || url.startsWith("/")) {
+                    char sep = url.indexOf('?') == -1 ? '?' : '&';
+                    return addHttpPrefix(url + sep + "wd={wd}");
+                }
+            }
+            for (String path : SEARCH_PATH_PROBES) {
+                if (homeHtml.contains(path) || (path.length() > 1 && homeHtml.contains(path.substring(1)))) {
+                    return addHttpPrefix(path) + (path.contains("?") ? "&" : "?") + "wd={wd}";
+                }
+            }
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+        }
+        return "";
+    }
+
     protected String guessRuleSearchUrl(String body) {
         String regex = "<input.+?name=\"(.+?)\"";
         Pattern pattern = Pattern.compile(regex, Pattern.CASE_INSENSITIVE);
@@ -3060,7 +3258,92 @@ public class XBPQ extends Spider {
         return "";
     }
 
-    @Override
+    private boolean isDirectLinkUniversal(String url) {
+        if (url == null || url.isEmpty()) return false;
+        try {
+            String current = url;
+            for (int round = 0; round < 3; round++) {
+                String lower = current.toLowerCase();
+                if (!(lower.startsWith("http://") || lower.startsWith("https://"))) return false;
+                String videoFilter = getRuleVal("video_filter");
+                if (!videoFilter.isEmpty()) {
+                    for (String kw : videoFilter.split("#")) {
+                        String k = kw.trim().toLowerCase();
+                        if (!k.isEmpty() && lower.contains(k)) return false;
+                    }
+                }
+                for (String format : videoFormatList) {
+                    if (lower.contains(format)) return true;
+                }
+                try {
+                    URL u = new URL(current);
+                    String query = u.getQuery();
+                    if (query != null) {
+                        String qLower = query.toLowerCase();
+                        for (String format : videoFormatList) {
+                            String fmt = format.startsWith(".") ? format.substring(1) : format;
+                            if (qLower.contains("ext=" + fmt) || qLower.contains("format=" + fmt)) return true;
+                        }
+                    }
+                    String path = u.getPath().toLowerCase();
+                    for (String format : videoFormatList) {
+                        String fmt = format.startsWith(".") ? format.substring(1) : format;
+                        if (path.contains("/" + fmt + "/") || path.endsWith("/" + fmt)) return true;
+                    }
+                } catch (Exception e) {
+                    break;
+                }
+                String decoded;
+                try {
+                    decoded = java.net.URLDecoder.decode(current, "UTF-8");
+                } catch (Exception e) {
+                    break;
+                }
+                if (decoded.equals(current)) break;
+                current = decoded;
+            }
+            return Util.isVideoFormat(url);
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+        }
+        return false;
+    }
+
+    private String decodeEscapesDeep(String raw) {
+        if (raw == null || raw.isEmpty()) return raw;
+        try {
+            String current = raw;
+            Pattern pHex = Pattern.compile("\\\\x([0-9A-Fa-f]{2})");
+            for (int round = 0; round < 3; round++) {
+                String next = current;
+                Matcher um = P_UNICODE_SEQ.matcher(next);
+                StringBuffer sb = new StringBuffer();
+                while (um.find()) {
+                    char c = (char) Integer.parseInt(um.group(2), 16);
+                    um.appendReplacement(sb, Matcher.quoteReplacement(String.valueOf(c)));
+                }
+                um.appendTail(sb);
+                next = sb.toString();
+                Matcher hm = pHex.matcher(next);
+                StringBuffer sb2 = new StringBuffer();
+                while (hm.find()) {
+                    char c = (char) Integer.parseInt(hm.group(1), 16);
+                    hm.appendReplacement(sb2, Matcher.quoteReplacement(String.valueOf(c)));
+                }
+                hm.appendTail(sb2);
+                next = sb2.toString();
+                next = next.replace("\\/", "/");
+                next = next.replace("\\\\", "\\");
+                if (next.equals(current)) break;
+                current = next;
+            }
+            return current;
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+        }
+        return raw;
+    }
+
     public boolean isVideoFormat(String url) {
         if (url == null) return false;
         String trimmed = url.trim();
@@ -3309,7 +3592,42 @@ public class XBPQ extends Spider {
         }
     }
 
+    private String extractCateIdMultiStrategy(String url) {
+        if (url == null || url.isEmpty()) return "";
+        try {
+            if (url.matches("\\d+")) return url;
+            int qIdx = url.indexOf('?');
+            String query = qIdx >= 0 ? url.substring(qIdx + 1) : "";
+            if (!query.isEmpty()) {
+                for (String param : new String[]{"cid", "id", "typeid", "type_id", "tid"}) {
+                    Pattern pQuery = Pattern.compile("(?:^|&)" + param + "=([^&]+)");
+                    Matcher mQuery = pQuery.matcher(query);
+                    if (mQuery.find()) {
+                        String val = mQuery.group(1);
+                        if (val.matches("\\d+")) return val;
+                        Matcher mEnd = P_EPISODE_NUM.matcher(val);
+                        if (mEnd.find()) return mEnd.group(1);
+                    }
+                }
+            }
+            Pattern pPathId = Pattern.compile("/(?:id|cid|typeid|type_id)[-/](\\d+)", Pattern.CASE_INSENSITIVE);
+            Matcher mPath = pPathId.matcher(url);
+            if (mPath.find()) return mPath.group(1);
+            Pattern pEndDigit = Pattern.compile("/(\\d+)(?:\\.html?)?(?:[/?#]|$)");
+            Matcher mEnd = pEndDigit.matcher(url);
+            if (mEnd.find()) return mEnd.group(1);
+            Pattern pDashDigit = Pattern.compile("[-_](\\d+)(?:\\.html?)?(?:[/?#&]|$)");
+            Matcher mDash = pDashDigit.matcher(url);
+            if (mDash.find()) return mDash.group(1);
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+        }
+        return "";
+    }
+
     private String extractCateId(String classUrl) {
+        String strategyResult = extractCateIdMultiStrategy(classUrl);
+        if (!strategyResult.isEmpty()) return strategyResult;
         if (classUrl.contains("tid=")) {
             int start = classUrl.indexOf("tid=") + 4;
             int end = classUrl.indexOf("&", start);
@@ -3678,6 +3996,10 @@ public class XBPQ extends Spider {
         int pos = 0;
 
         while (lookback != null) {
+            if (videos.length() >= MAX_PAGE_ITEMS) {
+                SpiderDebug.log("列表条目已达单页上限 " + MAX_PAGE_ITEMS + "，截断");
+                break;
+            }
             int matchPos = content.indexOf(lookback.getString(0), pos);
             if (matchPos == -1) break;
 
@@ -3851,16 +4173,38 @@ public class XBPQ extends Spider {
         return false;
     }
 
+    private String guessTitleFromNode(String node) {
+        if (node == null || node.isEmpty()) return "";
+        try {
+            Document doc = Jsoup.parse(node);
+            for (Element el : doc.getAllElements()) {
+                String title = el.attr("title");
+                if (title != null && !title.isEmpty()) return title.trim();
+            }
+            for (Element el : doc.getAllElements()) {
+                String alt = el.attr("alt");
+                if (alt != null && !alt.isEmpty()) return alt.trim();
+            }
+            String text = doc.text();
+            if (text != null && !text.isEmpty()) return text.trim();
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+        }
+        return "";
+    }
+
     private JSONObject buildVideoObject(String node, String vodId, JSONObject list, String url) throws JSONException {
         JSONObject v = new JSONObject();
         v.put("vod_id", vodId);
 
         String vodName = RuleUtils.findSubString(node, 0, list.optJSONArray("vod_name"));
+        if (vodName.isEmpty()) vodName = guessTitleFromNode(node);
         if (vodName.isEmpty()) vodName = guessValueVodName(node, 0);
         v.put("vod_name", vodName);
 
         String vodPic = addHttpPrefix(RuleUtils.findSubString(node, 0, list.optJSONArray("vod_pic")));
         if (vodPic.isEmpty()) vodPic = guessValueVodPic(node, 0);
+        if (vodPic.isEmpty()) vodPic = addHttpPrefix(resolveLazyImage(node));
         if ("1".equals(getRuleVal("PicNeedProxy")) && !vodPic.isEmpty()) {
             vodPic = fixCover(vodPic, url);
         }
@@ -4267,10 +4611,13 @@ public class XBPQ extends Spider {
 
             if (block.contains("</script")) continue;
 
-            List<String> eps = itemBounds == null
-                    ? extractEpisodes(block, hrefStart, hrefEnd, titleBounds, sort)
-                    : extractEpisodesByItem(block, itemBounds[0], itemBounds[1],
-                                            hrefStart, hrefEnd, titleBounds, sort);
+            List<String> eps = extractEpisodesUniversal(block, playlist);
+            if (eps.isEmpty()) {
+                eps = itemBounds == null
+                        ? extractEpisodes(block, hrefStart, hrefEnd, titleBounds, sort)
+                        : extractEpisodesByItem(block, itemBounds[0], itemBounds[1],
+                                                hrefStart, hrefEnd, titleBounds, sort);
+            }
             if (eps.isEmpty() && !filterConfigured) {
                 eps = itemBounds == null
                         ? extractEpisodes(block, hrefStart, hrefEnd, titleBounds, sort, true)
@@ -4403,6 +4750,73 @@ public class XBPQ extends Spider {
         return eps;
     }
 
+    private List<String> extractEpisodesUniversal(String block, JSONObject playlist) {
+        List<String> eps = new ArrayList<>();
+        if (block == null || block.isEmpty()) return eps;
+        try {
+            Matcher mDataUrl = P_DATA_URL_ATTR.matcher(block);
+            int idx = 0;
+            while (mDataUrl.find() && eps.size() < MAX_MATCH_COUNT) {
+                String url = mDataUrl.group(1);
+                String title = mDataUrl.group(2);
+                if (title != null) title = cleanHtml(title).trim();
+                if (title == null || title.isEmpty()) title = "第" + (idx + 1) + "集";
+                eps.add(title + "$" + addHttpPrefix(url));
+                idx++;
+            }
+            if (!eps.isEmpty()) return eps;
+            Matcher mJsPlayer = P_JS_PLAYER_CALL.matcher(block);
+            idx = 0;
+            while (mJsPlayer.find() && eps.size() < MAX_MATCH_COUNT) {
+                String url = mJsPlayer.group(1);
+                int end = mJsPlayer.end();
+                String title = extractEpisodeTitleUniversal(block, end, DEFAULT_TITLE_BOUNDS);
+                if (title.isEmpty()) title = "第" + (idx + 1) + "集";
+                eps.add(title + "$" + addHttpPrefix(url));
+                idx++;
+            }
+            if (!eps.isEmpty()) return eps;
+            Matcher mOnclick = P_ONCLICK_PLAYER.matcher(block);
+            idx = 0;
+            while (mOnclick.find() && eps.size() < MAX_MATCH_COUNT) {
+                String url = mOnclick.group(1);
+                int end = mOnclick.end();
+                String title = extractEpisodeTitleUniversal(block, end, DEFAULT_TITLE_BOUNDS);
+                if (title.isEmpty()) title = "第" + (idx + 1) + "集";
+                eps.add(title + "$" + addHttpPrefix(url));
+                idx++;
+            }
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+        }
+        return eps;
+    }
+
+    private String extractEpisodeTitleUniversal(String block, int hrefEnd, String[] bounds) {
+        try {
+            String title = extractEpisodeTitle(block, hrefEnd, bounds);
+            if (!title.isEmpty()) return title;
+            Pattern pSpan = Pattern.compile("<span[^>]*>([^<]+)</span>");
+            int searchStart = Math.max(0, hrefEnd);
+            if (searchStart < block.length()) {
+                String region = block.substring(searchStart, Math.min(block.length(), searchStart + 200));
+                Matcher mSpan = pSpan.matcher(region);
+                if (mSpan.find()) {
+                    String t = cleanHtml(mSpan.group(1)).trim();
+                    if (!t.isEmpty()) return t;
+                }
+            }
+            if (hrefEnd < block.length()) {
+                String tail = block.substring(hrefEnd, Math.min(block.length(), hrefEnd + 100));
+                Matcher mNum = P_EPISODE_NUM.matcher(tail);
+                if (mNum.find()) return mNum.group(1);
+            }
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+        }
+        return "";
+    }
+
     private List<String> extractEpisodes(String block, String hrefStart, String hrefEnd,
                                           String[] titleBounds, int sort) {
         return extractEpisodes(block, hrefStart, hrefEnd, titleBounds, sort, false);
@@ -4424,7 +4838,7 @@ public class XBPQ extends Spider {
             hp = he + hrefEnd.length();
             if (!ignoreFilter && !matchEpisodeFilter(href)) continue;
 
-            String title = extractEpisodeTitle(block, he, titleBounds);
+            String title = extractEpisodeTitleUniversal(block, he, titleBounds);
             if (title.contains("展开全部")) continue;
             if (title.isEmpty()) title = "第" + (eps.size() + 1) + "集";
             eps.add(title + "$" + addHttpPrefix(href));
@@ -4455,6 +4869,31 @@ public class XBPQ extends Spider {
         if (ts >= 0 && ts < hrefEnd + 120) {
             int te = block.indexOf(titleEnd, ts + titleStart.length());
             if (te > ts) return cleanHtml(block.substring(ts + titleStart.length(), te));
+        }
+        return "";
+    }
+
+    private String guessDetailRegionUniversal(String body) {
+        if (body == null || body.isEmpty()) return "";
+        try {
+            Matcher m = P_DETAIL_FIELD_FUZZY.matcher(body);
+            List<Integer> positions = new ArrayList<>();
+            while (m.find() && positions.size() < 5) {
+                positions.add(m.start());
+            }
+            if (positions.size() >= 2) {
+                List<Integer> upNodes = HtmlNodeHelper.findUpNodes(body, positions.get(0), 5);
+                for (int upPos : upNodes) {
+                    String node = HtmlNodeHelper.nodeString(body, upPos);
+                    int containCount = 0;
+                    for (int pos : positions) {
+                        if (pos >= upPos && pos < upPos + node.length()) containCount++;
+                    }
+                    if (containCount >= 2) return node;
+                }
+            }
+        } catch (Exception e) {
+            SpiderDebug.log(e);
         }
         return "";
     }
@@ -4584,6 +5023,9 @@ public class XBPQ extends Spider {
             }
         }
 
+        if (ctx.nodeString == null || ctx.nodeString.isEmpty()) {
+            ctx.nodeString = guessDetailRegionUniversal(body);
+        }
         if (ctx.nodeString == null || ctx.nodeString.isEmpty()) {
             ctx.nodeString = guessDetailContentRegion(body);
         }
@@ -5226,7 +5668,8 @@ public class XBPQ extends Spider {
             vodUrl = hexEscapeDecode(vodUrl);
             
             vodUrl = tryDecryptParsedUrl(body, vodUrl);
-            if (vodUrl.isEmpty() || !isVideoFormat(vodUrl)) return "";
+            if (vodUrl.isEmpty()) return "";
+            if (!isDirectLinkUniversal(vodUrl) && !isVideoFormat(vodUrl)) return "";
 
             JSONObject result = new JSONObject();
             result.put("parse", 0);
@@ -5389,13 +5832,16 @@ public class XBPQ extends Spider {
     }
 
     private String decryptPlayerUrl(String url, int encrypt) throws Exception {
+        String result;
         if (encrypt == 1) {
-            return java.net.URLDecoder.decode(url, "UTF-8");
+            result = java.net.URLDecoder.decode(url, "UTF-8");
         } else if (encrypt == 2) {
             String decoded = new String(Base64.decode(url, Base64.DEFAULT), "UTF-8");
-            return java.net.URLDecoder.decode(decoded, "UTF-8");
+            result = java.net.URLDecoder.decode(decoded, "UTF-8");
+        } else {
+            result = url;
         }
-        return url;
+        return decodeEscapesDeep(result);
     }
 
     private String buildPlayerResult(String videoUrl) throws JSONException {
@@ -5450,21 +5896,22 @@ public class XBPQ extends Spider {
     }
 
     private String extractJumpUrl(String html, String startFlag, String endFlag) {
+        String result = "";
         if (startFlag.contains("*")) {
-            
             Matcher m = P_PLAYER_OBJ.matcher(html);
             if (m.find()) {
                 try {
-                    return new JSONObject(m.group(1)).optString("url", "");
+                    result = new JSONObject(m.group(1)).optString("url", "");
+                    if (!result.isEmpty()) return decodeEscapesDeep(result);
                 } catch (JSONException e) {
                     SpiderDebug.log(e);
                 }
             }
             Matcher um = P_PLAYER_URL.matcher(html);
-            if (um.find()) return um.group(1);
+            if (um.find()) return decodeEscapesDeep(um.group(1));
         } else {
             List<String> results = subContent(html, startFlag, endFlag);
-            if (!results.isEmpty()) return results.get(0);
+            if (!results.isEmpty()) return decodeEscapesDeep(results.get(0));
         }
         return "";
     }
@@ -5747,6 +6194,10 @@ public class XBPQ extends Spider {
         }
 
         while (lookback != null) {
+            if (videos.length() >= MAX_PAGE_ITEMS) {
+                SpiderDebug.log("搜索结果已达单页上限 " + MAX_PAGE_ITEMS + "，截断");
+                break;
+            }
             int matchPos = content.indexOf(lookback.getString(0), pos);
             if (matchPos == -1) break;
 
@@ -5859,6 +6310,7 @@ public class XBPQ extends Spider {
 
         String vodPic = addHttpPrefix(RuleUtils.findSubString(node, 0, search.optJSONArray("vod_pic")));
         if (vodPic.isEmpty()) vodPic = guessValueVodPic(node, 0);
+        if (vodPic.isEmpty()) vodPic = addHttpPrefix(resolveLazyImage(node));
         if ("1".equals(getRuleVal("PicNeedProxy")) && !vodPic.isEmpty()) {
             vodPic = fixCover(vodPic, url);
         }
@@ -5880,6 +6332,183 @@ public class XBPQ extends Spider {
         return v;
     }
 
+    private static boolean isSsrfSafe(String url) {
+        if (url == null || url.isEmpty()) return false;
+        try {
+            java.net.URL u = new java.net.URL(url);
+            String scheme = u.getProtocol().toLowerCase();
+            if (SSRF_BLOCKED_SCHEMES.contains(scheme)) return false;
+            String host = u.getHost();
+            if (host != null) {
+                Matcher m = P_INTERNAL_IP.matcher(host);
+                if (m.find()) return false;
+            }
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private List<String> applyMirrorHostsUniversal(String url, String mirrorCfg) {
+        List<String> result = new ArrayList<>();
+        if (url == null || url.isEmpty()) return result;
+        result.add(url);
+        if (mirrorCfg == null || mirrorCfg.isEmpty()) return result;
+        try {
+            java.net.URL original = new java.net.URL(url);
+            String oldHost = original.getHost();
+            int oldPort = original.getPort();
+            String path = original.getPath();
+            String query = original.getQuery();
+            for (String raw : mirrorCfg.split("[,;#]")) {
+                String mirror = raw.trim();
+                if (mirror.isEmpty()) continue;
+                String scheme = original.getProtocol();
+                int protoIdx = mirror.indexOf("://");
+                if (protoIdx >= 0) {
+                    String s = mirror.substring(0, protoIdx).toLowerCase();
+                    if (s.equals("http") || s.equals("https")) {
+                        scheme = s;
+                        mirror = mirror.substring(protoIdx + 3);
+                    }
+                }
+                int slash = mirror.indexOf('/');
+                if (slash >= 0) mirror = mirror.substring(0, slash);
+                if (mirror.isEmpty()) continue;
+                String newHost = mirror;
+                int newPort = oldPort;
+                if (mirror.contains(":")) {
+                    String[] hp = mirror.split(":", 2);
+                    newHost = hp[0].trim();
+                    try {
+                        newPort = Integer.parseInt(hp[1].trim());
+                    } catch (Exception e) {
+                        newPort = oldPort;
+                    }
+                }
+                if (newHost.isEmpty()) continue;
+                if (newHost.equals(oldHost) && newPort == oldPort) continue;
+                StringBuilder sb = new StringBuilder();
+                sb.append(scheme).append("://").append(newHost);
+                if (newPort > 0) sb.append(":").append(newPort);
+                sb.append(path);
+                if (query != null) sb.append("?").append(query);
+                result.add(sb.toString());
+            }
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+        }
+        return result;
+    }
+
+    private String extractBtwafTokenUniversal(String html, JSONObject headers) {
+        if (html == null || html.isEmpty()) return "";
+        try {
+            Matcher mJson = P_BTWAF_TOKEN_JSON.matcher(html);
+            if (mJson.find()) return mJson.group(1);
+            Matcher mQuery = P_BTWAF_TOKEN_QUERY.matcher(html);
+            if (mQuery.find()) return mQuery.group(1);
+            if (headers != null) {
+                String cookie = headers.optString("cookie", headers.optString("Cookie", ""));
+                if (!cookie.isEmpty()) {
+                    Matcher mCookie = P_BTWAF_COOKIE.matcher(cookie);
+                    if (mCookie.find()) return mCookie.group(1);
+                }
+                String setCookie = headers.optString("set-cookie", headers.optString("Set-Cookie", ""));
+                if (!setCookie.isEmpty()) {
+                    Matcher mSet = P_BTWAF_COOKIE.matcher(setCookie);
+                    if (mSet.find()) return mSet.group(1);
+                }
+            }
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+        }
+        return "";
+    }
+
+    private String followRedirectsUniversal(String html, String baseUrl) {
+        if (html == null || html.isEmpty()) return html;
+        try {
+            for (int depth = 0; depth < 3; depth++) {
+                String redirectUrl = null;
+                Matcher mMeta = P_META_REFRESH.matcher(html);
+                if (mMeta.find()) redirectUrl = mMeta.group(1);
+                if (redirectUrl == null) {
+                    Matcher mLoc = P_LOCATION_HREF.matcher(html);
+                    if (mLoc.find()) redirectUrl = mLoc.group(1);
+                }
+                if (redirectUrl == null) {
+                    Matcher mWin = P_WINDOW_LOCATION.matcher(html);
+                    if (mWin.find()) redirectUrl = mWin.group(1);
+                }
+                if (redirectUrl == null) {
+                    Matcher mTimeout = P_SETTIMEOUT_LOCATION.matcher(html);
+                    if (mTimeout.find()) redirectUrl = mTimeout.group(1);
+                }
+                if (redirectUrl == null) break;
+                String lower = redirectUrl.toLowerCase();
+                if (lower.startsWith("javascript:") || lower.startsWith("#") || lower.startsWith("about:")) break;
+                if (!redirectUrl.startsWith("http")) {
+                    redirectUrl = resolveRedirectTarget(redirectUrl, baseUrl);
+                    if (redirectUrl.isEmpty()) break;
+                }
+                html = fetchUrl(redirectUrl, null);
+                if (html == null || html.isEmpty()) break;
+            }
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+        }
+        return html;
+    }
+
+    private String resolveRedirectTarget(String target, String baseUrl) {
+        if (target == null || target.isEmpty()) return "";
+        try {
+            if (baseUrl == null || baseUrl.isEmpty()) return addHttpPrefix(target);
+            return new java.net.URL(new java.net.URL(baseUrl), target.trim()).toString();
+        } catch (Exception e) {
+            return addHttpPrefix(target);
+        }
+    }
+
+    private String decodeResponseUniversal(byte[] body, String encoding, String contentType) {
+        if (body == null || body.length == 0) return "";
+        try {
+            String charset = "";
+            if (contentType != null && !contentType.isEmpty()) {
+                Pattern pCharset = Pattern.compile("charset=([\\w-]+)", Pattern.CASE_INSENSITIVE);
+                Matcher m = pCharset.matcher(contentType);
+                if (m.find()) charset = m.group(1);
+            }
+            if (charset.isEmpty() && body.length >= 3) {
+                String head = new String(body, 0, Math.min(body.length, 1024), StandardCharsets.ISO_8859_1);
+                Matcher mMeta = P_META_CHARSET.matcher(head);
+                if (mMeta.find()) charset = mMeta.group(1);
+            }
+            if (charset.isEmpty() && body.length >= 3) {
+                if ((body[0] & 0xFF) == 0xEF && (body[1] & 0xFF) == 0xBB && (body[2] & 0xFF) == 0xBF) {
+                    charset = "UTF-8";
+                } else if ((body[0] & 0xFF) == 0xFF && (body[1] & 0xFF) == 0xFE) {
+                    charset = "UTF-16LE";
+                } else if ((body[0] & 0xFF) == 0xFE && (body[1] & 0xFF) == 0xFF) {
+                    charset = "UTF-16BE";
+                }
+            }
+            if (charset.isEmpty() && encoding != null && !encoding.isEmpty()) {
+                charset = encoding;
+            }
+            if (charset.isEmpty()) charset = "UTF-8";
+            try {
+                return new String(body, java.nio.charset.Charset.forName(charset));
+            } catch (Exception e) {
+                return new String(body, StandardCharsets.UTF_8);
+            }
+        } catch (Exception e) {
+            SpiderDebug.log(e);
+        }
+        return "";
+    }
+
     protected String fetchUrl(String url, JSONObject headers) {
         return fetchUrlInternal(url, headers, true);
     }
@@ -5893,7 +6522,7 @@ public class XBPQ extends Spider {
             
             url = applyUrlAppend(url);
             
-            if (isInternalUrl(url)) {
+            if (isInternalUrl(url) || !isSsrfSafe(url)) {
                 SpiderDebug.log(safeLog("fetchUrl SSRF blocked: " + url));
                 failMessage = "SSRF blocked";
                 return "";
@@ -5911,6 +6540,10 @@ public class XBPQ extends Spider {
             }
 
             html = handleAntiCrawler(url, html, headers);
+
+            if (!isAntiCrawlerPage(html) && isLikelyRedirectPage(html)) {
+                html = followRedirectsUniversal(html, url);
+            }
 
             if (isFail(lastResponseCode) && isAntiCrawlerPage(html)) {
                 failMessage = "访问失败: " + lastResponseCode;
@@ -5936,19 +6569,17 @@ public class XBPQ extends Spider {
     private String decodeResponseBody(okhttp3.Response resp) throws java.io.IOException {
         okhttp3.ResponseBody body = resp.body();
         if (body == null) return "";
+        byte[] bytes = body.bytes();
         String charset = getRuleVal("encoding").trim();
-        if (charset.isEmpty()) return body.string();
-        try {
-            return new String(body.bytes(), java.nio.charset.Charset.forName(charset));
-        } catch (Exception e) {
-            
-            SpiderDebug.log(safeLog("「编码」配置无效(" + charset + ")，回退默认解码: " + e.getMessage()));
+        if (!charset.isEmpty()) {
             try {
-                return body.string();
-            } catch (Exception ignored) {
-                return "";
+                return new String(bytes, java.nio.charset.Charset.forName(charset));
+            } catch (Exception e) {
+
+                SpiderDebug.log(safeLog("「编码」配置无效(" + charset + ")，回退自动嗅探解码: " + e.getMessage()));
             }
         }
+        return decodeResponseUniversal(bytes, "", resp.header("Content-Type"));
     }
 
     private static final Map<String, Long> LAST_REQUEST_MS = new ConcurrentHashMap<>();
@@ -5991,23 +6622,16 @@ public class XBPQ extends Spider {
 
     private String tryMirrorHosts(String url, JSONObject headers) {
         String cfg = getRuleVal("mirror_hosts");
-        
+
         String fallback = variableMap.getOrDefault("主页url-c", "");
         if (fallback.isEmpty()) fallback = getRuleVal("home_url_c");
         if (!fallback.isEmpty()) cfg = cfg.isEmpty() ? fallback : cfg + ";" + fallback;
         if (cfg.isEmpty() || url == null || url.isEmpty()) return "";
         try {
-            java.net.URL original = new java.net.URL(url);
-            String oldHost = original.getHost();
-            for (String raw : cfg.split("[;#]")) {
-                String mirror = raw.trim();
-                if (mirror.isEmpty()) continue;
-                
-                String host = mirror.replaceFirst("^https?://", "").split("/")[0];
-                if (host.equals(oldHost)) continue;
-                String scheme = mirror.startsWith("http") ? mirror.split("://")[0] : original.getProtocol();
-                String candidate = new java.net.URL(scheme, host, original.getPort(), original.getFile()).toString();
-                SpiderDebug.log(safeLog("镜像域名切换: " + host));
+            List<String> candidates = applyMirrorHostsUniversal(url, cfg);
+            for (int i = 1; i < candidates.size(); i++) {
+                String candidate = candidates.get(i);
+                SpiderDebug.log(safeLog("镜像域名切换: " + candidate));
                 String result = fetchUrlInternal(candidate, headers, false);
                 if (!result.isEmpty()) return result;
             }
@@ -6224,6 +6848,16 @@ public class XBPQ extends Spider {
                 || isRefreshWaitPage(html);
     }
 
+    private boolean isLikelyRedirectPage(String html) {
+        if (html == null) return false;
+        if (P_META_REFRESH.matcher(html).find()) return true;
+        String trimmed = html.trim();
+        if (trimmed.isEmpty() || trimmed.length() > 2048) return false;
+        String lower = trimmed.toLowerCase();
+        return lower.contains("location.href") || lower.contains("window.location")
+                || lower.contains("location.replace(") || lower.contains("settimeout");
+    }
+
     protected boolean isRefreshWaitPage(String html) {
         if (html == null || html.isEmpty()) return false;
         return html.contains("页面加载中") && html.contains("location.reload");
@@ -6426,16 +7060,13 @@ public class XBPQ extends Spider {
     }
 
     private String extractBtwafTokenEnhanced(String html) {
-        
-        Pattern p1 = P_BTWAF_TOKEN_JSON;
-        Matcher m1 = p1.matcher(html);
-        if (m1.find()) return m1.group(1);
 
-        Pattern p2 = P_BTWAF_TOKEN_QUERY;
-        Matcher m2 = p2.matcher(html);
-        if (m2.find()) return m2.group(1);
-
-        return "";
+        JSONObject hdr = null;
+        try {
+            hdr = headerObject();
+        } catch (Exception ignored) {
+        }
+        return extractBtwafTokenUniversal(html, hdr);
     }
 
     private String extractRedirectUrl(String html) {
@@ -6451,6 +7082,10 @@ public class XBPQ extends Spider {
         Pattern p3 = P_WINDOW_LOCATION;
         Matcher m3 = p3.matcher(html);
         if (m3.find()) return m3.group(1).trim();
+
+        Pattern p4 = P_SETTIMEOUT_LOCATION;
+        Matcher m4 = p4.matcher(html);
+        if (m4.find()) return m4.group(1).trim();
 
         return "";
     }

@@ -199,6 +199,7 @@ public final class XBPQKey {
         k(Module.LIST, "listjsonnote", "列表JSON状态");
         // —— 标准模板补齐（模板100）——
         k(Module.LIST, "skip_bad_item", "坏条目跳过", "skipBadItem");
+        k(Module.LIST, "list_total", "列表总页数规则", "listTotal", "总页数", "总页数规则", "总数规则");
 
         // ==================== 搜索 ====================
         k(Module.SEARCH, "search_url", "搜索url");
@@ -283,6 +284,7 @@ public final class XBPQKey {
         k(Module.PROXY, "baseEncodeUrl", "图片代理前缀");
         k(Module.PROXY, "secretKey", "代理密钥");
         k(Module.PROXY, "pic_allow_domains", "图片代理白名单", "picAllowDomains", "代理白名单", "代理域名白名单");
+        k(Module.PROXY, "img_attr", "图片属性", "imgAttr", "懒加载属性", "图片真实地址属性");
         k(Module.PROXY, "danmuUrl", "弹幕url");
         k(Module.PROXY, "liveUrl", "直播url");
 
