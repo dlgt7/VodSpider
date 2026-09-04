@@ -282,6 +282,7 @@ public final class XBPQKey {
         k(Module.PROXY, "PicNeedProxy", "图片代理");
         k(Module.PROXY, "baseEncodeUrl", "图片代理前缀");
         k(Module.PROXY, "secretKey", "代理密钥");
+        k(Module.PROXY, "pic_allow_domains", "图片代理白名单", "picAllowDomains", "代理白名单", "代理域名白名单");
         k(Module.PROXY, "danmuUrl", "弹幕url");
         k(Module.PROXY, "liveUrl", "直播url");
 
