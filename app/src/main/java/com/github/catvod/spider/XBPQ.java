@@ -6561,8 +6561,40 @@ public class XBPQ extends Spider {
             if (!requestFailed) Init.show(failMessage);
             requestFailed = true;
             SpiderDebug.log(safeLog("fetchUrl error: " + failMessage));
-            
-            return allowMirror ? tryMirrorHosts(url, headers) : "";
+
+            // 无镜像域名时，利用 retries 配置做本地重试（应对间歇性网络抖动）
+            if (!allowMirror || tryMirrorHosts(url, headers).isEmpty()) {
+                int retryCount = parseIntSafely(getRuleVal("retries"), 0);
+                if (retryCount > 0) {
+                    for (int i = 0; i < retryCount; i++) {
+                        try {
+                            long delay = 800L + (long)(Math.random() * 600);
+                            Thread.sleep(delay);
+                            Map<String, String> retryHeaders = new HashMap<>(getHeaders(url));
+                            if (headers != null) retryHeaders.putAll(headers);
+                            okhttp3.Response retryResp = OkHttp.newCall(url, retryHeaders);
+                            int retryCode;
+                            String retryHtml;
+                            try {
+                                retryCode = retryResp.code();
+                                retryHtml = decodeResponseBody(retryResp);
+                            } finally {
+                                retryResp.close();
+                            }
+                            if (retryCode >= 200 && retryCode < 400) {
+                                SpiderDebug.log(safeLog("fetchUrl 重试成功 (attempt " + (i + 1) + ")"));
+                                requestFailed = false;
+                                failMessage = "";
+                                return cleanHtmlResponse(retryHtml);
+                            }
+                        } catch (Exception retryEx) {
+                            SpiderDebug.log(safeLog("fetchUrl 重试失败 (attempt " + (i + 1) + "): " + retryEx.getMessage()));
+                        }
+                    }
+                }
+                return "";
+            }
+            return "";
         }
     }
 
