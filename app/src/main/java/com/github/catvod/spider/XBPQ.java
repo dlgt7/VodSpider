@@ -134,6 +134,8 @@ public class XBPQ extends Spider {
     private static final Pattern P_PLAYER_URL = Pattern.compile("var player_\\w+\\s*=\\s*\\{[\\s\\S]*?\"url\"\\s*:\\s*\"([^\"]+)\"");
     
     private static final Pattern P_ENCRYPT = Pattern.compile("\"encrypt\"\\s*:\\s*(\\d+)");
+
+    private static final Pattern P_VIDEO_DIRECT = Pattern.compile("(?:https?:)?//[^\"'\\s<>]+?\\.(?:m3u8|mp4)(?:\\?[^\"'\\s<>]*)?", Pattern.CASE_INSENSITIVE);
     
     private static final Pattern P_UNICODE_SEQ = Pattern.compile("(\\\\u([0-9A-Fa-f]{4}))");
     
@@ -5703,6 +5705,10 @@ public class XBPQ extends Spider {
             String jumpResult = tryJumpUrl(url, html);
             if (jumpResult != null) return appendDanmuParam(jumpResult);
 
+            // 兜底：规则提取失败时，直接扫描播放页中的视频直链
+            String scannedResult = tryScanVideoLink(url, html);
+            if (scannedResult != null) return appendDanmuParam(scannedResult);
+
             return buildSniffResult(url);
         } catch (Exception e) {
             SpiderDebug.log(e);
@@ -5928,6 +5934,59 @@ public class XBPQ extends Spider {
             SpiderDebug.log("解密播放地址失败，返回原始URL: " + e.getMessage());
         }
         return parsedUrl;
+    }
+
+    /**
+     * 播放页兜底提取：规则 jump_url 提取失败时，直接从播放页 HTML 中提取视频直链。
+     * 策略链：MacCMS 播放器对象(var player_xxx={...}) → 通用 m3u8/mp4 直链扫描。
+     */
+    private String tryScanVideoLink(String webUrl, String html) throws Exception {
+        if (html == null || html.isEmpty()) return null;
+
+        // 策略1：MacCMS 标准播放器对象（不依赖 Anal_MacPlayer 配置）
+        try {
+            Matcher m = P_PLAYER_OBJ.matcher(html);
+            if (m.find()) {
+                JSONObject player = new JSONObject(m.group(1));
+                String videoUrl = player.optString("url", "");
+                if (!videoUrl.isEmpty()) {
+                    if (player.has("encrypt")) {
+                        videoUrl = decryptPlayerUrl(videoUrl, player.getInt("encrypt"));
+                    } else {
+                        videoUrl = decodeEscapesDeep(videoUrl);
+                    }
+                    if (!videoUrl.startsWith("http") && !videoUrl.startsWith("//")) {
+                        videoUrl = resolveRedirectTarget(videoUrl, webUrl);
+                    }
+                    String built = buildPlayerResult(videoUrl);
+                    if (built != null) return built;
+                }
+            }
+        } catch (Exception e) {
+            SpiderDebug.log(safeLog("tryScanVideoLink 播放器对象提取失败: " + e.getMessage()));
+        }
+
+        // 策略2：通用 m3u8/mp4 直链扫描
+        try {
+            Matcher vm = P_VIDEO_DIRECT.matcher(html);
+            while (vm.find()) {
+                String candidate = decodeEscapesDeep(vm.group());
+                if (candidate.startsWith("//")) {
+                    candidate = (webUrl != null && webUrl.startsWith("https") ? "https:" : "http:") + candidate;
+                }
+                if (Util.isVideoFormat(candidate) || isVideoFormat(candidate)) {
+                    SpiderDebug.log(safeLog("播放页直链兜底命中: " + candidate));
+                    JSONObject result = new JSONObject();
+                    result.put("parse", 0);
+                    result.put("playUrl", "");
+                    result.put("url", candidate);
+                    return result.toString();
+                }
+            }
+        } catch (Exception e) {
+            SpiderDebug.log(safeLog("tryScanVideoLink 直链扫描失败: " + e.getMessage()));
+        }
+        return null;
     }
 
     private String buildSniffResult(String url) throws JSONException {
