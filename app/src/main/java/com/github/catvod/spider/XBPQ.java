@@ -6617,48 +6617,55 @@ public class XBPQ extends Spider {
         } catch (Exception e) {
             lastResponseCode = 0;
             failMessage = e.getMessage() == null ? "请求异常" : e.getMessage();
-            if (!requestFailed) Init.show(failMessage);
-            requestFailed = true;
             SpiderDebug.log(safeLog("fetchUrl error: " + failMessage));
 
-            // 无镜像域名时，利用 retries 配置做本地重试（应对间歇性网络抖动）
-            if (!allowMirror || tryMirrorHosts(url, headers).isEmpty()) {
-                int retryCount = parseIntSafely(getRuleVal("retries"), 0);
-                if (retryCount > 0) {
-                    for (int i = 0; i < retryCount; i++) {
-                        try {
-                            long delay = 800L + (long)(Math.random() * 600);
-                            Thread.sleep(delay);
-                            Map<String, String> retryHeaders = new HashMap<>(getHeaders(url));
-                            if (headers != null) {
-                                java.util.Iterator<String> it = headers.keys();
-                                while (it.hasNext()) {
-                                    String k = it.next();
-                                    retryHeaders.put(k, headers.getString(k));
-                                }
-                            }
-                            okhttp3.Response retryResp = OkHttp.newCall(url, retryHeaders);
-                            int retryCode;
-                            String retryHtml;
-                            try {
-                                retryCode = retryResp.code();
-                                retryHtml = decodeResponseBody(retryResp);
-                            } finally {
-                                retryResp.close();
-                            }
-                            if (retryCode >= 200 && retryCode < 400) {
-                                SpiderDebug.log(safeLog("fetchUrl 重试成功 (attempt " + (i + 1) + ")"));
-                                requestFailed = false;
-                                failMessage = "";
-                                return cleanHtmlResponse(retryHtml);
-                            }
-                        } catch (Exception retryEx) {
-                            SpiderDebug.log(safeLog("fetchUrl 重试失败 (attempt " + (i + 1) + "): " + retryEx.getMessage()));
+            // 先尝试镜像域名切换（成功则静默返回，不弹提示）
+            if (allowMirror) {
+                String mirrorResult = tryMirrorHosts(url, headers);
+                if (!mirrorResult.isEmpty()) {
+                    requestFailed = false;
+                    failMessage = "";
+                    return mirrorResult;
+                }
+            }
+
+            // 镜像失败，利用 retries 配置做本地重试（应对间歇性网络抖动）
+            int retryCount = parseIntSafely(getRuleVal("retries"), 0);
+            for (int i = 0; i < retryCount; i++) {
+                try {
+                    long delay = 800L + (long)(Math.random() * 600);
+                    Thread.sleep(delay);
+                    Map<String, String> retryHeaders = new HashMap<>(getHeaders(url));
+                    if (headers != null) {
+                        java.util.Iterator<String> it = headers.keys();
+                        while (it.hasNext()) {
+                            String k = it.next();
+                            retryHeaders.put(k, headers.getString(k));
                         }
                     }
+                    okhttp3.Response retryResp = OkHttp.newCall(url, retryHeaders);
+                    int retryCode;
+                    String retryHtml;
+                    try {
+                        retryCode = retryResp.code();
+                        retryHtml = decodeResponseBody(retryResp);
+                    } finally {
+                        retryResp.close();
+                    }
+                    if (retryCode >= 200 && retryCode < 400) {
+                        SpiderDebug.log(safeLog("fetchUrl 重试成功 (attempt " + (i + 1) + ")"));
+                        requestFailed = false;
+                        failMessage = "";
+                        return cleanHtmlResponse(retryHtml);
+                    }
+                } catch (Exception retryEx) {
+                    SpiderDebug.log(safeLog("fetchUrl 重试失败 (attempt " + (i + 1) + "): " + retryEx.getMessage()));
                 }
-                return "";
             }
+
+            // 所有手段均失败才提示用户（requestFailed 防重复弹窗）
+            if (!requestFailed) Init.show(failMessage);
+            requestFailed = true;
             return "";
         }
     }
