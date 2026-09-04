@@ -5819,22 +5819,29 @@ public class XBPQ extends Spider {
     }
 
     private String tryMacPlayer(String html) throws Exception {
-        
+
         String mode = rule.optString("Anal_MacPlayer", "0");
         if (!"1".equals(mode) && !"2".equals(mode)) return null;
 
-        Pattern scriptPattern = P_PLAYER_OBJ;
-        Matcher scriptMatcher = scriptPattern.matcher(html);
-        if (!scriptMatcher.find()) return null;
+        // 内部独立容错：单个播放器对象解析异常不应中断整条播放链
+        try {
+            Pattern scriptPattern = P_PLAYER_OBJ;
+            Matcher scriptMatcher = scriptPattern.matcher(html);
+            if (!scriptMatcher.find()) return null;
 
-        JSONObject player = new JSONObject(scriptMatcher.group(1));
-        String videoUrl = player.getString("url");
+            JSONObject player = new JSONObject(scriptMatcher.group(1));
+            String videoUrl = player.optString("url", "");
+            if (videoUrl.isEmpty()) return null;
 
-        if (player.has("encrypt")) {
-            videoUrl = decryptPlayerUrl(videoUrl, player.getInt("encrypt"));
+            if (player.has("encrypt")) {
+                videoUrl = decryptPlayerUrl(videoUrl, player.optInt("encrypt", 0));
+            }
+
+            return buildPlayerResult(videoUrl);
+        } catch (Exception e) {
+            SpiderDebug.log(safeLog("tryMacPlayer 解析失败: " + e.getMessage()));
+            return null;
         }
-
-        return buildPlayerResult(videoUrl);
     }
 
     private String decryptPlayerUrl(String url, int encrypt) throws Exception {
@@ -5883,6 +5890,21 @@ public class XBPQ extends Spider {
         parsedUrl = parsedUrl.replace("\\/", "/");
 
         if (parsedUrl.isEmpty()) return null;
+
+        // 相对路径/协议相对路径补全为绝对地址，避免播放器拿到不可播的地址
+        if (!parsedUrl.startsWith("http://") && !parsedUrl.startsWith("https://")) {
+            String resolved = parsedUrl.startsWith("//")
+                    ? (webUrl != null && webUrl.startsWith("https") ? "https:" + parsedUrl : "http:" + parsedUrl)
+                    : resolveRedirectTarget(parsedUrl, webUrl);
+            if (!resolved.isEmpty()) parsedUrl = resolved;
+        }
+
+        // 解析后仍是相对路径则不作为直链返回，交给后续兜底策略
+        String lowerParsed = parsedUrl.toLowerCase();
+        if (!lowerParsed.startsWith("http://") && !lowerParsed.startsWith("https://")
+                && !lowerParsed.startsWith("magnet:") && !lowerParsed.startsWith("thunder:")) {
+            return null;
+        }
 
         if (Util.isVideoFormat(parsedUrl) || isVideoFormat(parsedUrl)) {
             JSONObject result = new JSONObject();
@@ -5958,8 +5980,15 @@ public class XBPQ extends Spider {
                     if (!videoUrl.startsWith("http") && !videoUrl.startsWith("//")) {
                         videoUrl = resolveRedirectTarget(videoUrl, webUrl);
                     }
-                    String built = buildPlayerResult(videoUrl);
-                    if (built != null) return built;
+                    // 解析后仍是相对路径则放弃该结果，交给策略2/嗅探
+                    String lowerVideo = videoUrl.toLowerCase();
+                    if (!lowerVideo.startsWith("http://") && !lowerVideo.startsWith("https://")) {
+                        videoUrl = "";
+                    }
+                    if (!videoUrl.isEmpty()) {
+                        String built = buildPlayerResult(videoUrl);
+                        if (built != null) return built;
+                    }
                 }
             }
         } catch (Exception e) {
