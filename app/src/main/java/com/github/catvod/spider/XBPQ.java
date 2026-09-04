@@ -57,6 +57,10 @@ public class XBPQ extends Spider {
 
     private static final int MAX_MATCH_COUNT = 30;
 
+    private static final int MAX_EPISODE_COUNT = 500;
+
+    private static final int MAX_PLAY_LINES = 30;
+
     private static final int MAX_PAGE_ITEMS = 100;
 
     private static final int CATEGORY_ID_THRESHOLD = 100;
@@ -2313,6 +2317,7 @@ public class XBPQ extends Spider {
 
     protected List<String> extractPlayFromByCss(String html, int expectedSize) {
         List<String> result = new ArrayList<>();
+        if (expectedSize <= 0) return result;
         try {
             JSONObject playlist = rule.getJSONObject("playlist");
             String fromCss = playlist.optString("vod_play_from_css", "");
@@ -4280,9 +4285,30 @@ public class XBPQ extends Spider {
         return vec;
     }
 
+    private void alignPlaySources(List<String> vodPlayFrom, List<String> vodPlayUrl) {
+        int urlSize = vodPlayUrl == null ? 0 : vodPlayUrl.size();
+        if (vodPlayFrom == null || urlSize == 0 || vodPlayFrom.size() == urlSize) return;
+        if (vodPlayFrom.size() > urlSize) {
+            SpiderDebug.log("[播放线路] 线路名(" + vodPlayFrom.size() + ")多于选集组(" + urlSize + ")，已截断对齐");
+            vodPlayFrom.subList(urlSize, vodPlayFrom.size()).clear();
+        } else {
+            SpiderDebug.log("[播放线路] 线路名(" + vodPlayFrom.size() + ")少于选集组(" + urlSize + ")，已补占位线路");
+            for (int i = vodPlayFrom.size() + 1; i <= urlSize; i++) {
+                vodPlayFrom.add("播放列表" + i);
+            }
+        }
+    }
+
     public List<String> findVodPlayFrom(String content, int expectedSize) {
         try {
             JSONObject playlist = this.rule.getJSONObject("playlist");
+            if (isCssModeEnabled(playlist)) {
+                List<String> cssFrom = extractPlayFromByCss(content, expectedSize);
+                if (!cssFrom.isEmpty()) {
+                    SpiderDebug.log("[播放线路] CSS 模式提取线路名 " + cssFrom.size() + " 条");
+                    return cssFrom;
+                }
+            }
             if (!playlist.has("vod_play_from")) {
                 
                 List<String> fromArrayResult = tryExtractFromArray(content, expectedSize);
@@ -4407,30 +4433,63 @@ public class XBPQ extends Spider {
         return lines;
     }
 
+    private static int countPlayEpisodes(List<String> lines) {
+        int n = 0;
+        if (lines == null) return 0;
+        for (String line : lines) {
+            if (line == null || line.isEmpty()) continue;
+            n += line.split("#").length;
+        }
+        return n;
+    }
+
+    private void logPlayStrategy(String strategy, long startNanos, List<String> lines) {
+        try {
+            SpiderDebug.log("[播放提取] 策略=" + strategy
+                    + " 线路=" + (lines == null ? 0 : lines.size())
+                    + " 选集=" + countPlayEpisodes(lines)
+                    + " 耗时=" + (System.nanoTime() - startNanos) / 1000000 + "ms");
+        } catch (Exception ignored) {
+        }
+    }
+
     public List<String> findVodPlayUrl(String content) {
-        List<String> tmpPlayUrl = new ArrayList<>();
         List<String> playUrl = new ArrayList<>();
         try {
             JSONObject playlist = this.rule.getJSONObject("playlist");
             int sort = playlist.optInt("sort", 0);
-            Set<Integer> removeSet = new HashSet<>();
+            long startNanos = System.nanoTime();
+
+            if (isCssModeEnabled(playlist)) {
+                List<String> cssResult = extractPlayUrlByCss(content);
+                if (cssResult != null && !cssResult.isEmpty()) {
+                    logPlayStrategy("css", startNanos, cssResult);
+                    return cssResult;
+                }
+            }
 
             List<String> fromLinkResult = tryFromLinkMode(content);
-            if (fromLinkResult != null) return fromLinkResult;
+            if (fromLinkResult != null) {
+                logPlayStrategy("from_link", startNanos, fromLinkResult);
+                return fromLinkResult;
+            }
 
             List<String> multiLineResult = tryMultiLineMode(content);
-            if (multiLineResult != null) return multiLineResult;
+            if (multiLineResult != null) {
+                logPlayStrategy("multi_line", startNanos, multiLineResult);
+                return multiLineResult;
+            }
 
-            List<String> playArrayResult = tryPlayArrayMode(content, playlist, sort, tmpPlayUrl, removeSet);
-            if (playArrayResult != null) return playArrayResult;
+            List<String> playArrayResult = tryPlayArrayMode(content, playlist, sort);
+            if (playArrayResult != null) {
+                logPlayStrategy("play_array", startNanos, playArrayResult);
+                return playArrayResult;
+            }
 
             List<String> playArrayDefault = tryPlayArrayDefaultMode(content, sort);
-            if (playArrayDefault != null) return playArrayDefault;
-
-            for (int i = 0; i < tmpPlayUrl.size(); ++i) {
-                if (!removeSet.contains(i)) {
-                    playUrl.add(tmpPlayUrl.get(i));
-                }
+            if (playArrayDefault != null) {
+                logPlayStrategy("play_array_default", startNanos, playArrayDefault);
+                return playArrayDefault;
             }
 
             if (playUrl.isEmpty()) {
@@ -4550,7 +4609,7 @@ public class XBPQ extends Spider {
                 if (!playTwice.isEmpty()) {
                     lineBody = applySecondCut(lineBody, applyOrSelector(playTwice));
                 }
-                List<String> eps = tryPlayArrayMode(lineBody, playlist, sort, new ArrayList<>(), new HashSet<>());
+                List<String> eps = tryPlayArrayMode(lineBody, playlist, sort);
                 if (eps != null && !eps.isEmpty()) {
                     lines.add(TextUtils.join("#", eps));
                 }
@@ -4579,8 +4638,8 @@ public class XBPQ extends Spider {
         }
     }
 
-    private List<String> tryPlayArrayMode(String content, JSONObject playlist, int sort,
-                                           List<String> tmpPlayUrl, Set<Integer> removeSet) throws JSONException {
+    private List<String> tryPlayArrayMode(String content, JSONObject playlist, int sort) throws JSONException {
+        List<String> tmpPlayUrl = new ArrayList<>();
         String playArrayRule = getRuleVal("play_array");
         String urlUrlRule = getRuleVal("url_url");
         if (playArrayRule.isEmpty() || urlUrlRule.isEmpty() ||
@@ -4602,7 +4661,7 @@ public class XBPQ extends Spider {
 
         boolean filterConfigured = !getRuleVal("episode_filter").isEmpty();
 
-        while (true) {
+        while (tmpPlayUrl.size() < MAX_PLAY_LINES) {
             int ls = content.indexOf(listStart, listPos);
             if (ls < 0) break;
             int le = content.indexOf(listEnd, ls + listStart.length());
@@ -4633,11 +4692,7 @@ public class XBPQ extends Spider {
 
         if (!tmpPlayUrl.isEmpty()) {
             SpiderDebug.log("playArray: blocks=" + blockCount + " episodes=" + tmpPlayUrl.size());
-            List<String> result = new ArrayList<>();
-            for (int i = 0; i < tmpPlayUrl.size(); ++i) {
-                if (!removeSet.contains(i)) result.add(tmpPlayUrl.get(i));
-            }
-            return result;
+            return tmpPlayUrl;
         }
         return null;
     }
@@ -4780,7 +4835,7 @@ public class XBPQ extends Spider {
             if (!eps.isEmpty()) return eps;
             Matcher mOnclick = P_ONCLICK_PLAYER.matcher(block);
             idx = 0;
-            while (mOnclick.find() && eps.size() < MAX_MATCH_COUNT) {
+            while (mOnclick.find() && eps.size() < MAX_EPISODE_COUNT) {
                 String url = mOnclick.group(1);
                 int end = mOnclick.end();
                 String title = extractEpisodeTitleUniversal(block, end, DEFAULT_TITLE_BOUNDS);
@@ -5272,6 +5327,7 @@ public class XBPQ extends Spider {
 
             List<String> vodPlayUrl = obtainPlayUrlList(content, playlist, vinfo);
             List<String> vodPlayFrom = findVodPlayFrom(content, vodPlayUrl == null ? 0 : vodPlayUrl.size());
+            alignPlaySources(vodPlayFrom, vodPlayUrl);
 
             String epiPrefix = resolveEpiUrlVal(getRuleVal("epiurl_prefix"), body, currentDetailUrl(vinfo));
             String epiSuffix = resolveEpiUrlVal(getRuleVal("epiurl_suffix"), body, currentDetailUrl(vinfo));
@@ -5335,7 +5391,8 @@ public class XBPQ extends Spider {
                     int idx = ep.indexOf('$');
                     String name = idx >= 0 ? ep.substring(0, idx) : ep;
                     String url = idx >= 0 ? ep.substring(idx + 1) : "";
-                    if (dedup && !url.isEmpty() && !seenUrl.add(url)) continue;
+                    if (url.isEmpty()) continue;
+                    if (dedup && !seenUrl.add(url)) continue;
                     kept.add(new String[]{name, url});
                 }
                 
@@ -5803,7 +5860,7 @@ public class XBPQ extends Spider {
     }
 
     private void applyPlayHeader(JSONObject result, String webUrl) throws JSONException {
-        String playHeader = rule.optString("play_header", "");
+        String playHeader = getRuleVal("play_header");
         if (playHeader.isEmpty()) return;
 
         if (playHeader.startsWith("{")) {
@@ -5821,6 +5878,10 @@ public class XBPQ extends Spider {
     private String tryMacPlayer(String html) throws Exception {
 
         String mode = rule.optString("Anal_MacPlayer", "0");
+        if (!"1".equals(mode) && !"2".equals(mode)) {
+            // auto_maccms 为 Anal_MacPlayer 的别名触发键：此前从未被读取，接线只影响显式配置了该键的规则
+            mode = getRuleVal("auto_maccms");
+        }
         if (!"1".equals(mode) && !"2".equals(mode)) return null;
 
         // 内部独立容错：单个播放器对象解析异常不应中断整条播放链
