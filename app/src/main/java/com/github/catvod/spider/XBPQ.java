@@ -5885,7 +5885,7 @@ public class XBPQ extends Spider {
         return "";
     }
 
-    @Override
+
     /** 当前 playerContent 调用传入的 VIP 域名列表（框架透传，此前从未被消费） */
     private List<String> currentVipFlags = null;
 
@@ -5902,6 +5902,7 @@ public class XBPQ extends Spider {
         return false;
     }
 
+    @Override
     public String playerContent(String flag, String url, List<String> vipFlags) throws Exception {
         try {
             fetchRule();
