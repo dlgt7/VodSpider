@@ -5886,10 +5886,27 @@ public class XBPQ extends Spider {
     }
 
     @Override
+    /** 当前 playerContent 调用传入的 VIP 域名列表（框架透传，此前从未被消费） */
+    private List<String> currentVipFlags = null;
+
+    /** VIP 判定：内置域名表 + 框架透传的 vipFlags 域名列表 */
+    private boolean isVipPlayUrl(String url) {
+        if (url == null || url.isEmpty()) return false;
+        if (Util.isVip(url)) return true;
+        if (currentVipFlags != null) {
+            String lower = url.toLowerCase();
+            for (String vf : currentVipFlags) {
+                if (vf != null && !vf.trim().isEmpty() && lower.contains(vf.trim().toLowerCase())) return true;
+            }
+        }
+        return false;
+    }
+
     public String playerContent(String flag, String url, List<String> vipFlags) throws Exception {
         try {
             fetchRule();
             initEnhancedConfig();
+            this.currentVipFlags = vipFlags;
 
             String forcePlayResult = tryForcePlay(url);
             if (forcePlayResult != null) return appendDanmuParam(forcePlayResult);
@@ -5990,7 +6007,7 @@ public class XBPQ extends Spider {
             
             result.put("parse", 0);
             result.put("playUrl", "");
-        } else if (Util.isVip(webUrl)) {
+        } else if (isVipPlayUrl(webUrl)) {
             result.put("parse", 1);
             result.put("jx", "1");
             result.put("url", webUrl);
@@ -6063,7 +6080,7 @@ public class XBPQ extends Spider {
     }
 
     private String buildPlayerResult(String videoUrl) throws JSONException {
-        if (Util.isVip(videoUrl)) {
+        if (isVipPlayUrl(videoUrl)) {
             JSONObject result = new JSONObject();
             result.put("parse", 1);
             result.put("jx", "1");
@@ -6118,7 +6135,7 @@ public class XBPQ extends Spider {
             result.put("url", parsedUrl);
             return result.toString();
         }
-        if (Util.isVip(parsedUrl)) {
+        if (isVipPlayUrl(parsedUrl)) {
             JSONObject result = new JSONObject();
             result.put("parse", 1);
             result.put("jx", "1");
@@ -6627,6 +6644,12 @@ public class XBPQ extends Spider {
 
     private JSONObject buildSearchVideo(String node, String vodId, JSONObject search, String url) throws JSONException {
         JSONObject v = new JSONObject();
+        // 与 CSS 搜索分支一致，搜索链接前缀/后缀在打包前拼入
+        String sPre = getRuleVal("search_prefix");
+        String sSuf = getRuleVal("search_suffix");
+        if (!sPre.isEmpty() || !sSuf.isEmpty()) {
+            vodId = sPre + vodId + sSuf;
+        }
         v.put("vod_id", vodId);
         v.put("vod_name", RuleUtils.findSubString(node, 0, search.optJSONArray("vod_name")));
 
