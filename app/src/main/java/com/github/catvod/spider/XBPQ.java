@@ -265,8 +265,8 @@ public class XBPQ extends Spider {
         public String diff;             
         public int startPos;            
         public int endPos;              
-        public List<Integer> uploads;   
-        public int matchedUpNodePos;    
+        public List<Integer> uploads;
+        public int matchedUpNodePos = -1;
         public int diffStartIndex;      
         public int diffEndIndex;        
 
