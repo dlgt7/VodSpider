@@ -1,351 +1,387 @@
 // XBPQ 规则配置写法说明（英文键版本）
-// 基于 com.github.catvod.spider.XBPQ.java 源码及 RuleConfig.CHINESE_KEY_MAP 整理
-// 所有键均已与代码逐一核对；字段值留空 / "空" / "&&" 视为未配置
+// 基于 com.github.catvod.spider.XBPQ.java 与 XBPQKey.java 源码逐一核对整理
+// 所有键均已在 XBPQKey 注册表中登记；字段值留空 / "空" / "&&" 视为未配置
 //
 // 书写规范：
-//   && 截取语法："前缀&&后缀" → 截取前缀与后缀之间的内容
+//   && 截取语法："前缀&&后缀" → 截取前缀与后缀之间的内容（正则转义后 DOTALL 非贪婪匹配，命中多处取全部）
+//   多段 &&："A&&B&&C&&D" → 逐段定位：先取 A..B，再在其中取 C..D
 //   备用选择器："规则1||规则2" → 依次尝试，取第一个非空结果
-//   后处理器：值末尾追加 [替换:旧>>新] / [包含:关键词] / [不包含:关键词]
-//   CSS 模式：规则以 "css:" 或 "css://" 开头时使用 Jsoup CSS 选择器（由 ExtractorFactory 自动分流）
-//   p:tag->text 等 CSS 简写语法也被自动识别
-//   {{变量}}：支持最多 10 轮递归展开，内置 {{主页url}} {{站名}} {{作者}} {{域名-c}} {{主页url-c}} 等
-//   [firstPage=...]：分类/搜索 URL 首页特殊链接语法
-//   ;post：URL 末尾加 ";post" 表示 POST 请求
-//   [工具:xxx]：工具链标记，见下方"工具链"章节
+//   后处理器：值末尾追加 [替换:旧>>新#旧>>新] / [包含:关键词] / [不包含:关键词]
+//     [替换:] 支持 * 通配（转为 .* 正则），# 分隔多组替换
+//   CSS 模式：规则以 "css:" 或 "css://" 开头时使用 Jsoup CSS 选择器（由 isCssModeEnabled 自动分流）
+//   {{变量}}：最多 10 轮递归展开，内置 {{主页url}} {{站名}} {{作者}} {{分类url}} {{搜索url}}
+//     {{后缀}} {{密钥}} {{域名-c}} {{主页url-c}}
+//   分节写法：分类/搜索等也可写成子对象（cateManual、search{url,vod_id,...}），扁平键自动归一化
 //
-// 中文键与英文键等价，JSON 解析时自动转换；推荐使用中文键更直观
+// 中文键与英文键等价，XBPQKey.norm 加载时自动转换；英文键大小写不敏感
+// 本版如实标注：部分键仅注册、引擎暂不消费（见文末附录）
 
 {
     //==================== 一、基础信息 ====================
 
-    //站名（英文键 siteName）
+    //站名（规范中文名 站名）
     "siteName": "示例站点",
-    //主页地址（英文键 homeUrl），用于相对路径补全和 {{主页url}} 变量
+    //作者（{{作者}} 变量来源）
+    "author": "",
+    //主页地址，用于相对路径补全（addHttpPrefix）和 {{主页url}} 变量
     "homeUrl": "https://www.example.com",
-    //请求头（英文键 header）。
-    //支持三种写法：
-    //  1) 简写： "PC_UA" / "手机" / "MOBILE_UA" / "IOS_UA"
-    //  2) JSON 对象： {"User-Agent":"...", "Referer":"..."}
-    //  3) Key:Value 复合（# 分隔）："User-Agent$PC_UA#Referer$https://example.com"
+    //请求头。支持三种写法（parseHeader）：
+    //  1) 简写："电脑"/"PC_UA" → 内置 PC UA；"手机"/"MOBILE_UA" → 内置移动 UA
+    //  2) JSON 对象：{"User-Agent":"...", "Referer":"..."}
+    //  3) Key$Value 复合（# 分隔多对）："User-Agent$Mozilla/5.0#Referer$https://example.com"
     "header": "PC_UA",
-    //页面编码（英文键 encoding），默认 UTF-8，GBK 站点填 "GBK"
+    //公共请求头（别名 公共头），JSON 对象形式，与 header 合并生效
+    "headerJson": "",
+    //User 请求头（别名 user），独立 User 头配置
+    "userHeader": "",
+    //User-Agent / Referer 单独键
+    "User-Agent": "",
+    "Referer": "",
+    //页面编码（别名 charset），默认 UTF-8，GBK/GB2312 站点配置后响应强制矫正
     "encoding": "UTF-8",
-    //请求超时（英文键 timeout），单位秒，默认 10
+    //请求超时，单位秒，默认 10
     "timeout": "10",
-    //请求重试次数（英文键 retry），默认 1 次（不重试）
-    "retry": "1",
-    //SSRF 放行内网（英文键 allow_internal），"1"=允许内网回源（调试用）
+    //请求重试次数（别名 retry），默认 1 次
+    "retries": "1",
+    //SSRF 放行内网（别名 allowInternal），"1"=允许内网回源（仅调试用，proxy 入口不受此影响）
     "allow_internal": "0",
+    //打开调试（别名 debug），"1"=SpiderDebug 日志全开
+    "openDebug": "0",
+    //平台（别名 平台类型），影响 UA/行为适配
+    "platform": "",
+    //域名后缀（{{后缀}} 变量来源）
+    "domainSuffix": "",
+    //请求间隔（别名 requestInterval/限流间隔），毫秒，串行请求限流
+    "request_interval": "",
+    //镜像域名（别名 mirrorHosts/备用域名），站点 5xx/超时失败时逐个切换重试
+    "mirror_hosts": "",
+    //参数追加（别名 urlAppend/全局参数/追加参数），追加到每次请求 URL 的固定参数
+    "url_append": "",
+    //默认封面（别名 defaultPic），列表图片为空时兜底
+    "default_pic": "",
+    //翻页终点标记（别名 pageEndMarker/分页结束标记），响应命中则停止翻页
+    "page_end_marker": "",
+    //偏移分页（别名 offsetPaging），"1"=用 {offset} 偏移量分页（配合 page_size）
+    "offset_paging": "0",
+    //每页条数（别名 pageSize），偏移分页/页总数计算的每页条数，默认 20
+    "page_size": "20",
+    //宝塔 WAF，"1"=遇到宝塔拦截页自动提取 btwaf cookie 重试
+    "btwaf": "",
+    //反爬超时，毫秒，反爬重试的总预算，0=默认
+    "antiCrawlTimeout": "",
+    //错误码/失败码，# 分隔，响应 JSON code 命中判定为失败
+    "errorCodes": "",
+    "failCodes": "",
+    //成功码，# 分隔，响应 JSON code 命中判定为成功
+    "successCodes": "",
+    //偏好菜单（JSON 数组），首页插入自定义偏好菜单项
+    "prefMenu": "",
+    //功能入口（别名 actionTabs），"1"=在分类列表头部插入"置顶搜索和设置"等功能入口
+    "actionTabs": "",
+    //滑块 Key 接口 / 打码接口 / 验证类型：滑块验证配置（js_key_url/ocr_api/verify_type，auto=自动）
+    "js_key_url": "",
+    "ocr_api": "",
+    "verify_type": "auto",
 
     //==================== 二、动态域名 ====================
 
-    //动态域名链（英文键 dynamic_domain），优先级最高，可配合 [替换:] 语法做域名替换
-    //示例："{{主页url-c}}[替换:https://>>https://666.]"
-    "域名-c": "",
-    //主页地址备选（英文键 home_url_c），优先级低于 域名-c，用于动态域名失败时回退
-    "主页url-c": "",
+    //动态域名链（别名 动态域名）。支持 {{变量}} 与 [替换:] 后处理器。
+    //规则加载时 applyDynamicDomain()：展开+校验 origin 合法后，
+    //把整份规则中旧 homeUrl 的 origin 全局替换为新 origin（域名切换）。
+    "dynamic_domain": "{{主页url-c}}[替换:https://>>https://666.]",
+    //主页地址备选（别名 备用主页），作为 {{主页url-c}} 变量来源；
+    //仅 dynamic_domain 有效时才触发域名切换
+    "home_url_c": "https://www.example2.com",
 
     //==================== 三、分类配置 ====================
 
-    //分类 URL 模板（英文键 class_url）。
-    //占位符：{cateId}=分类ID，{catePg}=页码，{class}/{area}/{year}/{lang}/{by} 等由筛选 extend 填充。
-    //支持 [firstPage=http://xxx] 语法：页码=起始页时优先使用中括号内链接。
+    //分类 URL 模板（别名 cateUrl/list_url）。
+    //占位符：{cateId}=分类ID，{catePg}=页码（{catePg}/{catepg} 大小写两种写法均支持），
+    //{offset}=偏移分页；筛选参数（{class}/{area}/{year} 等）不在此替换，由 extend 筛选另行拼接。
     "class_url": "https://www.example.com/list/{cateId}/page/{catePg}.html",
-    //分类列表（英文键 fenlei）。
-    //写法 A（最常见）： "电影$1#电视剧$2#综艺$3"  （名$值，# 分隔）
-    //写法 B（& 分隔纯名称）： "电影&电视剧&综艺"  ，名称同时作为 type_id
-    //写法 C：配合 class_value 并行数组： "电影&电视剧" + "1&2"
+    //分类列表（别名 cate）。
+    //写法 A（最常见）："电影$1#电视剧$2#综艺$3"（名$值，# 分隔）
+    //写法 B（无 $ 的纯文本）：整串作为一个分类名，type_id 从 class_url 中提取（extractCateId），
+    //  仅在写法 A 未配置任何 $ 项时兜底生效
     "fenlei": "电影$1#电视剧$2#综艺$3#动漫$4",
-    //分类二次截取（英文键 cat_twice），格式 "前缀&&后缀"
+    //分类名称 / 分类值（别名 cateName/cateValue），& 分隔并行数组，优先级高于 fenlei
+    "class_name": "",
+    "class_value": "",
+    //分类二次截取（别名 cateTwice），"前缀&&后缀"，先截取分类区域再解析
     "cat_twice": "",
-    //分类数组（英文键 cat_array），定位每个分类项的 HTML 区块
+    //分类数组（别名 cateArray），定位每个分类项的 HTML 区块
     "cat_array": "",
-    //分类标题（英文键 cat_title）
+    //分类标题（别名 cateTitle）
     "cat_title": ">&&<",
-    //分类 ID（英文键 cat_id）
+    //分类ID（别名 cateId）
     "cat_id": "href=\"&&\"",
-    //筛选数据（英文键 filter），JSON 对象，键为分类 type_id
-    //格式：{"1":[{"key":"class","name":"剧情","value":[{"n":"全部","v":""},{"n":"喜剧","v":"喜剧"}]},...]}
+    //分类白名单（别名 cateWhitelist），逗号/&#38; 分隔，只保留名单内分类
+    "cate_whitelist": "",
+    //筛选数据，JSON 对象，键为分类 type_id
+    //格式：{"1":[{"key":"class","name":"剧情","value":[{"n":"全部","v":""},...]},...]}
     "filter": {},
-    //筛选数据备用 URL（英文键 filterdata），优先级高于内联 筛选 字段
-    "筛选数据": "",
-    //筛选子分类名称（英文键 fclass_name），从筛选数据 URL 抓取后替换子分类名称
-    "筛选子分类名称": "",
-    //筛选子分类替换词（英文键 fclass_value）
-    "筛选子分类替换词": "",
-    //筛选类型名称（英文键 fcatelog_name）
-    "筛选类型名称": "",
-    //筛选类型替换词（英文键 fcatelog_value）
-    "筛选类型替换词": "",
-    //筛选地区名称（英文键 farea_name）
-    "筛选地区名称": "",
-    //筛选地区替换词（英文键 farea_value）
-    "筛选地区替换词": "",
-    //筛选年份名称（英文键 fyear_name）
-    "筛选年份名称": "",
-    //筛选年份替换词（英文键 fyear_value）
-    "筛选年份替换词": "",
-    //筛选语言名称（英文键 flang_name）
-    "筛选语言名称": "",
-    //筛选语言替换词（英文键 flang_value）
-    "筛选语言替换词": "",
-    //筛选排序名称（英文键 fsort_name）
-    "筛选排序名称": "",
-    //筛选排序替换词（英文键 fsort_value）
-    "筛选排序替换词": "",
-
-    //分类截取模式，"0"=JSON 模式（配合 catjsonlist 等字段），默认 null=网页截取模式
-    "分类截取模式": "",
-    //分类 JSON 列表路径（cat_mode=0 时生效），支持多级路径如 "list.data"
-    "分类JSON列表": "",
-    //分类 JSON 名称字段
-    "分类JSON名称": "",
-    //分类 JSON ID 字段
-    "分类JSONID": "",
-    //分类 JSON 图片字段
-    "分类JSON图片": "",
-    //分类 JSON 状态/备注字段
-    "分类JSON状态": "",
-    //分类片单链接前缀（cat_prefix）：拼接在 vod_id 中的链接前面
-    "分类片单链接前缀": "",
-    //分类片单链接后缀（cat_suffix）：拼接在 vod_id 中的链接后面
-    "分类片单链接后缀": "",
-    //分类副标题（cat_subtitle）：主列表截取规则中的 subtitle 字段名，回填到 vod_remarks
-    "分类副标题": "",
-
-    //起始页偏移（英文键 startpage），默认 1
-    "startpage": "1",
-    //搜索起始页码偏移（sea_firstpage）
-    "搜索起始页码": "",
-    //首页推荐数量（英文键 firstpage），填纯数字（如 "20"）或 "名称$分类ID#名称$分类ID"
-    "firstpage": "",
-    //热门推荐（英文键 hot_recommend），"1"=聚合主页视频到首页列表
+    //筛选数据备用 URL，优先级高于内联 filter，抓取后按 f* 替换组改写
+    "filterdata": "",
+    //筛选替换组：从筛选数据 URL 抓取后按 替换词 改写名称/值
+    "fclass_name": "",  "fclass_value": "",
+    "fcatelog_name": "", "fcatelog_value": "",
+    "farea_name": "",   "farea_value": "",
+    "fyear_name": "",   "fyear_value": "",
+    "flang_name": "",   "flang_value": "",
+    "fsort_name": "",   "fsort_value": "",
+    //排序 / 排序值（别名 sortType/sortValue），自动生成 by 排序筛选器
+    "sort_type": "",
+    "sort_value": "",
+    //热门推荐，"1"=homeVideoContent 聚合主页视频到首页列表
     "hot_recommend": "0",
-    //倒序（英文键 reverse），"1"=列表倒序输出
-    "reverse": "0",
-    //特殊分类链接（英文键 特殊分类链接），name$url#name$url 格式，优先级高于 分类，支持 {{域名-c}} 变量
-    "特殊分类链接": "",
+    //列表显示，"1"=列表展示模式开关
+    "list_display": "",
 
-    //==================== 四、列表解析配置 ====================
+    //==================== 四、首页推荐 ====================
 
-    //列表数组（英文键 list_array）。
-    //&& 语法："<article&&</li>" → 每个 article 到 /li 之间为一部影片
-    //CSS 语法（以 css: 开头）："css:.stui-vodlist__box"
+    //首页（别名 homePage）。homeVideoContent 首页聚合配置：
+    //  纯数字（如 "20"）→ 每个分类聚合条数上限
+    //  "名称$分类ID#名称$分类ID" → 只聚合指定分区
+    "firstpage": "",
+    //起始页，分类页码偏移，默认 1
+    "startpage": "1",
+
+    //==================== 五、列表解析配置（分类页） ====================
+
+    //列表数组。
+    //&& 语法：".stui-vodlist__box&&</li>" → 每个区块为一部影片
+    //CSS 语法（css: 开头）："css:.stui-vodlist__box"
     "list_array": ".stui-vodlist__box&&</li>",
-    //列表二次截取（英文键 list_twice），先截取再按 list_array 解析
+    //列表二次截取（别名 二次截取），先截取再按 list_array 解析
     "list_twice": "",
-    //标题（英文键 list_name）
+    //标题
     "list_name": "title=\"&&\"",
-    //链接（英文键 list_id）
+    //链接
     "list_id": "href=\"&&\"",
-    //图片（英文键 list_pic）。值以 http 开头时作为固定图片 URL
+    //图片（别名 img_attr 可指定真实地址属性名如 data-original；值以 http 开头为固定图片）
     "list_pic": "data-original=\"&&\"",
-    //副标题（英文键 list_remarks）
+    //副标题（别名 分类副标题/cat_subtitle，兼容分节写法）
     "list_remarks": ".pic-text&&Text",
-    //链接前缀（英文键 list_prefix），链接补前缀
+    //链接前缀（别名 分类片单链接前缀/cat_prefix）
     "list_prefix": "https://www.example.com",
-    //链接后缀（英文键 list_suffix）
+    //链接后缀（别名 分类片单链接后缀/cat_suffix）
     "list_suffix": "",
-    //过滤词（英文键 filter_word），命中则从列表剔除，"&&" 分隔多个关键词
+    //过滤词，命中则从列表剔除，"&&" 分隔多个关键词
     "filter_word": "",
+    //倒序（别名 倒序播放），"1"=列表倒序输出
+    "reverse": "0",
+    //列表模式 / 列表 JSON 路径组（JSON 模式：list_mode=0 时按 JSON 解析分类页）
+    "list_mode": "",
+    "listjsonlist": "",
+    "listjsonname": "",
+    "listjsonid": "",
+    "listjsonpic": "",
+    "listjsonnote": "",
+    //坏条目跳过（别名 skipBadItem），默认 1=单条解析失败跳过；"0"=整页失败
+    "skip_bad_item": "1",
+    //列表总页数规则（别名 listTotal/总页数），从页面提取总页数的截取规则
+    "list_total": "",
+    //图片属性（别名 imgAttr/懒加载属性），图片懒加载真实地址属性名
+    "img_attr": "",
 
-    //==================== 五、搜索配置 ====================
+    //==================== 六、分类 JSON 模式 ====================
 
-    //搜索 URL（英文键 search_url）。
-    //{wd}=搜索关键词（自动 URL 编码），{pg}=页码；末尾加 ";post" 表示 POST 请求。
+    //分类截取模式，"0"=JSON 模式，默认空=网页截取模式
+    "cat_mode": "",
+    //分类 JSON 字段组（cat_mode=0 时生效），list 为多级路径如 "list.data"
+    "catjsonlist": "",
+    "catjsonname": "",
+    "catjsonid": "",
+    "catjsonpic": "",
+    "catjsonnote": "",
+
+    //==================== 七、搜索配置 ====================
+
+    //搜索 URL。
+    //{wd}=搜索关键词（扁平 search_url 写法自动 URL 编码；分节 search.url 写法原样替换），
+    //{pg}=页码（经 sea_firstpage 偏移）。
     "search_url": "https://www.example.com/search.php?wd={wd}&page={pg}",
-    //搜索模式（英文键 search_mode）："0"=优先 JSON 解析，"1"=优先网页截取（两者互为兜底）
-    "search_mode": "1",
-    //搜索二次截取（英文键 search_twice）
+    //搜索模式："0"=优先 JSON 解析（默认），"1"=优先网页截取；两者互为兜底
+    "search_mode": "0",
+    //搜索二次截取
     "search_twice": "",
-    //搜索数组（英文键 search_array）
+    //搜索数组
     "search_array": ".searchlist&&</li>",
-    //搜索标题（英文键 search_name）
+    //搜索标题
     "search_name": "title=\"&&\"",
-    //搜索链接（英文键 search_id）
+    //搜索链接
     "search_id": "href=\"&&\"",
-    //搜索图片（英文键 search_pic）
+    //搜索图片
     "search_pic": "data-original=\"&&\"",
-    //搜索副标题（英文键 search_remarks）
+    //搜索副标题
     "search_remarks": "",
-    //搜索请求头（英文键 search_header），独立于公共请求头
+    //搜索简介
+    "search_content": "",
+    //搜索请求头，独立于公共请求头（写法同 header）
     "search_header": "",
-    //搜索链接前缀（英文键 search_prefix）
+    //搜索链接前缀 / 搜索链接后缀（别名 搜索后缀）
     "search_prefix": "",
-    //搜索链接后缀（英文键 search_suffix）
     "search_suffix": "",
-    //搜索简介（英文键 search_content）
-    "搜索简介": "",
+    //搜索起始页码（别名 搜索起始页），搜索页码偏移
+    "sea_firstpage": "",
+    //搜索词分隔符（别名 searchWordSep/关键词分隔符），关键词中空格替换为该分隔符（如 "+"）
+    "search_word_sep": "",
+    //搜索 JSON 字段组（优先于网页截取，list 为 JSON 路径，其余为字段名）
+    "searchjsonlist": "",
+    "searchjsonname": "",
+    "searchjsonid": "",
+    "searchjsonpic": "",
+    "searchjsonnote": "",
 
-    //==================== 六、详情页配置 ====================
+    //==================== 八、详情页配置 ====================
 
-    //详情 URL 模板（英文键 detail_url）。
-    //支持 ${vid} 和 {vid} 占位符，${vid} 优先（防止残留 "$" 前缀）。
+    //详情 URL 模板。支持 ${vid} 和 {vid} 占位符，${vid} 优先；
     //为空时按 homeUrl 主机拼接 vid。
     "detail_url": "",
-    //详情数组（英文键 detail_array），定位详情页主体区块
+    //详情数组，定位详情页主体区块
     "detail_array": "",
-    //详情二次截取（英文键 detail_twice）
+    //详情二次截取
     "detail_twice": "",
-    //影片类型（英文键 detail_type）
+    //影片名称，详情标题覆盖
+    "detail_name": "",
+    //影片类型（别名 类型）
     "detail_type": "类型:&&<br",
-    //影片年代（英文键 detail_year）
+    //影片年代（别名 年份）
     "detail_year": "年份:&&<br",
-    //影片地区（英文键 detail_area）
+    //影片地区（别名 地区）
     "detail_area": "地区:&&<br",
-    //导演（英文键 detail_director）
+    //导演
     "detail_director": "导演:&&<br",
-    //主演（英文键 detail_actor）
+    //主演
     "detail_actor": "演员:&&<br",
-    //简介（英文键 detail_content）
+    //简介（别名 剧情）
     "detail_content": "简介:&&</p>",
-    //状态/备注（英文键 detail_remarks）
+    //状态/备注
     "detail_remarks": "",
-    //影片名称（英文键 vod_name，可用于详情标题覆盖）
-    "影片名称": "",
-
-    //详情分隔符（英文键 detail_label_split）。
-    //从详情页纯文本中按 label 词提取字段，"| " 分隔多个 label。
-    //自动映射：导演→vod_director、主演/演员→vod_actor、地区/国家→vod_area、
-    //年份/年代→vod_year、状态/备注/更新→vod_remarks、类型/分类→type_name、
-    //简介/剧情/介绍→vod_content。仅补缺，不覆盖已有值。
-    "detail_label_split": "导演：|主演：|地区：|年份：|状态：",
-    //详情合并字段（英文键 detail_content_merge）。
-    //逗号分隔的 vod_* 字段名，将其值以换行追加到 vod_content。
-    //例如 "vod_remarks,type_name,vod_year"，仅增量合并，不覆盖已有正文。
-    "detail_content_merge": "",
-
-    //==================== 七、线路与播放配置 ====================
-
-    //线路二次截取（英文键 line_twice）
-    "line_twice": "",
-    //线路数组（英文键 from_array），每条线路区块定位
-    //CSS 模式时以此字段判断是否进入 CSS 提取
-    "from_array": ".stui-pannel__head&&</h3>",
-    //线路标题（英文键 from_title）
-    "from_title": ">&&<",
-
-    //多线数组（英文键 multi_line_array），多线模式区块定位
-    "multi_line_array": "",
-    //多线链接（英文键 multi_line_url），每条线路的播放页 URL
-    "multi_line_url": "",
-    //多线链接前缀（英文键 multi_line_prefix）
-    "multi_line_prefix": "",
-    //多线链接后缀（英文键 multi_line_suffix）
-    "multi_line_suffix": "",
-    //线路合并（英文键 merge_lines），"1"=多线路合并为单一线路
-    "merge_lines": "0",
-
-    //播放二次截取（英文键 play_twice）
-    "play_twice": "",
-    //播放数组（英文键 play_array），选集区块定位
-    "play_array": ".stui-content__playlist&&</ul>",
-    //播放列表（英文键 url_array），选集元素定位（li 标签等）
-    "url_array": "li",
-    //播放标题（英文键 url_title），选集标题
-    "url_title": ">&&<",
-    //播放链接（英文键 url_url），选集链接
-    "url_url": "href=\"&&\"",
-    //跳转播放链接（英文键 jump_url）。
-    //提取播放页中的真实视频地址；为空时跳过跳转，直接嗅探原 URL。
-    "jump_url": "",
-    //剧集过滤（英文键 episode_filter），"&&" 分隔过滤词，命中则跳过该集
-    "episode_filter": "",
-    //空播放兜底（英文键 empty_play_url），无集时补一条占位线路
-    "empty_play_url": "",
-    //空播放线路名（英文键 empty_play_from），兜底线路线路名
-    "empty_play_from": "",
-    //选集链接加前缀（epiurl_prefix）
-    "选集链接加前缀": "",
-    //选集链接加后缀（epiurl_suffix）
-    "选集链接加后缀": "",
-
-    //直接播放（英文键 force_play）。
-    //"0"=走详情线路解析；"1"=分类片单链接直接播放；"2"=详情选集链接直接播放
-    "force_play": "0",
-    //播放链接前缀（英文键 play_prefix）
-    "play_prefix": "",
-    //播放链接后缀（英文键 play_suffix），如 "#isVideo=true#" 强制识别
-    "play_suffix": "",
-    //播放请求头（英文键 play_header），JSON 对象，直链视频专用请求头
-    "play_header": "",
-    //缺封面兜底图（英文键 play_image）
+    //详情分隔符（别名 detail_label_split），"| "分隔多个 label 词，
+    //从详情页纯文本按 label 提取字段（导演：/主演：/地区：等自动映射 vod_* 字段，仅补缺）
+    "detail_separator": "导演：|主演：|地区：|年份：|状态：",
+    //详情合并字段（别名 detail_content_merge），逗号分隔的 vod_* 字段名，
+    //其值以换行追加到 vod_content（仅增量，不覆盖）
+    "detail_merge": "",
+    //播放图片，缺封面兜底图
     "play_image": "",
-    //视频过滤词（video_filter），# 分隔，命中则强制返回 false（非视频）
-    "视频过滤词": "",
 
-    //==================== 八、嗅探配置 ====================
+    //==================== 九、线路与播放配置 ====================
 
-    //免嗅（英文键 manualVideoCheck），"0"=开启嗅探，"1"=免嗅探（直链直出）
+    //线路数组，每条线路区块定位；CSS 模式时以此判断进入 CSS 提取
+    "from_array": ".stui-pannel__head&&</h3>",
+    //线路标题
+    "from_title": ">&&<",
+    //线路二次截取（别名 line_twice）
+    "line_second_cut": "",
+    //多线数组，多线模式区块定位
+    "multi_line_array": "",
+    //多线链接（别名 线路链接），每条线路的播放页 URL
+    "multi_line_url": "",
+    //多线二次截取
+    "multi_line_twice": "",
+    //多线链接前缀 / 后缀
+    "multi_line_prefix": "",
+    "multi_line_suffix": "",
+    //线路合并，"1"=多线路合并为单一线路（线路名取第一条原始名称）
+    "merge_lines": "0",
+    //线路重命名（别名 lineNameMap/线路映射），"旧名>>新名#旧名>>新名"
+    "line_name_map": "",
+    //播放二次截取
+    "play_twice": "",
+    //播放数组，选集区块定位
+    "play_array": ".stui-content__playlist&&</ul>",
+    //播放列表，选集元素定位（li 标签等）
+    "url_array": "li",
+    //播放标题，选集标题
+    "url_title": ">&&<",
+    //播放链接，选集链接
+    "url_url": "href=\"&&\"",
+    //剧集过滤，"&&" 分隔过滤词，命中则跳过该集
+    "episode_filter": "",
+    //剧集排序（别名 episodeSort/选集排序），"1"=选集按集数号排序
+    "episode_sort": "",
+    //剧集去重（别名 episodeDedup/选集去重），"1"=选集按链接去重
+    "episode_dedup": "",
+    //清晰度优先（别名 episodeQuality/剧集清晰度/画质优先），"蓝光>>超清>>高清" 优先级链
+    "episode_quality": "",
+    //选集链接加前缀 / 选集链接加后缀，每条集数链接自动拼接
+    "epiurl_prefix": "",
+    "epiurl_suffix": "",
+    //空播放兜底 URL / 空播放线路名，无集时补一条占位线路
+    "empty_play_url": "",
+    "empty_play_from": "",
+    //跳转播放链接，提取播放页中的真实视频地址；为空时直接嗅探原 URL
+    "jump_url": "",
+    //直接播放："0"=走详情线路解析（默认）；"1"=分类片单链接直接播放；"2"=详情选集链接直接播放
+    "force_play": "0",
+    //播放链接前缀 / 播放链接后缀（如 "#isVideo=true#" 强制识别）
+    "play_prefix": "",
+    "play_suffix": "",
+    //播放请求头，JSON 对象，直链视频专用请求头
+    "play_header": "",
+    //播放去参数（别名 playStripParams/剥离参数），"1"=播放链接剥离 query 参数
+    "play_strip_params": "",
+    //分析 MacPlayer，"2"=优先用正则解析脚本块（更快更可靠）
+    "Anal_MacPlayer": "",
+    //自动 Maccms，"1"=字段缺失时注入 Maccms 默认规则
+    "auto_maccms": "",
+
+    //==================== 十、嗅探配置 ====================
+
+    //免嗅，"0"=开启嗅探，"1"=免嗅探（直链直出）
     "manualVideoCheck": "0",
-    //嗅探词（英文键 video_format），匹配关键词（# 分隔）；
-    //未配置时按 .m3u8/.mp4/.flv/.avi/.mkv/.rmvb/.wmv/.mov 默认扩展名判断
+    //嗅探词，匹配关键词（# 分隔）；未配置时按 .m3u8/.mp4/.flv/.avi/.mkv/.rmvb/.wmv/.mov 默认扩展名判断
     "video_format": "",
-    //过滤词（英文键 filter_word），命中则排除（# 分隔）
-    "filter_word": ".html#=http",
+    //视频过滤词，# 分隔，命中则强制判定为非视频（优先级高于嗅探词）
+    "video_filter": "",
 
-    //==================== 九、图片代理配置 ====================
+    //==================== 十一、图片代理 / 弹幕配置 ====================
 
-    //图片代理（英文键 PicNeedProxy），"1"=图片走 proxy:// 本地代理
+    //图片代理，"1"=图片走 proxy:// 本地代理
     "PicNeedProxy": "0",
-    //图片代理前缀（英文键 baseEncodeUrl），远端 Base64 图床中转地址
+    //图片代理前缀，远端 Base64 图床中转地址
     "baseEncodeUrl": "",
-    //代理密钥（英文键 secretKey），MD5(pic+secretKey) 签名防代理滥用
+    //代理密钥，MD5(pic+secretKey) 签名防代理滥用
     "secretKey": "",
-
-    //==================== 十、扩展功能配置 ====================
-
-    //弹幕接口（英文键 danmuUrl），配置后播放时自动注入 danmaku 代理参数
+    //图片代理白名单（别名 picAllowDomains/代理域名白名单），# 分隔，仅白名单域名走代理
+    "pic_allow_domains": "",
+    //弹幕接口，配置后播放时自动注入 danmaku 代理参数，JSON 自动转 B 站风格 XML
     "danmuUrl": "",
-    //直播流地址（英文键 liveUrl）
-    "liveUrl": "",
-    //Maccms 自动注入，"1"=字段缺失时注入 Maccms 默认规则
-    "自动Maccms": "0",
-    //分析 MacPlayer 模式，"2"=优先用正则解析脚本块（更快更可靠）
-    "分析MacPlayer": "",
 
-    //==================== 十一、WebView 渲染配置 ====================
+    //==================== 十二、CSS（Jsoup）模块键 ====================
 
-    //启用 WebView 渲染（英文键 web_view），"1"=使用 WebView 代替 OkHttp
-    "web_view": "0",
-    //页面加载后额外等待毫秒数，给 AJAX 异步请求时间
-    "web_view_wait": "",
-    //DOM 就绪选择器（CSS 或 JS 表达式），满足后再抽取 HTML
-    "web_view_ready": "",
-    //DOM 就绪轮询超时（英文键 web_view_ready_timeout），默认 10000ms
-    "web_view_ready_timeout": "10000"
+    "css_selector": "",
+    "css_extract": "",
+    "css_attribute": "",
+    "jsoup_parse": "",
+    "list_css_container": ""
 }
 
-//==================== 附录：工具链语法 ====================
+//==================== 附录一：分节规则写法 ====================
 //
-// 在任意规则值中嵌入 [工具:xxx] 标记，执行时自动替换：
-//   [工具:源码]               抓取发布页 HTML 并返回（配合 发布页 使用）
-//   [工具:重定向]             跟随 HTTP 重定向获取最终 URL
-//   [工具:解url]              URL 解码
-//   [工具:解b64]              Base64 解码（与 [工具:Base64#解密] 等价）
-//   [工具:SHA]                SHA-256 哈希
-//   [工具:1截取N]             按分隔符取第 N 个片段（N 从 1 开始）
-//   [工具:随机字符-N-唯一]     生成 N 位随机字符串
-//   [工具:源码转b64#解密aes-key-iv-AES/CBC/PKCS7Padding]  AES 解密
+// 除扁平键外，支持分节子对象写法（规则加载时自动归一化为扁平键）：
+//   "cateManual": {"电影":"1","电视剧":"2"}          → 等价 fenlei 的映射形式
+//   "search": {"url":"...","vod_id":"...","vod_name":"...","vod_pic":"..."}
+//        → 分节搜索配置（vod_id 等的值 = JSON 字段名，用于 JSON 搜索）
+// 注意：分节 search.url 中的 {wd} 原样替换（不 URL 编码）；
+//       扁平 search_url 中的 {wd} 自动 URLEncoder.encode。
 //
-// [替换:a>>b#x>>y] 语法不限于 [工具:xxx] 内，可直接写在任意规则值末尾。
+//==================== 附录二：仅注册未消费 / 未实现声明 ====================
 //
-//==================== 附录：预留字段（暂未实现） ====================
+// 以下键已在 XBPQKey 登记（配置不报错），但当前引擎不消费或明确告警未实现：
+//   "special_cate"（特殊分类链接）    仅注册，分类构建链不读取
+//   "liveUrl"（直播url）              仅注册，引擎不消费
+//   "web_view"/"web_view_wait"/"web_view_ready"/"web_view_ready_timeout"
+//                                    仅注册，运行时输出"当前版本未实现"告警并忽略
+// 以下写法本版不存在，请勿使用：
+//   [工具:xxx] 工具链（源码/重定向/解url/解b64/SHA/AES 解密等）→ 未实现
+//   [firstPage=...] URL 中括号首页语法 → 未实现（首页聚合用 firstpage 键配置）
+//   搜索 URL 末尾 ";post" POST 搜索 → postSearch 已定义但未接入调用链，当前无效
+//   searchContent 的 quick 参数 → 当前被忽略（快搜与普搜行为一致）
 //
-// 以下键已在 CHINESE_KEY_MAP 中注册，供未来版本使用：
-//   "二级目录"       二级目录过滤（格式：目录名|mode，mode 含 folder 时按目录名过滤分类）
-//   "二级ID"         二级页面 ID 字段
-//   "发布页"         发布页 URL（配合 [工具:源码] 使用）
-//   "发布站-b"       备用发布站 B
-//   "原始网址-b"     备用原始网址 B
-//   "固定直链"       固定直链 URL
+//==================== 附录三：vod_id 编码说明 ====================
 //
-//==================== 附录：动态域名变量链示例 ====================
-//
-//  {
-//      "主页url": "https://www.example.com",
-//      "域名-c": "{{主页url-c}}[替换:https://>>https://666.]",
-//      "主页url-c": "https://www.example2.com"
-//  }
-//  说明：getHomeUrl() 优先返回展开后的 dynamic_domain（即 {{主页url-c}} 展开后再做替换），
-//       其次返回 home_url_c，最后回退到 homeUrl。
+// 列表/搜索输出的 vod_id 经 encodeVodId() Base64 编码（内含原始链接与图片等上下文），
+// detailContent 收到后自动解码还原，规则书写者无需关心该编码。

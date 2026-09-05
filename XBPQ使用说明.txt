@@ -2,45 +2,44 @@
                     XBPQ 影视源 Spider 使用说明
 ================================================================================
 
-XBPQ 是 CatVodSpider 框架的影视爬虫，以 && 正则截取为核心规则语法，
-支持中英文双键配置、CSS 选择器模式、多线聚合、反爬绕过、图片代理、
-弹幕加载、M3U8 解析、{{变量}} 模板、动态域名、WebView 渲染等增强特性。
+XBPQ 是 CatVodSpider（VodSpider）框架的影视爬虫，以 && 正则截取为核心规则语法，
+支持中英文双键配置（XBPQKey 统一登记）、CSS/Jsoup 选择器模式、多线聚合、
+Cloudflare/宝塔反爬绕过、图片代理、弹幕加载、M3U8 解析、{{变量}} 模板、
+动态域名切换、镜像域名、SSRF 防护等特性。
 
-本文档基于 com.github.catvod.spider.XBPQ.java 源码整理，
+本文档基于 com.github.catvod.spider.XBPQ.java 与 XBPQKey.java 源码整理，
 与代码实现逐一核对，涵盖类结构、方法说明、配置项总览、规则语法与注意事项。
 
 ================================================================================
 一、类结构与模块划分
 ================================================================================
 
-1. 主类
-   com.github.catvod.spider.XBPQ
-   ├─ 继承 com.github.catvod.crawler.Spider
-   ├─ 规则配置：com.github.catvod.spider.xbpq.config.RuleConfig
-   │    └─ CHINESE_KEY_MAP：中文键→英文键映射表（启动时 convertChineseKeys 转换）
-   │    └─ isCssModeEnabled()：扫描详情键判断是否启用 CSS 模式
-   │    └─ getRuleVal()：取值（"空"/"&&" 视为未配置）
-   ├─ CSS 规则解析：com.github.catvod.spider.xbpq.config.CssRule
-   │    └─ isCssRule()：检测 css:/css:// 前缀
-   │    └─ parseCssShortSyntax()：p:tag->text 等简写语法转换
-   │    └─ extractByCss()：Jsoup CSS 选择器提取
-   │    └─ extractByOrSelector()：|| 备用选择器
-   ├─ 字符串截取：com.github.catvod.spider.xbpq.config.StringCutRule
-   │    └─ applySecondCut()：&& 二次截取
-   │    └─ applyPostProcessors()：[替换:]/[包含:]/[不包含:] 后处理器
-   ├─ 提取器工厂：com.github.catvod.spider.xbpq.extractor.ExtractorFactory
-   │    └─ createVideoListExtractor(isCss) → RegexVideoListExtractor / CssVideoListExtractor
-   │    └─ createDetailExtractor(isCss)    → RegexDetailExtractor    / CssDetailExtractor
-   │    └─ createSearchExtractor(isCss)    → RegexSearchExtractor    / CssSearchExtractor
-   │    └─ createPlayListExtractor(isCss)  → RegexPlayListExtractor  / CssPlayListExtractor
-   ├─ 网络层：com.github.catvod.spider.xbpq.network.OkHttpWrapper
-   │    └─ CookieManager：自动持久化 Cookie
-   │    └─ WafBypassInterceptor：Cloudflare / 宝塔 WAF 绕过
-   ├─ 解析器：com.github.catvod.spider.xbpq.parser.{JsonParser, JsParser}
-   ├─ 数据模型：
-   │    ├─ VodItem      → TVBox 标准 vod 字段（vod_id/vod_name/vod_pic/...）
-   │    ├─ PlaySource   → 单条线路（线路名 + 集数列表，集数格式 "标题$链接"）
-   │    └─ VodDetail    → 封装 VodItem + 播放线路，toJSON() 输出 TVBox 标准结构
+本项目为单文件实现 + 键注册表，全部逻辑位于两个类：
+
+1. com.github.catvod.spider.XBPQ（主类，继承 com.github.catvod.crawler.Spider）
+   内部静态类/工具：
+   ├─ HtmlMatchInfo        HTML 命中信息（标签区间上下文）
+   ├─ HtmlNodeHelper       HTML 节点提取辅助
+   ├─ JsoupExtractor       Jsoup/CSS 选择器提取（css:/css:// 前缀分流）
+   ├─ CssRuleInfo          CSS 规则信息
+   ├─ RuleUtils            规则工具（getRegion 区域截取等）
+   ├─ NodeExtractionResult 节点提取结果
+   ├─ DetailExtractionContext 详情提取上下文
+   ├─ SearchFetchResult    搜索抓取结果（content + url）
+   └─ SearchNodeResult     搜索节点结果
+
+2. com.github.catvod.spider.XBPQKey（字段命名标准，全项目单一事实源）
+   ├─ TABLE 注册表：k(模块, 规范英文键, 规范中文名, 别名...)
+   ├─ norm(key)：任意写法 → 规范英文键（未登记原样透传）
+   ├─ aliasMap()：非规范写法 → 规范键映射（规则加载时一次性归一化）
+   └─ isKnown/cn/module/dump：登记查询与文档输出
+
+3. 关键机制
+   ├─ 键归一化：CHINESE_KEY_MAP = XBPQKey.aliasMap()，fetchRule() 时
+   │    convertChineseKeys → normalizeRuleKeys 两条链路统一收敛到规范英文键
+   ├─ 网络层：OkHttp（com.github.catvod.utils.OkHttp）+ 反爬检测
+   │    （isCloudflarePage/bypassCloudflare、isBaoTaWafPage/btwaf cookie 提取）
+   ├─ Cookie 合并：Util.mergeCookies（滑块验证后回写规则头）
    └─ 日志：com.github.catvod.crawler.SpiderDebug
 
 ================================================================================
@@ -50,251 +49,200 @@ XBPQ 是 CatVodSpider 框架的影视爬虫，以 && 正则截取为核心规则
 1. init(Context context, String extend)
    ──────────────────────────────
    初始化入口。extend 支持：
-   - http://...json  远程规则文件（首次调用 fetchRule 懒加载）
+   - http://...json  远程规则文件（fetchRule 懒加载 + 双重检查锁定）
    - clan://...json  本地路径
-   - ./...json       相对路径
    - 直接 JSON 字符串  内联配置
-   fetchRule() 将 JSON 经 RuleConfig.convertChineseKeys 转换后缓存到 rule 字段。
-   双重检查锁定保证多线程安全。
+   fetchRule() 将 JSON 经键归一化后缓存到 rule 字段，并执行：
+   applyDynamicDomain()（动态域名切换）→ 初始化变量表 variableMap。
 
-2. homeContent(boolean filter)
+2. homeContent(boolean filter) → {"class":[...], "filters":{...}}
    ───────────────────────────────
-   首页：返回分类列表 + 筛选器 + 热门推荐视频。
-   分类构建优先级：
-     0) 特殊分类链接（特殊分类链接 = name$url#name$url，含动态域名变量 {{域名-c}}）
-     1) fenlei 含 $ → "名称$ID#名称$ID" 格式
-     2) class_url 含 {class} → 分类名同时作 type_id
-     3) class_name + class_value 并行 & 数组
-     4) fenlei + class_value 回退
-   filter=true 且筛选非空时返回 filters 字段。
-   hot_recommend=1 时抓取 homeUrl 聚合视频到 list。
-   二级目录过滤（二级目录 含 | 时生效）。
+   首页分类构建优先级（buildClassList）：
+     0) tryBuildFromJson：cat_mode=0 的分类 JSON 模式（catjsonlist 等）
+     1) fenlei 显式配置存在时优先（含 $ 的 "名$值#名$值"）
+     2) cateManual 分节对象 / guessCateManualIfNeeded 自动猜测分类
+     3) cat_twice 二次截取后 guessRuleCateManual 猜测
+     4) class_name + class_value 并行 & 数组
+     5) cat_array + cat_title + cat_id 从首页 HTML 提取
+     6) tryBuildFromFenlei（fenlei $ 格式）
+     7) fallbackClassBuild：fenlei 整串作分类名 + extractCateId(class_url)
+   后处理：cate_whitelist 白名单过滤 → insertActionTabs 功能入口插入。
+   filter=true 且筛选非空时返回 filters（filter 内联 > filterdata URL 抓取，
+   抓取后按 f* 替换组改写；sort_type/sort_value 自动生成 by 排序筛选器）。
 
-3. categoryContent(String tid, String pg, boolean filter, HashMap<String,String> extend)
-   ──────────────────────────────────────────────────────────────────────────────────
+3. homeVideoContent() → {"list":[...]}
+   ───────────────────────────────
+   首页推荐聚合：firstpage 纯数字=每分类条数上限；"名$ID#名$ID"=指定分区；
+   hot_recommend=1 无 firstpage 也聚合。跨分类去重（vod_id 优先）。
+
+4. categoryContent(String tid, String pg, boolean filter, HashMap extend)
+   ──────────────────────────────────────────────────────────────────────────
    分类列表页。
-   - cat_mode=0：JSON 模式，按 catjsonlist/catjsonname/catjsonid/catjsonpic/catjsonstitle 提取
-   - cat_prefix/cat_suffix：对 vod_id 中的链接加前缀后缀
-   - cat_subtitle：副标题回填到 vod_remarks
-   - 页码：startpage 偏移 + firstpage 首页特殊处理 + [firstPage=...] 语法
-   - sea_firstpage：搜索起始页码偏移
-   - 占位符：{cateId}/{catePg}/{class}/{area}/{year}/{lang}/{by}/{state}/{version}
-   - 列表后处理：标题清洗 → 图片净化（过滤占位图）→ 去重（vod_id 优先）
-     → filter_word 过滤词剔除 → reverse 倒序
-   - 页总数猜测：共N页 / 共N条 / x/y页，兜底满员返回 2、空返回 1
+   - 页码：startpage 起始偏移；offset_paging=1 时 {offset}=(页码-1)*page_size
+   - 占位符：{cateId}/{catePg}（{catepg} 小写兼容）
+   - 列表模式：网页截取（list_array 等）/ JSON 模式（list_mode + listjson* 字段组）
+   - skip_bad_item=1（默认）单条失败跳过；"0"=整页失败
+   - 后处理：图片净化（img_attr 懒加载属性/default_pic 兜底）→ 标题清洗
+     → filter_word 过滤词剔除 → reverse 倒序 → page_end_marker 终止翻页
+   - 页总数：list_total 规则提取 / 共N页 共N条 x/y页猜测，兜底满员 2 空 1
+   - 失败重试：mirror_hosts 镜像域名逐个切换；url_append 全局参数追加
 
-4. detailContent(List<String> ids)
+5. detailContent(List<String> ids) → {"list":[{vod字段...}]}
    ───────────────────────────────
-   详情页。
-   - vid 兼容：Base64 解码（历史格式 {"vod_id":vid}）→ 普通 id 直传
-   - detail_url 模板：先替换 ${vid} 再 {vid}，兜底 homeUrl 主机拼接
-   - 字段提取：CSS 模式用 CssDetailExtractor，否则 RegexDetailExtractor
-   - 详情后处理：jsUnescape（%uXXXX 解码）→ cleanTitle（去《》/质量后缀）
-     → cleanImageUrl（过滤占位图）
-   - meta 兜底：vod_name/vod_pic 缺失时用 og:title/<title>/og:image 补全
-   - 分隔符取值：detail_label_split 从纯文本提取导演/主演/地区/年份/备注
-   - 多字段合并：detail_content_merge 将指定字段追加到 vod_content
-   - 播放线路：from_array 提取线路 → episode_filter 剧集过滤
-     → epiurl_prefix/epiurl_suffix 选集链接前后缀 → merge_lines 合并
-     → empty_play_url 空兜底
-   - 输出 VodDetail.toJSON() → {"list":[{"vod字段...}]}
+   - vid 解码：encodeVodId 的 Base64 JSON 自动还原（兼容历史 {"vod_id":vid}）
+   - detail_url 模板：先 ${vid} 再 {vid}，兜底 homeUrl 主机拼接
+   - 字段提取：CSS 模式（detail_* 规则含 css: 前缀）或 && 截取
+   - hexEscapeDecode：链接中 %uXXXX JS 转义解码
+   - detail_separator 从纯文本按 label 补缺（导演：/主演：等自动映射 vod_*）
+   - detail_merge 将指定 vod_* 字段换行追加到 vod_content（仅增量）
+   - 线路：from_array/line_second_cut 提取 → line_name_map 重命名
+     → episode_filter 过滤 → episode_sort/episode_dedup 排序去重
+     → episode_quality 清晰度优先 → epiurl_prefix/epiurl_suffix 前后缀
+     → merge_lines 合并 → empty_play_url 空兜底
+   - auto_maccms=1 字段缺失注入 Maccms 默认规则；
+     Anal_MacPlayer=2 优先正则解析 MacPlayer 脚本块
 
-5. searchContent(String keyword, boolean quick, String pg)
+6. searchContent(String keyword, boolean quick, String pg)
    ─────────────────────────────────────────────
-   搜索。
-   - {wd} 自动 URL 编码；search_url 末尾 ;post 为 POST 模式
-   - search_mode=0：优先 JSON 自动探测（递归找 vod_id+vod_name 数组）
-   - search_mode=1：优先网页截取，失败回退 JSON 探测
-   - 后处理：图片净化 → 标题清洗 → quick=true 时名称必须包含关键字
+   - 配置缺失时 guessSearchUrlIfNeeded 自动猜测搜索接口
+   - 扁平 search_url：{wd} 自动 URLEncoder.encode，{pg} 经 sea_firstpage 偏移
+     （分节 search.url 写法 {wd} 原样替换）
+   - search_word_sep 关键词空格替换（如 "+"）
+   - searchjson* JSON 字段组优先；search_mode=0 JSON 优先 / =1 网页优先，互为兜底
+   - JSON 自动探测：parseJsonSearchResult 递归查找同时含配置 id/name 字段的数组
+   - CSS 模式（搜索规则含 css:）→ 传统 && 截取，无结果自动互切
+   - quick 参数当前被忽略（快搜与普搜行为一致）
 
-6. playerContent(String flag, String url, List<String> vipFlags)
+7. playerContent(String flag, String url, List<String> vipFlags)
    ─────────────────────────────────────────────────────────────
    播放解析，按优先级：
      1) isVideoUrl(url) → directResult（parse=0，直链直出）
-     2) force_play=1 → isVideoUrl ? direct : sniff
-     3) jump_url 非空 → tryJumpPlay（抓取播放页提取真实地址）
-        → 提取失败则 sniff
-     4) manualVideoCheck=1 → directResult
-     5) 否则 → sniffResult（parse=1，播放器嗅探）
-   - putPlayHeader：play_header JSON 注入 result.header
-   - appendDanmu：danmuUrl 非空时注入 danmaku 代理参数
-   - 直链判定 isVideoUrl：video_format 命中 或 默认扩展名匹配；
-     video_filter（排除词）命中则强制返回 false
-   - isVip：优先消费 vipFlags 参数，未命中时回退内置域名表
+     2) force_play=1/2 → 直接播放（分类/详情链接直出，可配 play_suffix）
+     3) jump_url 非空 → tryJumpPlay（抓取播放页提取真实地址）→ 失败则嗅探
+     4) manualVideoCheck=1 → directResult（免嗅直出）
+     5) 否则 → buildSniffResult（parse=1，播放器嗅探）
+   - play_header JSON 注入 result.header；play_prefix/play_suffix 前后缀
+   - play_strip_params=1 播放链接剥离 query
+   - danmuUrl 非空注入 danmaku 代理参数
+   - isVideoUrl：video_format 嗅探词命中或默认扩展名；video_filter 命中强制非视频
 
-7. proxy(Map<String,String> params)
+8. proxy(Map<String,String> params)
    ─────────────────────────────────
-   proxy:// 总入口分发（插件框架回调）：
-   - danmu_url → fetchUrl 拉取弹幕内容，返回 application/octet-stream
-   - m3u8 参数 → 拉取 M3U8 内容，相对路径补全，返回 application/vnd.apple.mpegurl
-   - pic 参数 → 图片回源（含 secretKey MD5 签名校验）
+   proxy:// 总入口分发：
+   - do=XBPQ&danmu_url=... → loadDanmu 拉取弹幕，JSON 转 B 站风格 XML
+   - M3U8 参数 → doLoadM3u8 拉取内容，相对路径补全，EXTM3U/EXTINF 探测
+   - pic 参数 → loadPic 图片回源（secretKey MD5 签名校验）
    - 所有回源强制 SSRF 防护，不受 allow_internal 影响
 
-8. manualVideoCheck() → boolean
-   返回 manualVideoCheck != "1"，同步给框架嗅探决策。
+9. manualVideoCheck() / isVideoFormat(url)
+   将 免嗅/嗅探词/视频过滤词 同步给框架嗅探决策，与 playerContent 一致。
 
-9. isVideoFormat(String url) → boolean
-   将 video_format 和 filter_word 同步给框架，使外部嗅探与 playerContent 一致。
+10. isFail(int code) / errorCodes / failCodes / successCodes
+    响应 JSON code 判定（失败码+错误码 命中即失败；成功码白名单优先）。
 
 ================================================================================
-三、配置项总览（中英双键）
+三、配置项总览（按 XBPQKey 模块，规范中文名 | 规范英文键 | 别名）
 ================================================================================
 
-【基础信息】
-  siteName / 站名                     站点名称
-  homeUrl / 主页url                   站点首页地址
-  header / 请求头 / 头部集合          请求头（简写/JSON/复合写法）
-  encoding / 编码                     页面编码，默认 UTF-8
-  timeout / 超时                      请求超时秒数，默认 10
-  retry / 重试 / 重试次数             请求失败重试次数，默认 1
-  allow_internal                      放行内网回源，"1"=允许
+【BASE 基础信息】
+  站名 siteName | 作者 author | 主页url homeUrl | home_url, 主页, baseUrl
+  请求头 header | headers | 公共请求头 headerJson | 公共头 | User userHeader | user
+  UserAgent User-Agent | ua | Referer referer | 编码 encoding | charset
+  超时 timeout | 重试 retries | retry | 起始页 startpage | startPage
+  首页 firstpage | homePage | 内网放行 allow_internal | allowInternal
+  平台 platform | 平台类型 | 后缀 domainSuffix | 域名后缀
+  域名-c dynamic_domain | 动态域名 | 主页url-c home_url_c | 备用主页
+  打开调试 openDebug | debug | 偏好菜单 prefMenu | 功能入口 actionTabs
+  反爬超时 antiCrawlTimeout | 错误码 errorCodes | 失败码 failCodes | 成功码 successCodes
+  宝塔WAF btwaf | 请求间隔 request_interval | requestInterval, 限流间隔
+  镜像域名 mirror_hosts | mirrorHosts, 备用域名 | 参数追加 url_append | urlAppend, 全局参数
+  翻页终点标记 page_end_marker | pageEndMarker, 分页结束标记
+  偏移分页 offset_paging | offsetPaging | 每页条数 page_size | pageSize
+  默认封面 default_pic | defaultPic
+  滑块Key接口 js_key_url | 打码接口 ocr_api | 验证类型 verify_type
+  WebView渲染 web_view | webview（仅注册，引擎告警"未实现"并忽略）
+  WebView等待 web_view_wait | WebView就绪标记 web_view_ready
+  WebView就绪超时 web_view_ready_timeout（同上，均未实现）
 
-【动态域名】
-  dynamic_domain / 域名-c             动态域名链，优先级最高，支持 {{变量}}+[替换:]
-  home_url_c / 主页url-c              主页地址备选，dynamic_domain 失败时回退
+【CATEGORY 分类】
+  分类url class_url | cateUrl, list_url | 分类 fenlei | cate
+  分类名称 class_name | cateName | 分类值 class_value | cateValue
+  分类二次截取 cat_twice | cateTwice | 分类数组 cat_array | cateArray
+  分类标题 cat_title | cateTitle | 分类ID cat_id | cateId
+  特殊分类链接 special_cate（仅注册，引擎不消费）
+  筛选 filter | 分类筛选 | 筛选数据 filterdata | 分类截取模式 cat_mode
+  分类JSON列表 catjsonlist | 分类JSON名称 catjsonname | 分类JSONID catjsonid
+  分类JSON图片 catjsonpic | 分类JSON状态 catjsonnote
+  筛选子分类名称 fclass_name | 筛选子分类替换词 fclass_value
+  筛选类型名称 fcatelog_name | 筛选类型替换词 fcatelog_value
+  筛选地区名称 farea_name | 筛选地区替换词 farea_value
+  筛选年份名称 fyear_name | 筛选年份替换词 fyear_value
+  筛选语言名称 flang_name | 筛选语言替换词 flang_value
+  筛选排序名称 fsort_name | 筛选排序替换词 fsort_value
+  排序 sort_type | sortType | 排序值 sort_value | sortValue
+  热门推荐 hot_recommend | 列表显示 list_display | 分类白名单 cate_whitelist
 
-【分类配置】
-  class_url / 分类url                 分类 URL 模板（{cateId}/{catePg} 等）
-  fenlei / 分类                       分类列表（"名$ID#名$ID" 或 "&" 分隔）
-  class_name / 分类名称               分类名称 & 数组
-  class_value / 分类值                分类值 & 数组
-  cat_twice / 分类二次截取            分类区域二次截取
-  cat_array / 分类数组                分类项定位规则
-  cat_title / 分类标题                分类名提取
-  cat_id / 分类ID                     分类ID提取
-  filter / 筛选 / 分类筛选            筛选 JSON 对象（按 type_id 分组）
-  filterdata / 筛选数据               筛选数据备用 URL，优先级高于内联 筛选
-  fclass_name / 筛选子分类名称         从筛选数据 URL 抓取后替换子分类名称
-  fclass_value / 筛选子分类替换词
-  fcatelog_name / 筛选类型名称
-  fcatelog_value / 筛选类型替换词
-  farea_name / 筛选地区名称
-  farea_value / 筛选地区替换词
-  fyear_name / 筛选年份名称
-  fyear_value / 筛选年份替换词
-  flang_name / 筛选语言名称
-  flang_value / 筛选语言替换词
-  fsort_name / 筛选排序名称
-  fsort_value / 筛选排序替换词
-  startpage / 起始页                  页码偏移，默认 1
-  sea_firstpage / 搜索起始页码         搜索起始页码偏移
-  firstpage / 首页 / 分类起始页码      首页推荐配置
-  hot_recommend / 热门推荐            "1"=聚合主页视频
-  reverse / 倒序 / 倒序播放           "1"=列表倒序
-  特殊分类链接                         name$url#name$url 格式，优先级高于 分类
-  二级目录                           二级目录过滤（格式：目录名|mode）
+【LIST 列表】
+  数组 list_array | 二次截取 list_twice | 列表二次截取
+  标题 list_name | 链接 list_id | 图片 list_pic
+  副标题 list_remarks | 分类副标题, cat_subtitle
+  链接前缀 list_prefix | 分类片单链接前缀, cat_prefix
+  链接后缀 list_suffix | 分类片单链接后缀, cat_suffix
+  过滤词 filter_word | 倒序 reverse | 倒序播放 | 列表模式 list_mode
+  列表JSON路径 listjsonlist | 列表JSON名称 listjsonname | 列表JSONID listjsonid
+  列表JSON图片 listjsonpic | 列表JSON状态 listjsonnote
+  坏条目跳过 skip_bad_item | skipBadItem
+  列表总页数规则 list_total | listTotal, 总页数, 总页数规则, 总数规则
 
-【分类 JSON 模式（cat_mode=0）】
-  cat_mode / 分类截取模式              "0"=JSON 模式，默认=null=网页截取模式
-  catjsonlist / 分类JSON列表           JSON 列表路径，支持多级如 "list.data"
-  catjsonname / 分类JSON名称           名称字段
-  catjsonid / 分类JSONID               ID 字段
-  catjsonpic / 分类JSON图片            图片字段
-  catjsonstitle / 分类JSON状态          状态/备注字段
-  cat_prefix / 分类片单链接前缀         拼接在 vod_id 链接前面
-  cat_suffix / 分类片单链接后缀         拼接在 vod_id 链接后面
-  cat_subtitle / 分类副标题            subtitle 字段名，回填到 vod_remarks
+【SEARCH 搜索】
+  搜索url search_url | 搜索模式 search_mode | 搜索数组 search_array
+  搜索标题 search_name | 搜索图片 search_pic | 搜索链接 search_id
+  搜索副标题 search_remarks | 搜索简介 search_content | 搜索二次截取 search_twice
+  搜索请求头 search_header | 搜索链接前缀 search_prefix
+  搜索链接后缀 search_suffix | 搜索后缀 | 搜索起始页码 sea_firstpage | 搜索起始页
+  搜索JSON路径 searchjsonlist | 搜索JSON名称 searchjsonname | 搜索JSONID searchjsonid
+  搜索JSON图片 searchjsonpic | 搜索JSON状态 searchjsonnote
+  搜索词分隔符 search_word_sep | searchWordSep, 关键词分隔符
 
-【列表解析】
-  list_array / 数组 / 列表数组        列表项定位规则
-  list_twice / 二次截取 / 列表二次截取  列表二次截取
-  list_name / 标题 / 列表标题         标题提取
-  list_id / 链接 / 列表链接           链接提取
-  list_pic / 图片 / 列表图片          图片提取（http 开头为固定 URL）
-  list_remarks / 副标题 / 列表副标题  副标题提取
-  list_prefix / 链接前缀 / 列表链接前缀 链接补前缀
-  list_suffix / 链接后缀 / 列表链接加后缀 链接补后缀
-  filter_word / 过滤词                列表过滤词（"&&" 分隔，命中剔除）
+【DETAIL 详情】
+  详情url detail_url | 详情数组 detail_array | 详情二次截取 detail_twice
+  影片名称 detail_name | 影片类型 detail_type | 类型 | 影片年代 detail_year | 年份
+  影片地区 detail_area | 地区 | 导演 detail_director | 主演 detail_actor
+  简介 detail_content | 剧情 | 状态 detail_remarks | 播放图片 play_image
+  详情分隔符 detail_separator | detail_label_split
+  详情合并字段 detail_merge | detail_content_merge
 
-【搜索配置】
-  search_url / 搜索url                搜索 URL（{wd}/{pg}，;post 表 POST）
-  search_mode / 搜索模式              "0"=JSON优先，"1"=网页优先
-  search_twice / 搜索二次截取
-  search_array / 搜索数组
-  search_name / 搜索标题
-  search_id / 搜索链接
-  search_pic / 搜索图片
-  search_remarks / 搜索副标题
-  search_content / 搜索简介
-  search_header / 搜索请求头
-  search_prefix / 搜索链接前缀
-  search_suffix / 搜索链接后缀 / 搜索后缀
+【PLAY 线路与播放】
+  线路数组 from_array | 线路标题 from_title | 线路二次截取 line_second_cut | line_twice
+  播放数组 play_array | 播放列表 url_array | 播放标题 url_title | 播放链接 url_url
+  播放二次截取 play_twice | 多线数组 multi_line_array
+  多线链接 multi_line_url | 线路链接 | 多线二次截取 multi_line_twice
+  多线链接前缀 multi_line_prefix | 多线链接后缀 multi_line_suffix
+  线路合并 merge_lines | 剧集过滤 episode_filter
+  空播放兜底 empty_play_url | 空播放线路名 empty_play_from
+  选集链接加前缀 epiurl_prefix | 选集链接加后缀 epiurl_suffix
+  直接播放 force_play | 播放链接前缀 play_prefix | 播放链接后缀 play_suffix
+  播放请求头 play_header | 跳转播放链接 jump_url
+  分析MacPlayer Anal_MacPlayer | 自动Maccms auto_maccms
+  剧集排序 episode_sort | episodeSort, 选集排序
+  剧集去重 episode_dedup | episodeDedup, 选集去重
+  线路重命名 line_name_map | lineNameMap, 线路映射
+  播放去参数 play_strip_params | playStripParams, 剥离参数
+  清晰度优先 episode_quality | episodeQuality, 剧集清晰度, 画质优先
 
-【详情页】
-  detail_url / 详情url                详情 URL 模板（${vid}/{vid}）
-  detail_array / 详情数组
-  detail_twice / 详情二次截取
-  detail_type / 影片类型 / 类型
-  detail_year / 影片年代 / 年份 / 年代
-  detail_area / 影片地区 / 地区
-  detail_director / 导演
-  detail_actor / 主演 / 演员
-  detail_content / 简介 / 剧情 / 内容
-  detail_remarks / 状态 / 备注
-  vod_name / 影片名称                  详情标题覆盖
-  detail_label_split / 详情分隔符     文本分隔符提取（| 分隔 label 词）
-  detail_content_merge / 详情合并字段  多字段追加到 vod_content（逗号分隔）
+【SNIFF 嗅探】
+  嗅探词 video_format | 视频过滤词 video_filter | 免嗅 manualVideoCheck
 
-【线路与播放】
-  line_twice / 线路二次截取
-  from_array / 线路数组               线路区块定位
-  from_title / 线路标题               线路名称提取
-  multi_line_array / 多线数组
-  multi_line_url / 多线链接 / 线路链接
-  multi_line_prefix / 多线链接前缀
-  multi_line_suffix / 多线链接后缀
-  merge_lines / 线路合并              "1"=合并多线路为单一线路
-  play_twice / 播放二次截取
-  play_array / 播放数组               选集区块定位
-  url_array / 播放列表 / 集数数组
-  url_title / 播放标题 / 集数标题
-  url_url / 播放链接 / 集数链接
-  jump_url / 跳转播放链接 / 跳转播放  播放页真实地址提取规则
-  force_play / 直接播放               "0"=详情解析 / "1"=分类直播 / "2"=详情直播
-  play_prefix / 播放链接前缀
-  play_suffix / 播放链接后缀
-  play_header / 播放请求头            直链视频请求头（JSON 对象）
-  play_image / 播放图片               缺封面兜底图
-  episode_filter / 剧集过滤           跳过含关键词的集（"&&" 分隔）
-  empty_play_url / 空播放兜底         无集时占位 URL
-  empty_play_from / 空播放线路名      占位线路名
-  epiurl_prefix / 选集链接加前缀       选集链接前缀
-  epiurl_suffix / 选集链接加后缀       选集链接后缀
-  video_filter / 视频过滤词            命中则强制返回 false（非视频）
+【PROXY 图片代理/弹幕/直播】
+  图片代理 PicNeedProxy | 图片代理前缀 baseEncodeUrl | 代理密钥 secretKey
+  图片代理白名单 pic_allow_domains | picAllowDomains, 代理白名单, 代理域名白名单
+  图片属性 img_attr | imgAttr, 懒加载属性, 图片真实地址属性
+  弹幕url danmuUrl | 直播url liveUrl（仅注册，引擎不消费）
 
-【嗅探】
-  manualVideoCheck / 免嗅             "0"=嗅探，"1"=免嗅探
-  video_format / 嗅探词               视频 URL 关键词（# 分隔）
-  filter_word / 过滤词                排除关键词（# 分隔）
-
-【图片代理】
-  PicNeedProxy / 图片代理             "1"=图片走 proxy:// 代理
-  baseEncodeUrl / 图片代理前缀        远端 Base64 图床中转地址
-  secretKey / 代理密钥                MD5(pic+secretKey) 签名密钥
-
-【扩展功能】
-  danmuUrl / 弹幕url                  弹幕接口 URL
-  liveUrl / 直播url                   直播流 URL
-  auto_maccms / 自动Maccms            "1"=字段缺失时注入 Maccms 默认规则
-  Anal_MacPlayer / 分析MacPlayer      "2"=优先用正则解析脚本块
-  css_selector / CSS 选择器
-  css_extract / CSS 提取
-  css_attribute / CSS 属性
-  jsoup_parse / JSOUP 解析
-
-【WebView 渲染】
-  web_view                          "1"=启用 WebView（JS 动态站点）
-  web_view_wait                     页面加载后额外等待毫秒数
-  web_view_ready                    DOM 就绪选择器（CSS/JS 表达式）
-  web_view_ready_timeout            就绪轮询超时，默认 10000ms
-
-【预留字段】（暂未实现，供未来版本使用）
-  二级目录                           二级目录过滤
-  二级ID                             二级页面 ID 字段
-  发布页                             发布页 URL（配合 [工具:源码]）
-  发布站-b                           备用发布站 B
-  原始网址-b                         备用原始网址 B
-  固定直链                           固定直链 URL
+【CSS（Jsoup）选择器】
+  CSS 选择器 css_selector | CSS选择器 | CSS 提取 css_extract | CSS提取
+  CSS 属性 css_attribute | CSS属性 | JSOUP 解析 jsoup_parse | JSOUP解析
+  列表CSS容器 list_css_container
 
 ================================================================================
 四、规则语法详解
@@ -305,184 +253,167 @@ XBPQ 是 CatVodSpider 框架的影视爬虫，以 && 正则截取为核心规则
 ────────────────────────────────────────────────────────────────
 
 格式："前缀&&后缀" → 截取前缀与后缀之间的内容
+（正则转义后 DOTALL 非贪婪匹配；命中多处时全部提取，如列表数组）
 
 示例：
   "title=\"&&\""          → 截取 title="..." 中的值
   "href=\"&&\""           → 截取 href="..." 中的值
   ">&&<"                  → 截取标签内文本
   "类型:&&<br"            → 截取 "类型:" 后到 "<br" 的内容
-  "前缀&&中缀&&后缀"       → 三段导航，逐段定位
+  "A&&B&&C&&D"            → 四段导航：先取 A..B，再在其中取 C..D
 
 ────────────────────────────────────────────────────────────────
-2. CSS 选择器模式（css:/css:// 前缀）
+2. || 备用选择器
 ────────────────────────────────────────────────────────────────
 
-由 ExtractorFactory 自动判断：from_array 或详情提取规则含 css: 前缀时启用。
-
-基本语法：
-  "css:.stui-vodlist__box"           → 类选择器
-  "css:#id"                          → ID 选择器
-  "css:div.item"                     → 标签+类组合
-  "css:a[href]"                      → 属性选择器
-
-提取模式：
-  "css:.title->text"                 → 取文本
-  "css:a->attr(href)"                → 取属性
-  "css:.desc->html"                  → 取 HTML
-  "css:.item:eq(2)->text"            → 第 3 个元素
-  "css:.item:last->text"             → 最后一个元素
-
-备用选择器（|| 分隔）：
-  "css:.a||css:.b"                   → 依次尝试，取第一个非空结果
+"规则1||规则2||规则3" → 依次尝试，取第一个非空结果（applyOrSelector）
 
 ────────────────────────────────────────────────────────────────
-3. CSS 简写语法
+3. CSS 选择器模式（css:/css:// 前缀）
 ────────────────────────────────────────────────────────────────
 
-  "p:span->text"   → 等价于 "css:span:text"
-  "tag:a->attr(href)"  → 等价于 "css:a[href]"
-  "tag:.item"      → 等价于 "css:.item"（无前缀简写时直接返回）
+由 isCssModeEnabled 判断：列表/详情/搜索/线路规则含 css: 前缀时启用，
+JsoupExtractor 执行提取；CSS 无结果自动回退传统 && 截取。
+
+  "css:.stui-vodlist__box"    → 类选择器
+  "css:#id"                   → ID 选择器
+  "css:.title->text"          → 取文本
+  "css:a->attr(href)"         → 取属性
+  "css:.desc->html"           → 取 HTML
 
 ────────────────────────────────────────────────────────────────
-4. [firstPage=...] 首页特殊链接
+4. 后处理器标记（applyPostProcessors）
 ────────────────────────────────────────────────────────────────
 
-用于分类 URL 或搜索 URL 首尾页结构不同的情况：
-  "分类url": "https://www.example.com/{cateId}/page/{catePg}[firstPage=https://www.example.com/{cateId}]"
-当 pg=起始页时，优先使用中括号内链接。
+值末尾追加标记，提取后执行：
+  [替换:旧>>新#旧>>新]  → 文本替换，# 分隔多组；旧串含 * 时转 .* 正则通配
+  [包含:关键词]         → 包含关键词才保留，否则返回空
+  [不包含:关键词]       → 不含关键词才保留，否则返回空
 
 ────────────────────────────────────────────────────────────────
-5. {{变量}} 模板替换
+5. {{变量}} 模板替换（resolveVariables）
 ────────────────────────────────────────────────────────────────
 
-支持最多 10 轮递归展开。内置变量：
+支持最多 10 轮递归展开。内置变量（variableMap）：
   {{主页url}}   → homeUrl 配置值
   {{站名}}      → siteName 配置值
   {{作者}}      → author 配置值
-  {{域名-c}}    → dynamic_domain 配置值（动态域名链）
-  {{主页url-c}} → home_url_c 配置值（主页备选）
   {{分类url}}   → class_url 配置值
   {{搜索url}}   → search_url 配置值
-  {{后缀}}      → 域名后缀（host 部分）
+  {{后缀}}      → domainSuffix 配置值
   {{密钥}}      → secretKey 配置值
+  {{域名-c}}    → 动态域名链解析结果（无效时回退 homeUrl）
+  {{主页url-c}} → 主页备选解析结果（无效时回退 homeUrl）
 
 示例：
   "搜索url": "{{主页url}}/search.php?wd={wd}&page={pg}"
 
 ────────────────────────────────────────────────────────────────
-6. [工具:xxx] 工具链
+6. 分节规则写法
 ────────────────────────────────────────────────────────────────
 
-在任意规则值中嵌入工具链标记，执行时自动替换：
-  [工具:源码]                抓取发布页 HTML 并返回（配合 发布页 字段使用）
-  [工具:重定向]              跟随 HTTP 重定向获取最终 URL
-  [工具:解url]               URL 解码
-  [工具:解b64]               Base64 解码
-  [工具:SHA]                 SHA-256 哈希
-  [工具:1截取N]              按分隔符取第 N 个片段（N 从 1 开始）
-  [工具:随机字符-N-唯一]      生成 N 位随机字符串
-  [工具:源码转b64#解密aes-key-iv-AES/CBC/PKCS7Padding]  AES 解密
+除扁平键外支持子对象写法（加载时自动归一化为扁平键）：
+  "cateManual": {"电影":"1","电视剧":"2"}   → 分类映射
+  "search": {"url":"...","vod_id":"id","vod_name":"name"}
+      → 分节搜索（vod_id 等的值 = JSON 数据字段名）
+注意：分节 search.url 的 {wd} 原样替换；扁平 搜索url 的 {wd} 自动 URL 编码。
 
 ────────────────────────────────────────────────────────────────
-7. 后处理器标记
+7. 本版不存在的写法（避免误用）
 ────────────────────────────────────────────────────────────────
 
-值末尾追加标记，提取后执行：
-  [替换:旧>>新]      → 文本替换（支持逗号分隔多组：旧1>>新1,旧2>>新2）
-  [包含:关键词]       → 包含关键词才保留，否则返回空
-  [不包含:关键词]     → 不含关键词才保留，否则返回空
-
-────────────────────────────────────────────────────────────────
-8. ;post POST 请求
-────────────────────────────────────────────────────────────────
-
-search_url 末尾加 ;post 表示 POST 请求：
-  "搜索url": "https://www.example.com/search;post"
-POST body 自动从 URL 路径参数中提取 {wd}/{pg} 并 URL 编码。
+  [工具:xxx] 工具链（源码/重定向/解url/解b64/SHA/AES 等）→ 未实现
+  [firstPage=...] URL 中括号首页语法 → 未实现（首页聚合用 首页/firstpage 键）
+  搜索 URL 末尾 ";post" → postSearch 已定义但未接入调用链，当前无效
+  quick 快搜过滤 → quick 参数被忽略，快搜与普搜行为一致
 
 ================================================================================
 五、特殊功能说明
 ================================================================================
 
 ────────────────────────────────────────────────────────────────
-1. 反爬绕过（WafBypassInterceptor）
+1. 反爬绕过（Cloudflare / 宝塔 WAF）
 ────────────────────────────────────────────────────────────────
-自动检测并绕过 Cloudflare 挑战页和宝塔 WAF：
-- Cloudflare：访问挑战页提取 cf_clearance cookie → 写入 header 自动携带
-- 宝塔 WAF：提取 btwaf token → hex 编码重请求 → 提取 cookie
-最大重试 5 次，延迟 1500ms + 随机抖动
+- Cloudflare：isCloudflarePage 检测挑战页（cf-challenge/cf-browser-verification
+  等特征）→ bypassCloudflare 提取 cf_clearance cookie 携带重试
+- 宝塔 WAF：isBaoTaWafPage 检测（btwaf/检测中/安全检测 等特征）→
+  extractBtwafToken 提取 token 生成 cookie 重试
+- antiCrawlTimeout 控制反爬重试总预算；Cookie 经 Util.mergeCookies 合并回写
 
 ────────────────────────────────────────────────────────────────
 2. 图片净化与代理
 ────────────────────────────────────────────────────────────────
-cleanImageUrl 自动过滤占位图（data:image / loading.gif / blank.gif /
-placeholder / favicon / noimage 等特征），占位图返回空串由调用方回退。
-
-PicNeedProxy=1 时生成 proxy://pic=URL&key=MD5(pic+secretKey)，
-loadPic 回源校验签名防代理滥用。
+- img_attr 指定懒加载真实地址属性（data-original 等）
+- default_pic 默认封面兜底
+- PicNeedProxy=1 生成 proxy://pic=URL&key=MD5(pic+secretKey)，
+  loadPic 回源校验签名；pic_allow_domains 白名单限定代理域名
 
 ────────────────────────────────────────────────────────────────
-3. SSRF 防护
+3. SSRF 防护（isInternalUrl）
 ────────────────────────────────────────────────────────────────
-isInternalUrl 拦截：
-- 危险协议：file/gopher/dict/ftp/jar/netdoc
+拦截：
+- 危险协议：file/gopher/dict/ftp/jar/netdoc/javascript/mailto
 - 内网 IP：127./10./172.16-31./192.168./169.254./0.0.0.0
 - localhost / .local / .internal / .localhost
 - IPv6：::1 / ULA(fc/fd) / 链路本地(fe80)
 proxy() 入口强制拦截，不受 allow_internal 影响。
-P2P 链接（magnet/ed2k/thunder/ftp/torrent）直接交给播放器，不走 HTTP。
+P2P 链接（magnet/thunder/ed2k/qqdl/btih/urn:btih）直接交给播放器，不走 HTTP。
 
 ────────────────────────────────────────────────────────────────
-4. WebView 渲染
+4. 动态域名（域名-c / 主页url-c）
 ────────────────────────────────────────────────────────────────
-解决 OkHttp 无法执行 JavaScript 的问题，适用于 Vue/React SPA 站点。
-- SingletonWebView：进程内唯一无头 WebView 实例，串行队列
-- Cookie 三级注入：headers.Cookie > rule.header.Cookie > headerMap.Cookie
-- 新 Cookie 自动回写 rule.header（SliderVerifyUtils.mergeCookies）
-- 降级：context 为空 / 主线程 / 超时 → 自动回退 OkHttp
-- web_view_ready 轮询检测 DOM 元素出现后再抽取 HTML
+applyDynamicDomain()（规则加载时执行）：
+  1) 域名-c 展开 {{变量}} + [替换:] 后处理器 → isValidOrigin 校验
+  2) 有效则把整份规则中旧 homeUrl 的 origin 全局替换为新 origin（域名切换）
+  3) 同时填充 {{域名-c}}/{{主页url-c}} 变量
+说明：仅 域名-c 有效时触发切换；主页url-c 只作变量来源。
 
 ────────────────────────────────────────────────────────────────
-5. 动态域名链（dynamic_domain / home_url_c）
+5. 镜像域名与全局参数
 ────────────────────────────────────────────────────────────────
-getHomeUrl() 调用优先级：
-  1) dynamic_domain（可含 {{主页url-c}} 嵌套引用 + [替换:] 域名替换）
-  2) home_url_c
-  3) homeUrl
-适用于站点频繁更换域名、需要动态获取最新域名的场景。
+- mirror_hosts：站点请求失败（5xx/超时）时逐个切换镜像域名重试
+- url_append：追加到每次请求 URL 的固定参数（如 "token=xxx"）
 
 ────────────────────────────────────────────────────────────────
-6. 选集链接前后缀（epiurl_prefix / epiurl_suffix）
+6. 选集链接前后缀（选集链接加前缀/加后缀）
 ────────────────────────────────────────────────────────────────
-在播放线路提取阶段，对每条集数链接自动加上前缀/后缀。
+播放线路提取阶段对每条集数链接自动拼接前缀/后缀。
 适用于选集链接需要拼接固定路径的场景（如 "/play/" + id + "/1.m3u8"）。
+
+────────────────────────────────────────────────────────────────
+7. 编码与解码
+────────────────────────────────────────────────────────────────
+- encoding：GBK/GB2312 站点响应强制矫正
+- hexEscapeDecode：链接中 %uXXXX JS 转义解码（详情链接）
+- convertUnicodeToChinese：响应 \uXXXX 转义解码
 
 ================================================================================
 六、注意事项
 ================================================================================
 
 1. 配置值约定：留空 / "空" / "&&" 均视为未配置；布尔用 "0"/"1"。
-2. 中文键优先：中文键与英文键同时存在时，中文键值优先保留。
-3. 直接播放与详情页互斥：force_play=1/2 时线路/播放配置不生效。
+2. 键归一化：XBPQKey.norm 大小写不敏感；未登记键原样透传不报错。
+3. 直接播放与详情页互斥：force_play=1/2 时线路/播放解析配置不生效。
 4. 多线模式触发：multi_line_array + multi_line_url 同时配置且非空时生效。
 5. 线路合并行为：合并后线路名取第一条线路原始名称（非默认"线路"）。
 6. 热门推荐：hot_recommend=1 时无 首页 配置也能聚合主页视频。
-7. 图片代理密钥泄露则签名失效，请勿公开传播 secretKey。
-8. 编码：默认 UTF-8，少数 GBK 站点通过 encoding 配置。
-9. 调试日志：打开调试=1 后全局生效（类级只升不降），异常堆栈由 SpiderDebug.log 输出。
-10. 线程安全：实例级状态（mergeLines/hotRecommend/cachedHost）每实例隔离；
-    类级共享状态（headerMap/debug/secretKey）并发时可能互相覆盖。
-11. 单条解析失败不影响整体：各方法均有独立 try-catch 保护，错误仅打日志。
-12. isVip() 逻辑：vipFlags 参数命中时返回 true；未命中时回退内置域名表（vip.ffzy/vip.lz/hd.lz/suzionizy），不会提前返回 false。
-13. video_filter（排除词）优先级高于 video_format（嗅探词），命中则强制判定为非视频。
-14. 工具链 [工具:xxx] 和 [替换:] 后处理器在 expandVariables() 中统一处理。
+7. 图片代理密钥泄露则签名失效，请勿公开传播 代理密钥。
+8. 单条解析失败不影响整体：各方法均有独立 try-catch，错误仅打日志。
+9. bad item 默认跳过：skip_bad_item=1 单条失败剔除该条；"0"=整页失败。
+10. vod_id 为 Base64 编码 JSON（encodeVodId），detailContent 自动解码，
+    规则书写者无需关心。
+11. 视频过滤词优先级高于嗅探词，命中强制判定为非视频。
+12. WebView 渲染四键仅注册未实现，运行时输出告警并忽略。
+13. 特殊分类链接 / 直播url 仅注册，引擎不消费。
 
 ================================================================================
 七、版本信息
 ================================================================================
 
-源文件：com.github.catvod.spider.XBPQ.java
-依赖：OkHttp / Jsoup / org.json / Android WebView / Spider 基类
-特性：中英文双键 / && 正则截取 / CSS 选择器 / 多线聚合 / 反爬三套 /
-      图片代理双模式 / 弹幕加载 / M3U8 解析 / {{变量}} 模板 / SSRF 防护 /
-      WebView 渲染 / 动态域名链 / 工具链 / 选集链接前后缀 / cat_mode JSON 分类模式
+源文件：com.github.catvod.spider.XBPQ.java + XBPQKey.java（单文件实现 + 键注册表）
+依赖：OkHttp / Jsoup / org.json / Spider 基类 / Util（mergeCookies/isThunder）
+特性：中英文双键（XBPQKey 统一登记）/ && 正则截取 / CSS 选择器 / 多线聚合 /
+      Cloudflare+宝塔反爬 / 图片代理 / 弹幕加载 / M3U8 解析 / {{变量}} 模板 /
+      动态域名切换 / 镜像域名 / SSRF 防护 / 选集链接前后缀 /
+      分类/列表/搜索 JSON 模式 / 自动猜测链路
+测试：xbtest/ 桌面验证环境，五套件 379 项断言 + RuleLint 95 个真实规则审计
