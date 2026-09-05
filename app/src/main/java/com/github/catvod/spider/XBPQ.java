@@ -1236,6 +1236,11 @@ public class XBPQ extends Spider {
 
     protected JSONArray extractCategoriesByJson(String json, String path,
                                                 String idKey, String nameKey) {
+        return extractCategoriesByJson(json, path, idKey, nameKey, "", "");
+    }
+
+    protected JSONArray extractCategoriesByJson(String json, String path,
+                                                String idKey, String nameKey, String picKey, String noteKey) {
         JSONArray classes = new JSONArray();
         if (json == null || json.isEmpty() || path == null || path.isEmpty()) return classes;
         try {
@@ -1250,6 +1255,10 @@ public class XBPQ extends Spider {
                 JSONObject c = new JSONObject();
                 c.put("type_id", id);
                 c.put("type_name", name);
+                String pic = picKey == null || picKey.isEmpty() ? "" : jsonPick(o, picKey);
+                String note = noteKey == null || noteKey.isEmpty() ? "" : jsonPick(o, noteKey);
+                if (!pic.isEmpty()) c.put("type_pic", pic);
+                if (!note.isEmpty()) c.put("type_note", note);
                 classes.put(c);
             }
         } catch (Exception e) {
@@ -1297,7 +1306,8 @@ public class XBPQ extends Spider {
         String json = httpGetRaw(addHttpPrefix(url));
         if (json.isEmpty()) return false;
         JSONArray parsed = extractCategoriesByJson(json, jsonPath,
-                getRuleVal("catjsonid"), getRuleVal("catjsonname"));
+                getRuleVal("catjsonid"), getRuleVal("catjsonname"),
+                getRuleVal("catjsonpic"), getRuleVal("catjsonnote"));
         for (int i = 0; i < parsed.length(); i++) classes.put(parsed.get(i));
         return classes.length() > 0;
     }
@@ -3686,7 +3696,8 @@ public class XBPQ extends Spider {
                 classes.put(jsonObject);
             }
         }
-        return true;
+        // 无 $ 的 fenlei 一个分类都建不出来，返回 false 让 fallbackClassBuild 兜底
+        return classes.length() > 0;
     }
 
     private void fallbackClassBuild(JSONArray classes) throws JSONException {
@@ -8231,8 +8242,13 @@ public class XBPQ extends Spider {
         String pu = params.get("url");
         if (pu != null) {
             try {
-                String decoded = java.net.URLDecoder.decode(pu, "UTF-8").toLowerCase();
-                if (decoded.contains(".m3u8")) return loadM3u8(params);
+                String decoded = java.net.URLDecoder.decode(pu, "UTF-8");
+                if (decoded.toLowerCase().contains(".m3u8")) return loadM3u8(params);
+                // base64 形态的 m3u8 内容无 .m3u8 标记，解码探测后同样走 m3u8 分支
+                if (decoded.length() > 200 && !decoded.contains("://")) {
+                    String inner = new String(Base64.decode(decoded, Base64.DEFAULT), StandardCharsets.UTF_8);
+                    if (inner.contains("#EXTM3U") || inner.contains("#EXTINF")) return loadM3u8(params);
+                }
             } catch (Exception ignored) {
             }
         }
