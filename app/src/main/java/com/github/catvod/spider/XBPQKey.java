@@ -219,7 +219,7 @@ public final class XBPQKey {
         k(Module.SEARCH, "search_header", "搜索请求头");
         k(Module.SEARCH, "search_prefix", "搜索链接前缀");
         k(Module.SEARCH, "search_suffix", "搜索后缀", "搜索链接后缀");
-        k(Module.SEARCH, "sea_firstpage", "搜索起始页码");
+        k(Module.SEARCH, "sea_firstpage", "搜索起始页码", "搜索起始页");
         k(Module.SEARCH, "searchjsonlist", "搜索JSON路径");
         k(Module.SEARCH, "searchjsonname", "搜索JSON名称");
         k(Module.SEARCH, "searchjsonid", "搜索JSONID");

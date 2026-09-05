@@ -1885,8 +1885,11 @@ public class XBPQ extends Spider {
         try {
             JSONObject cateManual = rule.optJSONObject("cateManual");
             String body = fetchOrCacheHomePageBody();
+            // 显式分类配置（含 cat_array 三件套）优先于自动猜测，避免猜测抢先覆盖用户规则
             boolean hasExplicitCate = !getRuleVal("fenlei").isEmpty()
-                    || (!getRuleVal("class_name").isEmpty() && !getRuleVal("class_value").isEmpty());
+                    || (!getRuleVal("class_name").isEmpty() && !getRuleVal("class_value").isEmpty())
+                    || (!getRuleVal("cat_array").isEmpty() && !getRuleVal("cat_title").isEmpty()
+                        && !getRuleVal("cat_id").isEmpty());
 
             if (cateManual == null && !hasExplicitCate) {
                 cateManual = guessRuleCateManual(body);
@@ -2587,6 +2590,7 @@ public class XBPQ extends Spider {
                 if (lower.startsWith(scheme + ":")) return raw;
             }
             if (raw.startsWith("http://") || raw.startsWith("https://")) return raw;
+            if (lower.startsWith("data:")) return raw;
             if (raw.startsWith("//")) {
                 boolean https = baseUrl != null && baseUrl.startsWith("https");
                 if (baseUrl == null || baseUrl.isEmpty()) {
@@ -3611,6 +3615,11 @@ public class XBPQ extends Spider {
         int startIdx = body.indexOf(parts[0]);
         if (startIdx < 0) return body;
         body = body.substring(startIdx + parts[0].length());
+        // parts[0] 常截在标签属性中间，丢掉首个 '<' 之前的残片（如 `">`），避免污染第一条条目
+        if (!body.isEmpty() && body.charAt(0) != '<') {
+            int lt = body.indexOf('<');
+            if (lt > 0) body = body.substring(lt);
+        }
 
         if (parts.length > 1 && !parts[1].isEmpty()) {
             int endIdx = body.indexOf(parts[1]);
@@ -4906,7 +4915,8 @@ public class XBPQ extends Spider {
             if (s < 0) break;
             int e = block.indexOf(itemEnd, s + itemStart.length());
             if (e < 0) break;
-            String item = block.substring(s, e);
+            // item 需包含 itemEnd 尾标记：titleEnd 常与 itemEnd 相同（如 </a>），截掉会导致标题永远取不到
+            String item = block.substring(s, e + itemEnd.length());
             p = e + itemEnd.length();
 
             int hs = item.indexOf(hrefStart);
@@ -4919,6 +4929,7 @@ public class XBPQ extends Spider {
             if (!ignoreFilter && !matchEpisodeFilter(href)) continue;
 
             String title = extractEpisodeTitle(item, he, titleBounds);
+            if (title.isEmpty()) title = extractEpisodeTitleUniversal(item, he, titleBounds);
             if (title.contains("展开全部")) continue;
             if (title.isEmpty()) title = "第" + (eps.size() + 1) + "集";
             eps.add(title + "$" + addHttpPrefix(href));
@@ -5274,6 +5285,7 @@ public class XBPQ extends Spider {
                 if (p >= 0 && p < to) to = p;
             }
             String value = text.substring(from, to).trim();
+            value = value.replaceFirst("^[：:]\s*", "").replaceAll("!{2,}", " ").trim();
             String field = mapDetailLabel(label);
             if (field != null && !value.isEmpty() && value.length() < 500
                     && vod.optString(field, "").isEmpty()) {
@@ -5305,7 +5317,8 @@ public class XBPQ extends Spider {
             String val = vod.optString(field, "");
             if (val.isEmpty()) continue;
             if (sb.length() > 0) sb.append('\n');
-            sb.append(XBPQKey.cn(field)).append("：").append(val);
+            // mapDetailLabel 返回内部 vod_* 键，不在 XBPQKey 中文表里；直接用配置词作显示名
+            sb.append(f).append("：").append(val);
         }
         vod.put("vod_content", sb.toString());
     }
@@ -8180,7 +8193,8 @@ public class XBPQ extends Spider {
             StringBuilder result = new StringBuilder();
             String[] lines = content.split("\n");
             String resolvedBase = baseUrl != null && !baseUrl.isEmpty()
-                    ? baseUrl : Util.extractDomain(m3u8Url) + "/";
+                    ? baseUrl
+                    : (m3u8Url.startsWith("https") ? "https://" : "http://") + Util.extractDomain(m3u8Url) + "/";
 
             for (String line : lines) {
                 line = line.trim();
@@ -8343,8 +8357,14 @@ public class XBPQ extends Spider {
                     && !oldOrigin.equalsIgnoreCase(newOrigin)) {
                 try {
                     String json = rule.toString();
-                    rule = new JSONObject(json.replace(oldOrigin, newOrigin));
-                    SpiderDebug.log(safeLog("动态域名已切换: " + oldOrigin + " -> " + newOrigin));
+                    // toString 会把 / 转义为 \/，需同时替换转义形式，否则动态域名切换永远落空
+                    String escOld = oldOrigin.replace("/", "\\/");
+                    String escNew = newOrigin.replace("/", "\\/");
+                    String replaced = json.replace(oldOrigin, newOrigin).replace(escOld, escNew);
+                    if (!replaced.equals(json)) {
+                        rule = new JSONObject(replaced);
+                        SpiderDebug.log(safeLog("动态域名已切换: " + oldOrigin + " -> " + newOrigin));
+                    }
                 } catch (Exception e) {
                     SpiderDebug.log(safeLog("动态域名切换失败: " + e.getMessage()));
                 }
@@ -8761,8 +8781,14 @@ public class XBPQ extends Spider {
         return new Object() {
             int pos = -1, ch;
 
+            // next() 必须同步更新 ch：否则 parse() 初始化后 ch 停留在初始值，
+            // 以 '('、'-' 等开头的表达式会在数字分支读到空串而抛 NumberFormatException
             boolean next() {
-                return ++pos < s.length();
+                pos++;
+                if (pos < s.length()) { ch = s.charAt(pos); return true; }
+                pos = s.length();
+                ch = '\0';
+                return false;
             }
 
             boolean eat(int c) {
@@ -8773,13 +8799,18 @@ public class XBPQ extends Spider {
             }
 
             double parse() {
-                next();
                 double v = parseTerm();
                 while (true) {
                     if (eat('+')) v += parseTerm();
                     else if (eat('-')) v -= parseTerm();
                     else return v;
                 }
+            }
+
+            /** 入口：先读入首个字符（ch 始终指向未消费的当前字符），parse 递归时不得再次前进 */
+            double parseAll() {
+                if (pos < 0) next();
+                return parse();
             }
 
             double parseTerm() {
@@ -8808,7 +8839,7 @@ public class XBPQ extends Spider {
                 }
                 return neg ? -v : v;
             }
-        }.parse();
+        }.parseAll();
     }
 
     public List<String> sortList(List<String> list) throws Exception {
