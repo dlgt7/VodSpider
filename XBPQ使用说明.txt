@@ -328,7 +328,275 @@ JsoupExtractor 执行提取；CSS 无结果自动回退传统 && 截取。
   quick 快搜过滤 → quick 参数被忽略，快搜与普搜行为一致
 
 ================================================================================
-五、特殊功能说明
+五、方法行为详解（含源码计算规则）
+================================================================================
+
+────────────────────────────────────────────────────────────────
+1. wrapList 页总数计算链路
+────────────────────────────────────────────────────────────────
+categoryContent 最终调用 wrapList(videos, body, pg) 构造返回列表。
+计算顺序如下（一旦命中即停止）：
+
+  ① videos 为空（size=0）→ pagecount = max(0, pageNum-1)，total=0
+
+  ② list_total 非空 → 解析为整数 total，pagecount = ceil(total/size)
+
+  ③ list_total 为空 但 body（原始 HTML）非空 → 调用 parseTotalFromHtml(body)：
+       a) parseTotalUniversal(body)：
+          - JSON "total":N / "count":N → 直接返回 N
+          - JSON {varName}:N，varName ∈ TOTAL_VAR_NAMES：
+            若 varName 是页数变量（mac_page/pages/pagecount/totalpage 等），
+            返回 N*20；否则直接返回 N
+          - 「共 N 条」文本匹配 → 返回 N
+          - 「共 N 页」文本匹配 → 返回 N
+       b) parseIntFromScript(html, "mac_total") → 返回 N
+       c) parseIntFromScript(html, "mac_page") * 20 → 返回总条数
+       d) parseIntFromAttr(html, "data-total") → 返回 N
+       e) countPageLinks(html) * 30（统计 <li class=...page...>N</li>
+          和 ?page=N 出现的最大页数，每页估算 30 条）
+       f) extractMaxPageNumber(html) * 30
+
+  ④ body 为空或所有猜测均失败 → pagecount = 50（DEFAULT_UNKNOWN_PAGE_COUNT），
+     total = 50 * size
+
+  ⑤ result.limit = max(90, size)（单页条目数下限 90）
+
+说明：parseTotalFromHtml 与 wrapList 内 parseTotalUniversal 的猜测逻辑完全一致，
+两者互为冗余校验，取第一个有效值。
+
+────────────────────────────────────────────────────────────────
+2. categoryUrl 占位符完整替换链
+────────────────────────────────────────────────────────────────
+categoryUrl(tid, pg, filter, extend) 按顺序执行：
+
+  ① stripBackticks(url)：循环去除首尾反引号 `
+
+  ② ";;" 截断：url.contains(";;") 时截取 ";;" 之前的部分（用于双 URL 分离
+     分类页与列表页的情况）
+
+  ③ extend 参数替换（filter=true 且 extend 非空时）：
+     对每个 key/value，执行：
+       cateUrl = cateUrl.replace("{"+key+"}",
+           URLEncoder.encode(value,"UTF-8").replace("+", "%20"))
+     说明：空格编码为 %20 而非 "+"（避免 URL 中 + 被误解析为空格）
+
+  ④ offset_paging 模式：
+     pageSize = getRuleVal("page_size")，默认 20
+     pageNum = shiftStartPage(pg) = parse(pg) + startpage - 1
+     若 offset_paging="1" 且 url 不含 {offset}：
+       pgVal = (pageNum-1)*pageSize（将页码转为偏移量）
+     否则 pgVal = shiftStartPage(pg)（原页码）
+
+  ⑤ 占位符替换：
+     {offset} = (pageNum-1)*pageSize（与 offset_paging 无关始终计算）
+     {limit}  = pageSize
+     {cateId} = tid
+     {catePg} = pgVal
+
+  ⑥ KNOWN_BRACE_KEYS 过滤（L129-132）：
+     集合包含：cateId, catePg, cateIdEn, class, area, by, year, lang, letter,
+               page, pg, offset, limit
+     对 url 中剩余的 {xxx}，若 xxx ∈ KNOWN_BRACE_KEYS：
+       查找 url[lastEnd:] 中 "/" + xxx + "/" 子串，跳过该段
+       （将如 /class/喜剧/ 这类筛选路径整体删除）
+     最终返回清理后的 url
+
+────────────────────────────────────────────────────────────────
+3. 图片净化 resolveLazyImage
+────────────────────────────────────────────────────────────────
+当 img_html 为 <img ...> 标签时（非纯 URL）执行：
+
+  ① Jsoup.parse(imgHtml).selectFirst("img") 取第一个 <img> 节点
+  ② 若无 <img>，扫描 lazy-load 类属性：
+       [data-original],[data-src],[data-lazy],[data-lazy-src],
+       [data-original-src],[data-img],[exposuresrc],[_src],
+       [lazy-src],[data-bg]
+  ③ 先查 img_attr 配置的值（优先级最高），命中即返回
+  ④ 再遍历 LAZY_IMG_ATTRS 顺序兜底
+  ⑤ 最终返回 trim() 后的属性值，未命中则返回空串
+
+LAZY_IMG_ATTRS 完整顺序（L180-183）：
+  data-original → data-src → data-lazy → data-lazy-src → data-original-src
+  → data-img → exposuresrc → _src → lazy-src → data-bg → src
+
+────────────────────────────────────────────────────────────────
+4. 搜索配置自动探测（searchContent 调用链）
+────────────────────────────────────────────────────────────────
+searchContent 在 search 规则缺失时执行：
+
+  ① guessSearchUrlIfNeeded()：
+     fetchOrCacheHomePageBody()（首页 HTML 缓存 HOME_CACHE_TTL_MS=5分钟）
+     → guessSearchUrlUniversal(body)（探测 SEARCH_PATH_PROBES 中的路径）
+     → guessRuleSearchUrl(body)（从首页链接猜测）
+     → 若命中，构造 {url: "..."} 写入 rule.search
+
+  ② 若仍无搜索规则：generateDefaultSearchConfig()：
+     向 {homeUrl}/index.php/ajax/suggest?mid=1&wd=test 发起请求
+     → 成功则构造：
+       {
+         "vod_id":"id", "vod_name":"name", "vod_pic":"pic",
+         "url":"/index.php/ajax/suggest?mid=1&wd={wd}"
+       }
+
+  ③ applyFlatSearchFields()：扁平 search_url 字段 → search 子对象
+
+  ④ initializeSearchConfig()：CSS/Jsoup 搜索规则初始化
+
+  搜索词 URL 构建（buildSearchUrl，L6458-6465）：
+    - search_word_sep 非空：keyword = keyword.replace(" ", sep)
+    - {wd} = URLEncoder.encode(keyword, "UTF-8")
+    - {pg} = shiftSearchPage(page) = parse(page) + sea_firstpage - 1
+    - 末尾追加 search_suffix（若有）
+
+  搜索处理优先级（searchContent L6341-6416）：
+    searchjsonlist 显式指定 → JSON 解析
+    → RuleUtils.getRegion(content, search) 截取
+    → search_twice 二次截取
+    → search_mode=0：JSON 优先（parseSearchResult → parseJsonSearchResult）
+    → isCssModeEnabled：CSS 提取（失败回退）
+    → parseHtmlSearchResults（search_mode=1 时 JSON 作为兜底）
+
+────────────────────────────────────────────────────────────────
+5. playlistContent 选集后处理完整链路
+────────────────────────────────────────────────────────────────
+playlistContent(ids, vod, body) 执行顺序（L5447-5520）：
+
+  ① 解码 ids[0]（Base64）→ vinfo JSONObject
+
+  ② playlist 规则处理：
+     - playlist.url 非空且 != detail.url → fetchUrl(playlist.url) 获取播放页
+     - RuleUtils.getRegion(body, playlist) 截取播放内容区
+
+  ③ play_twice 二次截取（若有）
+
+  ④ obtainPlayUrlList(content, playlist, vinfo) → vodPlayUrl
+     findVodPlayFrom(content, size) → vodPlayFrom
+     alignPlaySources(vodPlayFrom, vodPlayUrl) 对齐
+
+  ⑤ epiurl_prefix / epiurl_suffix 前后缀拼接
+     resolveEpiUrlVal 支持 {{变量}}；applyEpiUrlAdjust 批量应用
+
+  ⑥ processEpisodes(vodPlayUrl)（L5522-5560）：
+     - episode_dedup=1：同线路内按 url 去重（Set<String> seenUrl）
+     - episode_quality：按 "蓝光>>超清>>高清" 优先级链 pickBestQuality
+     - episode_sort=1：extractEpisodeNum 提取数字，全数字才排序
+
+  ⑦ line_name_map：线路名重命名（applyLineNameMap）
+
+  ⑧ empty_play_url 兜底（L5486-5497）：
+     无集数时生成一条占位集数 "第1集$空播放URL"，线路名取 empty_play_from
+     或默认"空播放"
+
+  ⑨ reorderPlaySources：playlist.vod_play_from 数组控制线路顺序（L5808-5846）
+
+  ⑩ merge_lines=1 且线路>1（L5501-5513）：
+     合并为单条线路，$ 分隔集数，线路名取第一条原始名称
+
+  ⑪ vod_play_url = TextUtils.join("$$$", vodPlayUrl)
+     vod_play_from = TextUtils.join("$$$", vodPlayFrom)
+
+────────────────────────────────────────────────────────────────
+6. proxy 分发逻辑（proxy://do=XBPQ 入口）
+────────────────────────────────────────────────────────────────
+proxy(params) 分发顺序（L8255-8280）：
+
+  ① do=XBPQ & danmu_url/danmuUrl → loadDanmu(params)（L8097-8136）
+     - URLDecoder 解码
+     - SSRF 拦截（isInternalUrl）
+     - 白名单校验（isProxyOriginAllowed）
+     - OkHttp.string(danmuUrl, headers) 拉取
+     - jsonArray2xml 转 B站风格 XML；失败则原样返回 application/octet-stream
+
+  ② do=XBPQ & m3u8 → loadM3u8(params)（L8182-8252）
+     - 探测 base64 编码的 m3u8 内容（长度>200 且无 ://）
+     - SSRF/白名单校验（非 base64 内容时）
+     - 相对路径补全：base 优先，否则取自 URL 域名
+     - #EXTM3U/#EXTINF 探测后同样走 m3u8 分支
+     - 返回 application/vnd.apple.mpegurl
+
+  ③ do=XBPQ & url（或 pic）→ loadPic(params)（L8043-8095）
+     - URLDecoder 解码 pic 参数
+     - SSRF 拦截 → 白名单校验 → MD5 签名校验（secretKey 非空时：MD5(pic+secretKey)）
+     - OkHttp.proxy(pic, headers) 回源，返回原 Content-Type
+
+  ④ url 参数含 .m3u8 或 base64 解码后含 #EXTM3U/#EXTINF → 走 loadM3u8
+
+  ⑤ 所有回源强制 SSRF 防护，不受 allow_internal 影响
+
+────────────────────────────────────────────────────────────────
+7. playerContent 播放链完整优先级
+────────────────────────────────────────────────────────────────
+playerContent(flag, url, vipFlags) 执行顺序（L5906-5936，任一非 null/非空即返回）：
+
+  ① tryForcePlay(url)（force_play=1/2，L5992-6022）：
+     - webUrl = play_prefix + url + play_suffix
+     - 含 #isVideo=true# 强制标记视频
+     - isVideoFormat 或 isThunder → parse=0 直出
+     - isVipPlayUrl（内置 Vip 域名表 + 框架透传 vipFlags）→ parse=1, jx=1
+     - 否则 → parse=1 嗅探
+     - applyPlayHeader 注入 play_header JSON
+
+  ② tryMacPlayer(html)（Anal_MacPlayer=1/2 或 auto_maccms=1/2，L6040起）：
+     - P_PLAYER_OBJ 正则提取 var player_xxx = {...}
+     - Anal_MacPlayer=2：正则再解析 MacPlayer 脚本块提取真实 URL
+     - tryDecryptParsedUrl 解密（encrypt 字段）
+
+  ③ parsePlayUrl(flag, url, html, vipFlags)（L5847-5886）：
+     - RuleUtils.getRegion(html, play) 截取 play 区域
+     - lookback 回退定位起始位置
+     - RuleUtils.findSubString 取 vod_url 规则结果
+     - hexEscapeDecode 解码 JS 转义
+     - tryDecryptParsedUrl 解密
+     - isDirectLinkUniversal 或 isVideoFormat 校验通过后 → parse=0 直出
+
+  ④ tryJumpUrl(url, html)（jump_url 非空，L6100-6147）：
+     - extractJumpUrl：startFlag 含 * → player 对象提取 JSON.url；
+       否则 && 截取
+     - tryDecryptParsedUrl 解密
+     - 相对路径 → resolveRedirectTarget 补全
+     - isVideoFormat/isVipPlayUrl 判定 → parse=0 或 parse=1 jx=1
+
+  ⑤ tryScanVideoLink(url, html)（兜底，L6188起）：
+     - 策略1：P_PLAYER_OBJ 直接提取播放器对象（无需 Anal_MacPlayer 配置）
+     - 策略2：P_VIDEO_DIRECT 正则扫描 .m3u8/.mp4 直链
+     - 失败则返回 null
+
+  ⑥ buildSniffResult(url)：parse=1，player 自行嗅探
+
+  所有返回结果均经 appendDanmuParam 注入弹幕参数（danmuUrl 非空时）
+
+────────────────────────────────────────────────────────────────
+8. 多线模式触发与执行
+────────────────────────────────────────────────────────────────
+触发条件（两者同时配置且非空，L4667-4682）：
+  multi_line_array && multi_line_url
+
+执行流程（tryMultiLineMode）：
+  ① multi_line_twice 二次截取（若有）
+  ② extractMultiLines(body, arrayRule, urlRule, prefix, suffix)：
+     - arrayParts = applyOrSelector(arrayRule).split("&&")
+     - urlParts = applyOrSelector(urlRule).split("&&")
+     - 循环最多 10 条：找 arrayStart..arrayEnd 区间，再在其中
+       找 urlStart..urlEnd，拼接 prefix+content+suffix
+  ③ 返回 List<String> 单元素（"集1#集2#..." 格式）
+
+tryFromLinkMode 补充（L4716-4755）：
+  - 仅当 multi_line_array 为空时才走此模式
+  - 对每条线路独立 fetchUrl 播放页，再 extractVideoListByLink
+  - 线路上限 10 条
+
+────────────────────────────────────────────────────────────────
+9. 常量与边界值
+────────────────────────────────────────────────────────────────
+  DEFAULT_HOME_MAX_VIDEOS = 20        首页每分类最多聚合条数
+  MAX_PAGE_ITEMS = 100                单页列表最大条目数（超限截断）
+  DEFAULT_UNKNOWN_PAGE_COUNT = 50     无法推测总页数时的兜底页码
+  MAX_HTML_LENGTH = 2MB               首页缓存最大长度（超长截断到最近 > 位置）
+  HOME_CACHE_TTL_MS = 5 * 60 * 1000   首页 HTML 缓存时间（5分钟）
+  variableMap 递归展开上限：10 轮
+
+================================================================================
+六、特殊功能说明
 ================================================================================
 
 ────────────────────────────────────────────────────────────────

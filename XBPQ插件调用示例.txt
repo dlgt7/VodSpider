@@ -401,6 +401,228 @@ sites 数组项：
 说明：剧集排序=1 按集数号排序；剧集去重=1 按链接去重；清晰度优先 为
 "蓝光>>超清>>高清" 式优先级链；剧集过滤（&& 分隔）命中关键词的集跳过。
 
+────────────────────────────────────────────────────────────────
+场景 16：;; 截断与 page_end_marker 翻页终点
+────────────────────────────────────────────────────────────────
+
+{
+    "站名": "截断用法示例",
+    "主页url": "https://www.example.com",
+    "分类": "电影$1",
+    "分类url": "https://www.example.com/vodtype/1-html;;https://www.example.com/vodshow/1-page/{catePg}.html",
+    "数组": ".vodlist&&</ul>",
+    "标题": "title=\"&&\"",
+    "链接": "href=\"&&\"",
+    "翻页终点标记": "没有更多"
+}
+
+说明：
+- 分类url 含 ";;" 时截取 ;; 之前的部分作为请求 URL，;; 之后的部分被丢弃。
+  此写法适用于某些站点分类页和列表页 URL 分离的场景（前段分类页，后段列表页）。
+- 翻页终点标记 = "没有更多"：当响应 body 包含该文本时，返回空列表（pagecount=0），
+  框架据此停止翻页。常用于后端无分页或已到最后一页的场景。
+
+────────────────────────────────────────────────────────────────
+场景 17：list_total 精确控制总页数
+────────────────────────────────────────────────────────────────
+
+写法 A（硬编码总条数，适合 API 站点）：
+{
+    "站名": "总数控制示例",
+    "主页url": "https://www.example.com",
+    "分类": "电影$1",
+    "分类url": "https://www.example.com/api/vod?type=1&page={catePg}",
+    "列表模式": "1",
+    "列表JSON路径": "data.list",
+    "列表JSONID": "vod_id",
+    "列表JSON名称": "vod_name",
+    "列表总页数": "500"
+}
+
+写法 B（HTML 站点，依赖猜测失败时的精确值）：
+{
+    "站名": "总数控制示例2",
+    "主页url": "https://www.example.com",
+    "分类": "电影$1",
+    "分类url": "https://www.example.com/list/1/page/{catePg}.html",
+    "数组": ".item&&</li>",
+    "标题": "title=\"&&\"",
+    "链接": "href=\"&&\"",
+    "总页数规则": "共{total}条"
+}
+
+说明：
+- list_total 值为纯数字时，pagecount = ceil(list_total / 当前页条数)。
+- list_total 也可写为 && 截取规则（如 "共{total}条"），引擎会先尝试截取 HTML。
+- 不配置时引擎自动猜测（JSON total 字段/mac_total JS 变量/「共N条」文本/分页链接数），
+  均失败时兜底 50 页。
+
+────────────────────────────────────────────────────────────────
+场景 18：搜索词分隔符 search_word_sep（空格转 +）
+────────────────────────────────────────────────────────────────
+
+{
+    "站名": "分隔符示例",
+    "主页url": "https://www.example.com",
+    "搜索url": "https://www.example.com/search.php?wd={wd}",
+    "搜索词分隔符": "+",
+    "搜索数组": ".result&&</li>",
+    "搜索标题": "title=\"&&\"",
+    "搜索链接": "href=\"&&\""
+}
+
+说明：
+- 扁平搜索 url 中 {wd} 默认经 URLEncoder.encode（空格变 %20）。
+- 设置 search_word_sep="+" 后，空格先被替换为 "+"，再经 URLEncoder.encode
+  → 最终空格编码为 "+"（Google/Bing 风格搜索）。
+- 分节 search.url 写法中的 {wd} 原样替换，search_word_sep 不生效。
+
+────────────────────────────────────────────────────────────────
+场景 19：offset_paging 偏移分页模式
+────────────────────────────────────────────────────────────────
+
+{
+    "站名": "偏移分页示例",
+    "主页url": "https://www.example.com",
+    "分类": "电影$1",
+    "分类url": "https://www.example.com/api/vod?cateId=1&offset={offset}&limit={limit}",
+    "偏移分页": "1",
+    "每页条数": "20",
+    "数组": ".item&&</div>",
+    "标题": "title=\"&&\"",
+    "链接": "href=\"&&\"",
+    "图片": "data-src=\"&&\""
+}
+
+说明：
+- offset_paging=1 时，分类 url 中的 {offset} = (页码-1)*pageSize，{limit} = pageSize。
+- 若 url 不含 {offset} 但 offset_paging=1，则 {catePg} 也会被替换为偏移量。
+- 适用于后端 API 使用 offset/limit 而非 page 参数的场景。
+
+────────────────────────────────────────────────────────────────
+场景 20：M3U8 代理解析（proxy:// 直接返回 m3u8 内容）
+────────────────────────────────────────────────────────────────
+
+{
+    "站名": "M3U8代理示例",
+    "主页url": "https://www.example.com",
+    "分类": "电影$1",
+    "分类url": "https://www.example.com/{cateId}/page/{catePg}.html",
+    "数组": ".item&&</li>",
+    "标题": "title=\"&&\"",
+    "链接": "href=\"&&\"",
+    "播放链接": "proxy://do=XBPQ&m3u8=https://cdn.example.com/play/123.m3u8"
+}
+
+说明：
+- proxy://do=XBPQ&m3u8=URL 让代理服务器回源拉取 m3u8 并补全相对路径。
+- 支持 base64 编码的 m3u8 内容（长度>200 且无 :// 时自动探测）。
+- 支持 base 参数指定 baseUrl：proxy://do=XBPQ&m3u8=...&base=https://cdn.example.com/
+- 返回 Content-Type: application/vnd.apple.mpegurl，播放器可直接播放。
+
+────────────────────────────────────────────────────────────────
+场景 21：图片代理签名校验与安全机制
+────────────────────────────────────────────────────────────────
+
+{
+    "站名": "图片代理安全示例",
+    "主页url": "https://www.example.com",
+    "图片代理": "1",
+    "代理密钥": "MySecretKey2024",
+    "图片代理白名单": "img.example.com#cdn.example.com",
+    "图片属性": "data-original",
+    "分类": "电影$1",
+    "分类url": "https://www.example.com/{cateId}/page/{catePg}.html",
+    "数组": ".item&&</div>",
+    "标题": "title=\"&&\"",
+    "链接": "href=\"&&\""
+}
+
+说明：
+- 图片代理=1 时，封面图自动包装为 proxy://do=XBPQ&pic=URL&key=MD5(pic+secretKey)&site=Referer
+- 签名算法：MD5(原始图片URL + secretKey)，防止第三方滥用代理服务。
+- 图片代理白名单（# 分隔）限制仅允许这些域名的图片走代理，超出域名的请求被拒绝。
+- 所有回源请求强制经过 SSRF 防护（拦截 127./10./192.168./169.254 等内网地址）。
+- 即使 allow_internal=1，proxy 入口也不放行内网地址。
+
+────────────────────────────────────────────────────────────────
+场景 22：弹幕加载代理入口
+────────────────────────────────────────────────────────────────
+
+{
+    "站名": "弹幕示例",
+    "主页url": "https://www.example.com",
+    "分类": "电影$1",
+    "分类url": "https://www.example.com/{cateId}/page/{catePg}.html",
+    "数组": ".item&&</li>",
+    "标题": "title=\"&&\"",
+    "链接": "href=\"&&\"",
+    "弹幕url": "https://api.example.com/danmu/{vid}"
+}
+
+说明：
+- 弹幕url 配置后，播放时自动注入 danmaku 代理参数：
+  proxy://do=XBPQ&danmu_url={encoded_danmu_url}
+- loadDanmu 回源拉取后，尝试将 JSON 转为 B站风格 XML：
+  jsonArray2xml 解析 {list:[{time,mode,size,color,source,content}]} → <i><d ...>
+- 非 JSON 格式原样返回 application/octet-stream
+- SSRF 防护与白名单校验同上，secretKey 签名校验同样生效
+
+────────────────────────────────────────────────────────────────
+场景 23：多线模式完整示例
+────────────────────────────────────────────────────────────────
+
+{
+    "站名": "多线聚合示例",
+    "主页url": "https://www.example.com",
+    "分类": "电影$1",
+    "分类url": "https://www.example.com/{cateId}/page/{catePg}.html",
+    "数组": ".item&&</li>",
+    "标题": "title=\"&&\"",
+    "链接": "href=\"&&\"",
+    "多线数组": "<a&&</a>",
+    "多线链接": "href=\"&&\"",
+    "多线链接前缀": "https://www.example.com/play/",
+    "多线链接后缀": ".html",
+    "播放数组": ".playlist&&</ul>",
+    "播放列表": "li",
+    "播放标题": ">&&<",
+    "播放链接": "href=\"&&\""
+}
+
+说明：
+- 触发条件：multi_line_array 和 multi_line_url 同时配置且非空。
+- 多线模式会在列表页直接提取每条线路的集数链接，无需进入详情页。
+- 多线二次截取（multi_line_twice）、多线链接前缀/后缀 可同时配置。
+- 最多提取 10 条线路，超过则截断。
+- 若 multi_line_array 为空，则走 tryFromLinkMode：对 from_array 每条线路
+  独立 fetchUrl 播放页再提取集数，线路上限仍为 10 条。
+
+────────────────────────────────────────────────────────────────
+场景 24：动态域名切换（规则加载时生效）
+────────────────────────────────────────────────────────────────
+
+{
+    "主页url": "https://old.example.com",
+    "主页url-c": "https://new.example.com",
+    "域名-c": "{{主页url-c}}[替换:.com>>.xyz]",
+    "分类": "电影$1",
+    "分类url": "{{主页url}}/vod/show/{cateId}/page/{catePg}.html",
+    "搜索url": "{{主页url}}/search.php?wd={wd}",
+    "数组": ".item&&</li>",
+    "标题": "title=\"&&\"",
+    "链接": "href=\"&&\""
+}
+
+说明：
+- 规则加载时 applyDynamicDomain() 执行：
+  1. 域名-c 展开 {{变量}} + [替换:] 后处理器
+  2. isValidOrigin 校验是否为合法 origin（仅域名+协议，无路径）
+  3. 合法则将整份规则中旧 homeUrl 的 origin 全局替换为新 origin
+  4. 填充 {{域名-c}} 和 {{主页url-c}} 变量
+- 主页url-c 仅作为 {{主页url-c}} 变量来源，不会触发域名切换。
+- 域名-c 无效时（如解析失败、origin 不合法），保持原 homeUrl 不变。
+
 ================================================================================
 三、批量调用示例（多站点）
 ================================================================================
@@ -440,7 +662,8 @@ sites 数组项：
    普通请求（proxy 入口不受影响）；P2P 链接（magnet/ed2k/thunder 等）
    直接交给播放器。
 7. 单条片单解析失败不影响整体列表（skip_bad_item=1 默认跳过）。
-8. 图片净化：默认封面兜底 + 懒加载属性（图片属性）提取真实地址。
+8. 图片净化：默认封面兜底 + 懒加载属性（图片属性）提取真实地址，
+   img_attr 优先级最高，否则按 LAZY_IMG_ATTRS 顺序兜底。
 9. quick 快搜参数当前被引擎忽略（快搜与普搜行为一致）。
 10. 视频过滤词优先级高于嗅探词，命中强制判定为非视频 URL。
 11. 选集链接加前缀/加后缀 在播放线路提取时自动应用到每条集数链接。
@@ -448,3 +671,22 @@ sites 数组项：
     特殊分类链接 / 直播url 同样仅注册不消费。
 13. [工具:xxx] 工具链、[firstPage=...] URL 语法、";post" POST 搜索
     本版均未实现，请勿在规则中使用。
+14. ;; 截断：分类url 含 ;; 时截取 ;; 之前的部分作为实际请求 URL，;;
+    之后的内容被丢弃，不适用于双 URL 并存场景。
+15. page_end_marker：响应 body 命中标记文本时返回空列表（pagecount=0），
+    框架据此停止翻页，适用于后端无分页或已到末页的站点。
+16. list_total：纯数字时精确控制总页数；也可写为 && 截取规则，引擎
+    先尝试截取 HTML，失败时回退到自动猜测（JSON total/mac_total/共N条/分页链接）。
+17. search_word_sep 仅对扁平 search_url 生效（分节 search.url 的 {wd}
+    原样替换不受影响）。
+18. offset_paging=1 时 {offset}=(页码-1)*pageSize，{limit}=pageSize；
+    若 url 不含 {offset} 则 {catePg} 也转为偏移量。
+19. proxy:// 所有回源请求（pic/danmu/m3u8）强制经过 SSRF 防护，
+    不受 allow_internal 影响；图片代理和弹幕需 secretKey MD5 签名校验。
+20. 多线模式：multi_line_array + multi_line_url 必须同时非空才触发，
+    最多提取 10 条线路；multi_line_array 为空时走 tryFromLinkMode 备选路径。
+21. 动态域名：域名-c 在规则加载时执行 origin 全局替换，主页url-c 仅作
+    变量来源；origin 校验失败时保持原 homeUrl 不变。
+22. 常量边界：首页每分类最多聚合 20 条（DEFAULT_HOME_MAX_VIDEOS）；
+    单页列表最多 100 条（MAX_PAGE_ITEMS）；无法推测总页数时兜底 50 页；
+    首页 HTML 缓存 5 分钟（HOME_CACHE_TTL_MS）。

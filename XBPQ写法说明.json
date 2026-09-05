@@ -24,6 +24,7 @@
     //作者（{{作者}} 变量来源）
     "author": "",
     //主页地址，用于相对路径补全（addHttpPrefix）和 {{主页url}} 变量
+    //别名：home_url, 主页, baseUrl, BASE_URL
     "homeUrl": "https://www.example.com",
     //请求头。支持三种写法（parseHeader）：
     //  1) 简写："电脑"/"PC_UA" → 内置 PC UA；"手机"/"MOBILE_UA" → 内置移动 UA
@@ -34,7 +35,7 @@
     "headerJson": "",
     //User 请求头（别名 user），独立 User 头配置
     "userHeader": "",
-    //User-Agent / Referer 单独键
+    //User-Agent / Referer 单独键（别名 ua, referer）
     "User-Agent": "",
     "Referer": "",
     //页面编码（别名 charset），默认 UTF-8，GBK/GB2312 站点配置后响应强制矫正
@@ -63,14 +64,15 @@
     "page_end_marker": "",
     //偏移分页（别名 offsetPaging），"1"=用 {offset} 偏移量分页（配合 page_size）
     "offset_paging": "0",
-    //每页条数（别名 pageSize），偏移分页/页总数计算的每页条数，默认 20
+    //每页条数（别名 pageSize/pagesize），偏移分页/页总数计算的每页条数，默认 20
     "page_size": "20",
     //宝塔 WAF，"1"=遇到宝塔拦截页自动提取 btwaf cookie 重试
     "btwaf": "",
     //反爬超时，毫秒，反爬重试的总预算，0=默认
     "antiCrawlTimeout": "",
-    //错误码/失败码，# 分隔，响应 JSON code 命中判定为失败
+    //错误码，# 分隔，响应 JSON code 命中判定为失败
     "errorCodes": "",
+    //失败码，# 分隔（同 errorCodes 语义）
     "failCodes": "",
     //成功码，# 分隔，响应 JSON code 命中判定为成功
     "successCodes": "",
@@ -78,7 +80,7 @@
     "prefMenu": "",
     //功能入口（别名 actionTabs），"1"=在分类列表头部插入"置顶搜索和设置"等功能入口
     "actionTabs": "",
-    //滑块 Key 接口 / 打码接口 / 验证类型：滑块验证配置（js_key_url/ocr_api/verify_type，auto=自动）
+    //滑块 Key 接口 / 打码接口 / 验证类型：滑块验证配置（auto=自动）
     "js_key_url": "",
     "ocr_api": "",
     "verify_type": "auto",
@@ -97,7 +99,7 @@
 
     //分类 URL 模板（别名 cateUrl/list_url）。
     //占位符：{cateId}=分类ID，{catePg}=页码（{catePg}/{catepg} 大小写两种写法均支持），
-    //{offset}=偏移分页；筛选参数（{class}/{area}/{year} 等）不在此替换，由 extend 筛选另行拼接。
+    //{offset}=偏移分页；筛选参数由 extend 筛选另行拼接。
     "class_url": "https://www.example.com/list/{cateId}/page/{catePg}.html",
     //分类列表（别名 cate）。
     //写法 A（最常见）："电影$1#电视剧$2#综艺$3"（名$值，# 分隔）
@@ -140,7 +142,7 @@
     //==================== 四、首页推荐 ====================
 
     //首页（别名 homePage）。homeVideoContent 首页聚合配置：
-    //  纯数字（如 "20"）→ 每个分类聚合条数上限
+    //  纯数字（如 "20"）→ 每个分类聚合条数上限（不超过 DEFAULT_HOME_MAX_VIDEOS=20）
     //  "名称$分类ID#名称$分类ID" → 只聚合指定分区
     "firstpage": "",
     //起始页，分类页码偏移，默认 1
@@ -152,13 +154,13 @@
     //&& 语法：".stui-vodlist__box&&</li>" → 每个区块为一部影片
     //CSS 语法（css: 开头）："css:.stui-vodlist__box"
     "list_array": ".stui-vodlist__box&&</li>",
-    //列表二次截取（别名 二次截取），先截取再按 list_array 解析
+    //列表二次截取（别名 二次截取/列表二次截取），先截取再按 list_array 解析
     "list_twice": "",
     //标题
     "list_name": "title=\"&&\"",
     //链接
     "list_id": "href=\"&&\"",
-    //图片（别名 img_attr 可指定真实地址属性名如 data-original；值以 http 开头为固定图片）
+    //图片（值以 http 开头为固定图片；见图片代理模块中的 img_attr 指定懒加载属性）
     "list_pic": "data-original=\"&&\"",
     //副标题（别名 分类副标题/cat_subtitle，兼容分节写法）
     "list_remarks": ".pic-text&&Text",
@@ -170,8 +172,10 @@
     "filter_word": "",
     //倒序（别名 倒序播放），"1"=列表倒序输出
     "reverse": "0",
-    //列表模式 / 列表 JSON 路径组（JSON 模式：list_mode=0 时按 JSON 解析分类页）
+    //列表截取模式，"1"=JSON 模式（按 listjsonlist 等字段解析 JSON）；
+    //空值=网页截取模式（默认）
     "list_mode": "",
+    //列表 JSON 路径组（list_mode=1 时生效），list 为多级 JSONPath 如 "data.list"
     "listjsonlist": "",
     "listjsonname": "",
     "listjsonid": "",
@@ -179,16 +183,15 @@
     "listjsonnote": "",
     //坏条目跳过（别名 skipBadItem），默认 1=单条解析失败跳过；"0"=整页失败
     "skip_bad_item": "1",
-    //列表总页数规则（别名 listTotal/总页数），从页面提取总页数的截取规则
+    //列表总页数规则（别名 listTotal/总页数/总页数规则/总数规则），从页面提取总页数的截取规则
+    //优先级：硬编码数字 → HTML 自动猜测 → 兜底 50 页
     "list_total": "",
-    //图片属性（别名 imgAttr/懒加载属性），图片懒加载真实地址属性名
-    "img_attr": "",
 
     //==================== 六、分类 JSON 模式 ====================
 
-    //分类截取模式，"0"=JSON 模式，默认空=网页截取模式
+    //分类截取模式，"1"=JSON 模式（按 catjsonlist 等字段解析）；空值=网页截取模式（默认）
     "cat_mode": "",
-    //分类 JSON 字段组（cat_mode=0 时生效），list 为多级路径如 "list.data"
+    //分类 JSON 字段组（cat_mode=1 时生效），list 为多级路径如 "list.data"
     "catjsonlist": "",
     "catjsonname": "",
     "catjsonid": "",
@@ -198,8 +201,8 @@
     //==================== 七、搜索配置 ====================
 
     //搜索 URL。
-    //{wd}=搜索关键词（扁平 search_url 写法自动 URL 编码；分节 search.url 写法原样替换），
-    //{pg}=页码（经 sea_firstpage 偏移）。
+    //{wd}=搜索关键词（扁平 search_url 写法自动 URLEncoder.encode；
+    //  分节 search.url 写法原样替换），{pg}=页码（经 sea_firstpage 偏移）。
     "search_url": "https://www.example.com/search.php?wd={wd}&page={pg}",
     //搜索模式："0"=优先 JSON 解析（默认），"1"=优先网页截取；两者互为兜底
     "search_mode": "0",
@@ -224,7 +227,8 @@
     "search_suffix": "",
     //搜索起始页码（别名 搜索起始页），搜索页码偏移
     "sea_firstpage": "",
-    //搜索词分隔符（别名 searchWordSep/关键词分隔符），关键词中空格替换为该分隔符（如 "+"）
+    //搜索词分隔符（别名 searchWordSep/关键词分隔符），扁平搜索词中空格替换为该分隔符（如 "+"）
+    //仅扁平 search_url 写法生效，分节 search.url 中的 {wd} 原样替换不受此影响
     "search_word_sep": "",
     //搜索 JSON 字段组（优先于网页截取，list 为 JSON 路径，其余为字段名）
     "searchjsonlist": "",
@@ -345,17 +349,25 @@
     "baseEncodeUrl": "",
     //代理密钥，MD5(pic+secretKey) 签名防代理滥用
     "secretKey": "",
-    //图片代理白名单（别名 picAllowDomains/代理域名白名单），# 分隔，仅白名单域名走代理
+    //图片代理白名单（别名 picAllowDomains/代理白名单/代理域名白名单），# 分隔，仅白名单域名走代理
     "pic_allow_domains": "",
+    //图片属性（别名 imgAttr/懒加载属性/图片真实地址属性），图片懒加载真实地址属性名
+    //优先级高于 resolveLazyImage 的 LAZY_IMG_ATTRS 兜底链
+    "img_attr": "",
     //弹幕接口，配置后播放时自动注入 danmaku 代理参数，JSON 自动转 B 站风格 XML
     "danmuUrl": "",
 
     //==================== 十二、CSS（Jsoup）模块键 ====================
 
+    //CSS 选择器（别名 CSS选择器）
     "css_selector": "",
+    //CSS 提取（别名 CSS提取）
     "css_extract": "",
+    //CSS 属性（别名 CSS属性）
     "css_attribute": "",
+    //JSOUP 解析（别名 JSOUP解析）
     "jsoup_parse": "",
+    //列表 CSS 容器（别名 css_container，内部使用）
     "list_css_container": ""
 }
 
@@ -385,3 +397,12 @@
 //
 // 列表/搜索输出的 vod_id 经 encodeVodId() Base64 编码（内含原始链接与图片等上下文），
 // detailContent 收到后自动解码还原，规则书写者无需关心该编码。
+//
+//==================== 附录四：常量与边界值 ====================
+//
+//  DEFAULT_HOME_MAX_VIDEOS = 20        首页每分类最多聚合条数
+//  MAX_PAGE_ITEMS = 100                单页列表最大条目数（超限截断）
+//  DEFAULT_UNKNOWN_PAGE_COUNT = 50     无法推测总页数时的兜底页码
+//  MAX_HTML_LENGTH = 2MB               首页缓存最大长度（超长截断到最近 > 位置）
+//  HOME_CACHE_TTL_MS = 300000          首页 HTML 缓存时间（5分钟）
+//  variableMap 递归展开上限：10 轮
