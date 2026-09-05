@@ -63,8 +63,6 @@ public class XBPQ extends Spider {
 
     private static final int MAX_PAGE_ITEMS = 100;
 
-    private static final int CATEGORY_ID_THRESHOLD = 100;
-
     private static final int DEFAULT_UNKNOWN_PAGE_COUNT = 50;
 
     private static final int DEFAULT_HOME_MAX_VIDEOS = 20;
@@ -1901,12 +1899,18 @@ public class XBPQ extends Spider {
         }
     }
 
+    /** vod_id 规则是否来自首页自动猜测（非用户显式配置），用于列表/搜索页无命中时的重猜兜底 */
+    private boolean guessedVodIdFromHome = false;
+
     private void guessVodIdIfNeeded(JSONObject list) {
         try {
             if (!list.has("vod_id")) {
                 String body = fetchOrCacheHomePageBody();
                 JSONArray listVodId = guessRuleVodId(body);
-                list.put("vod_id", listVodId);
+                if (listVodId != null) {
+                    guessedVodIdFromHome = true;
+                    list.put("vod_id", listVodId);
+                }
             }
         } catch (Exception e) {
             SpiderDebug.log(e);
@@ -3083,7 +3087,8 @@ public class XBPQ extends Spider {
 
     public JSONArray guessRuleVodId(String body) {
         try {
-            String regex = "<a.+?href=\"(.+?)\"";
+            // [^>]*? 同时兼容单/双引号与跨行属性，且不会越过标签边界
+            String regex = "<a[^>]*?href=[\"'](.+?)[\"']";
             Pattern pattern = Pattern.compile(regex);
             Matcher m = pattern.matcher(body);
             Map<String, JSONArray> founds = new HashMap<>();
@@ -3120,17 +3125,21 @@ public class XBPQ extends Spider {
 
     private void processVodIdCandidate(List<HtmlMatchInfo> matchList, Map<String, JSONArray> founds) throws JSONException {
         HtmlMatchInfo info = matchList.get(0);
-        info.findDiffStr(matchList.get(1), splitFlag);
-        int id = 0;
-        try { id = Integer.parseInt(info.diff); } catch (Exception e) {
-            SpiderDebug.log("vod_id 候选非数字，按分类ID处理 [" + info.diff + "]: " + e.getMessage());
+        if (!info.findDiffStr(matchList.get(1), splitFlag)) return;
+        String diff = info.diff == null ? "" : info.diff.trim();
+        if (diff.isEmpty()) return;
+        boolean numeric = diff.matches("\\d+");
+        // 纯数字 id 任意正值均可；slug 型 id（如 /detail/hello-world.html）同样可作候选，
+        // 由 selectBestVodIdResult 结合 URL 特征词与出现次数择优
+        boolean slug = !numeric && diff.length() <= 60 && !diff.matches(".*\\s.*");
+        if (!numeric && !slug) {
+            SpiderDebug.log("vod_id 候选异常，跳过 [" + diff + "]");
+            return;
         }
-
-        if (id > CATEGORY_ID_THRESHOLD) {
-            String url = info.group1.replace(matchList.get(0).diff, "{vid}");
-            JSONArray arr = buildVodIdArray(url, info, matchList.size());
-            updateFoundsMap(founds, url, arr, matchList.size());
-        }
+        if (numeric && Long.parseLong(diff) <= 0) return;
+        String url = info.group1.replace(diff, "{vid}");
+        JSONArray arr = buildVodIdArray(url, info, matchList.size());
+        updateFoundsMap(founds, url, arr, matchList.size());
     }
 
     private JSONArray buildVodIdArray(String url, HtmlMatchInfo info, int count) throws JSONException {
@@ -3159,18 +3168,37 @@ public class XBPQ extends Spider {
         }
     }
 
+    /** URL 模板含详情页特征词时加权，含列表页特征词时降权，避免分类导航链接压过影片网格 */
+    private static final List<String> DETAIL_URL_HINTS = Arrays.asList("detail", "video", "movie", "info");
+    private static final List<String> LIST_URL_HINTS = Arrays.asList(
+            "type", "list", "class", "sort", "show", "label", "tag", "search", "fenlei", "channel", "category");
+
     private JSONArray selectBestVodIdResult(Map<String, JSONArray> founds) throws JSONException {
         JSONArray best = null;
-        for (JSONArray v : founds.values()) {
-            if (best == null || best.getInt(5) < v.getInt(5)) {
+        double bestScore = -1;
+        String bestUrl = "";
+        for (Map.Entry<String, JSONArray> e : founds.entrySet()) {
+            JSONArray v = e.getValue();
+            String url = e.getKey();
+            double score = v.optInt(5, 0);
+            String lower = url.toLowerCase();
+            for (String hint : DETAIL_URL_HINTS) {
+                if (lower.contains(hint)) { score *= 3; break; }
+            }
+            for (String hint : LIST_URL_HINTS) {
+                if (lower.contains(hint)) { score /= 3; break; }
+            }
+            if (score > bestScore || (score == bestScore && url.compareTo(bestUrl) < 0)) {
+                bestScore = score;
                 best = v;
+                bestUrl = url;
             }
         }
         return best;
     }
 
     public JSONArray guessRuleVodPlayUrl(String str, String vid) {
-        String regex = "href=\"(/.+?)\"";
+        String regex = "href=[\"'](/.+?)[\"']";
         Pattern pattern = Pattern.compile(regex, Pattern.CASE_INSENSITIVE);
         Matcher m = pattern.matcher(str);
         HtmlMatchInfo info = new HtmlMatchInfo();
@@ -3220,26 +3248,43 @@ public class XBPQ extends Spider {
         return null;
     }
 
-    public String guessValueVodName(String nodeContent, int startPos) {
+    /** 属性值截取：先按双引号、再按单引号，兼容两种书写风格 */
+    private static String findAttrValue(String node, String attr, int startPos) {
         try {
             JSONArray vec = new JSONArray();
-            vec.put("alt=\"");
+            vec.put(attr + "=\"");
             vec.put("\"");
-            String val = RuleUtils.findSubString(nodeContent, startPos, vec);
+            String val = RuleUtils.findSubString(node, startPos, vec);
+            if (!val.isEmpty()) return val;
+            vec.put(0, attr + "='");
+            vec.put(1, "'");
+            return RuleUtils.findSubString(node, startPos, vec);
+        } catch (org.json.JSONException e) {
+            SpiderDebug.log(e);
+        }
+        return "";
+    }
 
+    public String guessValueVodName(String nodeContent, int startPos) {
+        try {
+            String val = findAttrValue(nodeContent, "alt", startPos);
             if (val.isEmpty()) {
-                vec.put(0, "\" title=\"");
-                val = RuleUtils.findSubString(nodeContent, startPos, vec);
+                val = findAttrValue(nodeContent, "title", startPos);
             }
             if (val.isEmpty()) {
                 val = guessNameFromTextContent(nodeContent);
             }
             return cleanCommonPrefixes(val);
         } catch (Exception e) {
-            
+
         }
         return "";
     }
+
+    /** 疑似画质/更新状态等非片名文本 */
+    private static final Pattern P_NAME_NOISE = Pattern.compile(
+            "^(HD|SD|BD|4K|蓝光|高清|抢[先鲜]|正片|预告|花絮|枪版|国语|粤语|英语|中字|完结|全集|独家|首发|更新.*|.*更新|第?\\d+\\s*[集期]|[0-9.:\\-\\s]+)$",
+            Pattern.CASE_INSENSITIVE);
 
     private String guessNameFromTextContent(String nodeContent) {
         String all = HtmlNodeHelper.trimHtmlString(nodeContent, "!!!!");
@@ -3248,18 +3293,20 @@ public class XBPQ extends Spider {
 
         for (String word : words) {
             word = word.trim();
-            if (!word.isEmpty() && word.indexOf("更新") == -1) {
-                int count = frequencyMap.containsKey(word) ? frequencyMap.get(word) + 1 : 1;
-                frequencyMap.put(word, count);
+            if (!word.isEmpty() && word.indexOf("更新") == -1 && !P_NAME_NOISE.matcher(word).matches()) {
+                frequencyMap.merge(word, 1, Integer::sum);
             }
         }
 
         String best = "";
-        int maxCount = 0;
+        int bestScore = -1;
         for (Map.Entry<String, Integer> entry : frequencyMap.entrySet()) {
-            if (entry.getValue() > maxCount) {
-                maxCount = entry.getValue();
-                best = entry.getKey();
+            String word = entry.getKey();
+            // 出现次数优先，其次中文词优先、较长词优先，保证并列时结果确定
+            int score = entry.getValue() * 100 + (containsCjk(word) ? 50 : 0) + Math.min(word.length(), 30);
+            if (score > bestScore) {
+                bestScore = score;
+                best = word;
             }
         }
         return best;
@@ -3295,10 +3342,7 @@ public class XBPQ extends Spider {
     public String guessValueVodId(String nodeContent) {
         if (nodeContent == null || nodeContent.isEmpty()) return "";
         try {
-            JSONArray vec = new JSONArray();
-            vec.put("href=\"");
-            vec.put("\"");
-            return RuleUtils.findSubString(nodeContent, 0, vec);
+            return findAttrValue(nodeContent, "href", 0);
         } catch (Exception e) {
             return "";
         }
@@ -3306,16 +3350,13 @@ public class XBPQ extends Spider {
 
     public String guessValueVodPic(String nodeContent, int startPos) {
         try {
-            String[][] picAttrs = {{"data-original", "\""}, {"data-src", "\""}, {"src", "\""}, {"data-bg", "\""}};
-            for (String[] attr : picAttrs) {
-                JSONArray vec = new JSONArray();
-                vec.put(attr[0] + "=\"");
-                vec.put(attr[1]);
-                String val = RuleUtils.findSubString(nodeContent, startPos, vec);
+            String[] picAttrs = {"data-original", "data-src", "src", "data-bg"};
+            for (String attr : picAttrs) {
+                String val = findAttrValue(nodeContent, attr, startPos);
                 if (!val.isEmpty()) return addHttpPrefix(val);
             }
         } catch (Exception e) {
-            
+
         }
         return "";
     }
@@ -4047,11 +4088,34 @@ public class XBPQ extends Spider {
     }
 
     private JSONArray extractVideoList(String content, JSONObject list, String url) throws JSONException {
-        JSONArray videos = new JSONArray();
-        
         if (list == null || list.length() == 0) {
             list = buildListFromRules();
         }
+        JSONArray videos = scanVideoNodes(content, list, url);
+
+        // 自动猜测模式：首页猜出的链接规则在当前分类页无命中时（模板不一致），用当前页重猜一次
+        if (videos.length() == 0 && !content.isEmpty()
+                && (guessedVodIdFromHome || list.optJSONArray("vod_id") == null)) {
+            JSONArray reGuessed = guessRuleVodId(content);
+            if (reGuessed != null && reGuessed.length() >= 5) {
+                JSONArray previous = list.optJSONArray("vod_id");
+                list.put("vod_id", reGuessed);
+                JSONArray retry = scanVideoNodes(content, list, url);
+                if (retry.length() > 0) {
+                    videos = retry;
+                    SpiderDebug.log("自动猜测: 首页链接规则未命中，已按当前列表页重猜成功");
+                } else if (previous != null) {
+                    list.put("vod_id", previous);
+                }
+            }
+        }
+
+        if (reverseOrder) videos = reverseArray(videos);
+        return videos;
+    }
+
+    private JSONArray scanVideoNodes(String content, JSONObject list, String url) throws JSONException {
+        JSONArray videos = new JSONArray();
         JSONArray lookback = RuleUtils.getLookbackArray(list);
         if (lookback != null) lookback = new JSONArray(lookback.toString());
         Set<String> seenIds = new HashSet<>();
@@ -4083,11 +4147,11 @@ public class XBPQ extends Spider {
             if (vodId.isEmpty()) continue;
 
             if (!seenIds.contains(vodId)) {
-                
+
                 if (shouldFilter(result.node, vodId, list)) continue;
 
                 seenIds.add(vodId);
-                
+
                 try {
                     JSONObject video = buildVideoObject(result.node, vodId, list, url);
                     videos.put(video);
@@ -4097,8 +4161,6 @@ public class XBPQ extends Spider {
                 }
             }
         }
-
-        if (reverseOrder) videos = reverseArray(videos);
         return videos;
     }
 
@@ -4247,6 +4309,9 @@ public class XBPQ extends Spider {
                 String alt = el.attr("alt");
                 if (alt != null && !alt.isEmpty()) return alt.trim();
             }
+            // 纯文本节点：按噪声过滤+中文优先挑选，避免返回 "HD片名甲" 这类拼接文本
+            String picked = guessNameFromTextContent(node);
+            if (!picked.isEmpty()) return picked;
             String text = doc.text();
             if (text != null && !text.isEmpty()) return text.trim();
         } catch (Exception e) {
@@ -6398,6 +6463,28 @@ public class XBPQ extends Spider {
     }
 
     private String parseHtmlSearchResults(String content, JSONObject search, String url, String page) throws JSONException {
+        JSONArray videos = scanSearchNodes(content, search, url);
+
+        // 自动猜测模式：继承的链接规则在搜索页无命中时，用当前搜索页重猜一次
+        if (videos.length() == 0 && !content.isEmpty()
+                && (guessedVodIdFromHome || search.optJSONArray("vod_id") == null)) {
+            JSONArray reGuessed = guessRuleVodId(content);
+            if (reGuessed != null && reGuessed.length() >= 5) {
+                JSONArray previous = search.optJSONArray("vod_id");
+                search.put("vod_id", reGuessed);
+                videos = scanSearchNodes(content, search, url);
+                if (videos.length() == 0 && previous != null) {
+                    search.put("vod_id", previous);
+                }
+            }
+        }
+
+        if (reverseOrder) videos = reverseArray(videos);
+
+        return wrapList(videos, null, page).toString();
+    }
+
+    private JSONArray scanSearchNodes(String content, JSONObject search, String url) throws JSONException {
         JSONArray videos = new JSONArray();
         Set<String> seenIds = new HashSet<>();
         int pos = 0;
@@ -6431,7 +6518,7 @@ public class XBPQ extends Spider {
             String vodId = nodeResult.vodId;
 
             if (!seenIds.contains(vodId)) {
-                
+
                 if (shouldFilterSearchResult(nodeResult.node, vodId, search)) continue;
 
                 seenIds.add(vodId);
@@ -6439,10 +6526,7 @@ public class XBPQ extends Spider {
                 videos.put(v);
             }
         }
-
-        if (reverseOrder) videos = reverseArray(videos);
-
-        return wrapList(videos, null, page).toString();
+        return videos;
     }
 
     private static class SearchNodeResult {
