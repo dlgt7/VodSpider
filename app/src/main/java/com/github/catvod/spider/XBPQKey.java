@@ -187,7 +187,7 @@ public final class XBPQKey {
 
         // ==================== 列表 ====================
         k(Module.LIST, "list_array", "数组");
-        k(Module.LIST, "list_twice", "二次截取");
+        k(Module.LIST, "list_twice", "二次截取", "列表二次截取");
         k(Module.LIST, "list_name", "标题");
         k(Module.LIST, "list_id", "链接");
         k(Module.LIST, "list_pic", "图片");
