@@ -206,7 +206,7 @@ public class XBPQ extends Spider {
     );
 
     private static final Pattern P_DETAIL_FIELD_FUZZY = Pattern.compile(
-            "(导演|演员|主演|年份|地区|类型|简介|影片导演|主要演员|上映年份|出品地区|影片主演|影片类型|出品时间|更新状态)[^:：]*[:：]"
+            "(导演|演员|主演|年份|地区|类型|简介|影片导演|主要演员|上映年份|出品地区|影片主演|影片类型|出品时间|更新状态)[^:：>]{0,6}[:：]"
     );
 
     private static final Pattern P_DATA_URL_ATTR = Pattern.compile(
@@ -340,18 +340,28 @@ public class XBPQ extends Spider {
         );
 
         public static boolean isPairedHtmlTag(String str, int startPos) {
-            String tmp = str.substring(startPos, Math.min(str.length(), startPos + 10));
-            for (String tag : UNPAIRED_TAGS) {
-                if (tmp.indexOf(tag) != -1) {
-                    for (int i = startPos + 1; i < str.length(); ++i) {
-                        if (str.charAt(i) == '>') {
-                            return str.charAt(i - 1) == '/';
-                        }
-                    }
-                    return false;
+            // 按真实标签名判定，禁止用起始片段做子串匹配（旧实现里 10 字符窗口会让 href 命中 hr，
+            // 把 <a href=、<li><a href 等成对标签误判为未配对，导致 nodeString 节点截断）。
+            String tag = parseHtmlTagName(str, startPos);
+            if (tag.isEmpty()) return false;
+            return !UNPAIRED_TAGS.contains(tag);
+        }
+
+        /** 解析 startPos 处 '<' 开头的标签名（小写）；注释/声明/无法解析时返回空串。 */
+        private static String parseHtmlTagName(String str, int startPos) {
+            if (str == null || startPos < 0 || startPos >= str.length() || str.charAt(startPos) != '<') return "";
+            int i = startPos + 1;
+            StringBuilder name = new StringBuilder();
+            while (i < str.length()) {
+                char c = str.charAt(i);
+                if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_') {
+                    name.append(Character.toLowerCase(c));
+                    i++;
+                } else {
+                    break;
                 }
             }
-            return true;
+            return name.toString();
         }
 
         public static boolean isSelfClosedTag(String str, int startPos) {
@@ -367,9 +377,16 @@ public class XBPQ extends Spider {
             if (pos < 0 || pos >= str.length() || str.charAt(pos) != '<') return str;
             int depth = 0;
             for (int i = pos; i < str.length() - 1; ++i) {
-                switch (str.charAt(i)) {
+                char c = str.charAt(i);
+                if (c == '<' && str.charAt(i + 1) == '!' && str.regionMatches(i, "<!--", 0, 4)) {
+                    // 注释整体跳过，避免注释内的 '<' '>' 干扰深度统计
+                    int end = str.indexOf("-->", i + 4);
+                    i = end >= 0 ? end + 2 : str.length() - 2;
+                    continue;
+                }
+                switch (c) {
                     case '/':
-                        
+
                         if (str.charAt(i - 1) == '<') {
                             depth--;
                         }
@@ -985,18 +1002,32 @@ public class XBPQ extends Spider {
                     if (total > 0) return total;
                 } catch (Exception ignored) {}
             }
-            Matcher mJson = P_TOTAL_JSON.matcher(html);
-            if (mJson.find()) {
-                int total = Integer.parseInt(mJson.group(2));
+            Matcher mTotalKey = P_TOTAL_KEY_TOTAL.matcher(html);
+            if (mTotalKey.find()) {
+                int total = Integer.parseInt(mTotalKey.group(1));
                 if (total > 0) return total;
+            }
+            Matcher mJson = P_TOTAL_JSON.matcher(html);
+            while (mJson.find()) {
+                int total = Integer.parseInt(mJson.group(2));
+                if (total <= 0) continue;
+                return isPageCountVarName(mJson.group(1).toLowerCase()) ? total * 20 : total;
+            }
+            // 「共N条」是精确总条数；「共N页」是总页数，按每页约20条折算
+            Matcher mItems = P_TOTAL_ITEMS_TEXT.matcher(html);
+            if (mItems.find()) {
+                int total = Integer.parseInt(mItems.group(1));
+                if (total > 0) return total;
+            }
+            Matcher mPages = P_TOTAL_PAGES_TEXT.matcher(html);
+            if (mPages.find()) {
+                int total = Integer.parseInt(mPages.group(1));
+                if (total > 0) return total * 20;
             }
             for (String varName : TOTAL_VAR_NAMES) {
                 int total = parseIntFromScript(html, varName);
                 if (total > 0) {
-                    if (varName.equals("mac_page") || varName.equals("pages") || varName.equals("pagecount")) {
-                        return total * 20;
-                    }
-                    return total;
+                    return isPageCountVarName(varName.toLowerCase()) ? total * 20 : total;
                 }
             }
             Matcher mVar = P_TOTAL_VAR_ASSIGN.matcher(html);
@@ -1006,6 +1037,8 @@ public class XBPQ extends Spider {
                 int val = Integer.parseInt(mVar.group(2));
                 for (String varName : TOTAL_VAR_NAMES) {
                     if (name.equalsIgnoreCase(varName) || name.toLowerCase().contains(varName.toLowerCase())) {
+                        // totalpage 等变量是总页数，必须折算成总条数，否则多页站会算出 pagecount=1
+                        if (isPageCountVarName(name.toLowerCase())) val = val * 20;
                         if (val > maxVal) maxVal = val;
                         break;
                     }
@@ -1018,6 +1051,13 @@ public class XBPQ extends Spider {
             SpiderDebug.log(e);
         }
         return -1;
+    }
+
+    /** 变量/字段名是否表示「总页数」而非「总条数」 */
+    private static boolean isPageCountVarName(String lower) {
+        return lower.equals("mac_page") || lower.equals("pages") || lower.equals("pagecount")
+                || lower.equals("totalpage") || lower.equals("totalpages") || lower.equals("total_page")
+                || lower.equals("pagemax") || lower.equals("maxpage") || lower.equals("page_max");
     }
 
     private int parseTotalFromHtml(String html) {
@@ -1075,6 +1115,9 @@ public class XBPQ extends Spider {
 
     private static final Pattern P_PAGE_LI = Pattern.compile("<li[^>]*page[^>]*>\\s*(\\d+)\\s*</li>", Pattern.CASE_INSENSITIVE);
     private static final Pattern P_PAGE_QS = Pattern.compile("[?&]page=(\\d+)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern P_TOTAL_KEY_TOTAL = Pattern.compile("[\"']total[\"']\\s*:\\s*(\\d+)");
+    private static final Pattern P_TOTAL_ITEMS_TEXT = Pattern.compile("共\\s*(\\d+)\\s*条");
+    private static final Pattern P_TOTAL_PAGES_TEXT = Pattern.compile("共\\s*(\\d+)\\s*页");
 
     private int countPageLinks(String html) {
         int count = 0;
@@ -1646,7 +1689,12 @@ public class XBPQ extends Spider {
             String value = getRuleVal(pair[0]);
             if (!value.isEmpty()) {
                 JSONArray pairArr = stringCutPair(value);
-                if (pairArr != null) searchObj.put(pair[1], pairArr);
+                if (pairArr != null) {
+                    searchObj.put(pair[1], pairArr);
+                } else {
+                    // 无 && 的取值为 JSON 字段名（MacCMS API 惯用写法：搜索链接:vod_id），供 JSON 搜索模式使用
+                    searchObj.put(pair[1], value.trim());
+                }
             }
         }
     }
@@ -1706,7 +1754,12 @@ public class XBPQ extends Spider {
                 String value = getRuleVal(pair[0].replace("list_", "search_"));
                 if (!value.isEmpty() && !search.has(pair[1])) {
                     JSONArray pairArr = stringCutPair(value);
-                    if (pairArr != null) search.put(pair[1], pairArr);
+                    if (pairArr != null) {
+                        search.put(pair[1], pairArr);
+                    } else if (!value.contains("&&")) {
+                        // 同 applyFlatSearchFields：无 && 取值为 JSON 字段名
+                        search.put(pair[1], value.trim());
+                    }
                 }
             }
         }
@@ -2118,6 +2171,8 @@ public class XBPQ extends Spider {
             String vodId = item.optString("vod_id", "");
             if (!vodId.isEmpty()) {
                 vodId = getRuleVal("list_prefix") + vodId + getRuleVal("list_suffix");
+                // 前后缀必须写回条目再打包，否则 encodeVodId 里仍是未补全的相对链接
+                item.put("vod_id", vodId);
             }
             if (vodId.isEmpty() || seenIds.contains(vodId)) continue;
 
@@ -6139,25 +6194,34 @@ public class XBPQ extends Spider {
     private String buildSearchResults(JSONArray arr, String page) throws JSONException {
         JSONObject search = rule.optJSONObject("search");
         if (search == null) return "";
+        // JSON 模式要求 vod_id/vod_name 等取值为「字段名」字符串；配置成截取数组时说明不是 JSON 数据
+        String idKey = optJsonFieldName(search, "vod_id");
+        if (idKey == null) return "";
+        String nameKey = optJsonFieldName(search, "vod_name");
+        String picKey = optJsonFieldName(search, "vod_pic");
+        String remarksKey = optJsonFieldName(search, "vod_remarks");
         JSONArray videos = new JSONArray();
 
         for (int i = 0; i < arr.length(); ++i) {
             JSONObject o = arr.getJSONObject(i);
-            if (!search.has("vod_id") || !o.has(search.getString("vod_id"))) continue;
+            if (!o.has(idKey)) continue;
 
             JSONObject v = new JSONObject();
-            v.put("vod_id", o.get(search.getString("vod_id")).toString());
-            v.put("vod_name", search.has("vod_name") && o.has(search.getString("vod_name"))
-                    ? o.get(search.getString("vod_name")).toString() : "未知");
-            v.put("vod_pic", search.has("vod_pic") && o.has(search.getString("vod_pic"))
-                    ? o.get(search.getString("vod_pic")).toString() : "");
-            v.put("vod_remarks", search.has("vod_remarks") && o.has(search.getString("vod_remarks"))
-                    ? o.get(search.getString("vod_remarks")).toString() : "");
+            v.put("vod_id", o.get(idKey).toString());
+            v.put("vod_name", nameKey != null && o.has(nameKey) ? o.get(nameKey).toString() : "未知");
+            v.put("vod_pic", picKey != null && o.has(picKey) ? o.get(picKey).toString() : "");
+            v.put("vod_remarks", remarksKey != null && o.has(remarksKey) ? o.get(remarksKey).toString() : "");
             v.put("vod_id", encodeVodId(v));
             videos.put(v);
         }
 
         return wrapList(videos, null, page).toString();
+    }
+
+    /** 取 JSON 搜索模式的字段名配置；配置为截取数组或为空时返回 null */
+    private static String optJsonFieldName(JSONObject search, String key) {
+        Object val = search.opt(key);
+        return val instanceof String && !((String) val).trim().isEmpty() ? ((String) val).trim() : null;
     }
 
     @Override
@@ -6312,7 +6376,8 @@ public class XBPQ extends Spider {
             SpiderDebug.log("搜索: 缺少 search 规则对象，跳过 vod_id 规则继承");
             return;
         }
-        if (!search.has("vod_id")) {
+        // 网页截取模式需要「截取数组」；字段名字符串只服务 JSON 模式（且 JSON 解析先于本方法执行），这里统一覆盖
+        if (!(search.opt("vod_id") instanceof JSONArray)) {
             JSONObject list = rule.optJSONObject("list");
             if (list != null && list.has("vod_id")) {
                 search.put("vod_id", list.getJSONArray("vod_id"));
@@ -8097,6 +8162,12 @@ public class XBPQ extends Spider {
             variableMap.put("密钥", getRuleVal("secretKey"));
 
             applyDynamicDomain();
+
+            String webViewCfg = getRuleVal("web_view");
+            if (!webViewCfg.isEmpty() && !"0".equals(webViewCfg)) {
+                SpiderDebug.log("「WebView渲染」(web_view) 当前版本未实现，已忽略该配置；"
+                        + "如站点需执行 JS 请改用 jump_url 或 force_play");
+            }
 
             baseEncodeUrl = getRuleVal("baseEncodeUrl");
             secretKey = getRuleVal("secretKey");

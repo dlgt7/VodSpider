@@ -129,6 +129,11 @@ public final class XBPQKey {
         k(Module.BASE, "failCodes", "失败码");
         k(Module.BASE, "successCodes", "成功码");
         k(Module.BASE, "btwaf", "宝塔WAF");
+        // 写法说明中登记的 WebView 渲染键：注册以便配置归一化与提示，XBPQ 当前版本未实现渲染逻辑
+        k(Module.BASE, "web_view", "WebView渲染", "webview");
+        k(Module.BASE, "web_view_wait", "WebView等待");
+        k(Module.BASE, "web_view_ready", "WebView就绪标记");
+        k(Module.BASE, "web_view_ready_timeout", "WebView就绪超时");
         k(Module.BASE, "js_key_url", "滑块Key接口");
         k(Module.BASE, "ocr_api", "打码接口");
         k(Module.BASE, "verify_type", "验证类型");
@@ -235,14 +240,14 @@ public final class XBPQKey {
         k(Module.DETAIL, "detail_actor", "主演");
         k(Module.DETAIL, "detail_content", "简介", "剧情");
         k(Module.DETAIL, "detail_remarks", "状态");
-        k(Module.DETAIL, "detail_separator", "详情分隔符");
-        k(Module.DETAIL, "detail_merge", "详情合并字段");
+        k(Module.DETAIL, "detail_separator", "详情分隔符", "detail_label_split");
+        k(Module.DETAIL, "detail_merge", "详情合并字段", "detail_content_merge");
         k(Module.DETAIL, "play_image", "播放图片");
 
         // ==================== 线路与播放 ====================
         k(Module.PLAY, "from_array", "线路数组");
         k(Module.PLAY, "from_title", "线路标题");
-        k(Module.PLAY, "line_second_cut", "线路二次截取");
+        k(Module.PLAY, "line_second_cut", "线路二次截取", "line_twice");
         k(Module.PLAY, "play_array", "播放数组");
         k(Module.PLAY, "url_array", "播放列表");
         k(Module.PLAY, "url_title", "播放标题");
